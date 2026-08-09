@@ -1,0 +1,336 @@
+# =============================================================================
+# Nisaba — local development stack
+# =============================================================================
+# Two tiers:
+#
+#   1. Infrastructure (default profile): Postgres, MinIO, Keycloak, MinIO init.
+#      `docker compose up -d`           — brings up the three infra services.
+#
+#   2. Application (profile `app`):      app, sync, compile, web.
+#      `docker compose --profile app up -d --build`
+#      These build from deploy/Dockerfile.* .
+#
+# Port & address contract (see docs/operations.md §2, docs/architecture.md §4.4):
+#   * Every Rust service binds **0.0.0.0:8080** internally. The bind is driven by
+#     each binary's own address env var (NISABA_APP_ADDR / NISABA_SYNC_ADDR /
+#     NISABA_COMPILE_ADDR), with PORT available as a fallback.
+#   * Every HTTP service answers **GET /healthz → 200 ok**. This is the contract
+#     used by the HEALTHCHECK directives and depends_on health gates. sync also
+#     exposes GET /health/ready; app also exposes GET /health/ready
+#     (checks database connectivity). compile exposes /healthz only.
+#
+# Network isolation (see docs/security.md §3):
+#   * compile is on svc-net ONLY, has no published host port, and receives no S3
+#     or DB credentials — it is a pure function of the sources app sends it. It
+#     is never reachable from the browser/nginx.
+#   * The compile shared secret (NISABA_COMPILE_TOKEN) is injected into app and
+#     compile containers only.
+#
+# Everything binds to 127.0.0.1 only (not 0.0.0.0). Requires a `.env` file
+# (copy from .env.example). Validate with deploy/validate-compose.sh.
+# =============================================================================
+name: nisaba
+
+# ---------------------------------------------------------------------------
+# Shared extension fields (reused via YAML anchors)
+# ---------------------------------------------------------------------------
+x-restart-policy: &default-restart
+  restart: unless-stopped
+
+x-common-logging: &common-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# Common Rust-service env defaults (merged into each service's environment).
+# The internal port is fixed at 8080 (the aligned contract); only the *host*
+# port differs per service.
+x-rust-env: &rust-env
+  RUST_LOG: ${RUST_LOG:-info}
+  RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
+
+services:
+  # ===========================================================================
+  # PostgreSQL
+  # ===========================================================================
+  postgres:
+    image: postgres:17-bookworm@sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f
+    <<: [*default-restart, *common-logging]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      # Consumed by the bootstrap script (least-privilege roles + databases).
+      NISABA_DB_USER: ${NISABA_DB_USER:-nisaba_app}
+      NISABA_DB_PASSWORD: ${NISABA_DB_PASSWORD:?NISABA_DB_PASSWORD is required}
+      NISABA_DB_NAME: ${NISABA_DB_NAME:-nisaba}
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    networks: [db-net]
+    security_opt: ["no-new-privileges:true"]
+
+  # ===========================================================================
+  # MinIO (S3-compatible object storage)
+  # ===========================================================================
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z@sha256:9535594ad4122b7a78c6632788a989b96d9199b483d3bd71a5ceae73a922cdfa
+    <<: [*default-restart, *common-logging]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nisaba-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # /minio/health/live for liveness, /ready for readiness (volume mounted).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    ports:
+      - "127.0.0.1:${MINIO_HOST_API_PORT:-9100}:9000"
+      - "127.0.0.1:${MINIO_HOST_CONSOLE_PORT:-9101}:9001"
+    networks: [obj-net]
+    security_opt: ["no-new-privileges:true"]
+
+  # One-shot: create buckets + scoped service account. Idempotent.
+  minio-init:
+    image: minio/mc:RELEASE.2024-10-02T08-27-28Z@sha256:6284293efec74a9f1061c3bdfe30f0b99ffb90833096f3c5a6fb5f112ba80162
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nisaba-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      NISABA_S3_ACCESS_KEY: ${NISABA_S3_ACCESS_KEY:?NISABA_S3_ACCESS_KEY is required}
+      NISABA_S3_SECRET_KEY: ${NISABA_S3_SECRET_KEY:?NISABA_S3_SECRET_KEY is required}
+      NISABA_S3_BUCKET_BLOBS: ${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}
+      NISABA_S3_BUCKET_OPLOG: ${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}
+    entrypoint: /bin/sh
+    command: ["/deploy/init-buckets.sh"]
+    volumes:
+      - ./deploy/minio/init-buckets.sh:/deploy/init-buckets.sh:ro
+    networks: [obj-net]
+    restart: "no"
+
+  # ===========================================================================
+  # Keycloak (OIDC provider) — DEV ONLY (see deploy/keycloak/README.md).
+  # The imported realm ships demo users, a PUBLIC PKCE client (no secret) and
+  # sslRequired:"none". Production MUST replace all of these (docs/security.md).
+  # ===========================================================================
+  keycloak:
+    image: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0@sha256:09a381c715ab0b111835b70f2905955274843a219c6f27efb348e4d9f4086858}
+    <<: [*default-restart, *common-logging]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["start-dev", "--import-realm", "--health-enabled=true"]
+    environment:
+      # Admin console (http://127.0.0.1:8090/admin).
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
+      # Postgres backend (dedicated DB + role, not the superuser).
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
+      # HTTP (local dev). Production uses TLS behind a reverse proxy.
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_HTTP_PORT: ${KEYCLOAK_HTTP_PORT:-8090}
+      KC_HTTP_MANAGEMENT_PORT: "9000"
+    volumes:
+      - ./deploy/keycloak/nisaba-realm.json:/opt/keycloak/data/import/nisaba-realm.json:ro
+      - ./deploy/keycloak/healthcheck.sh:/usr/local/bin/kc-healthcheck.sh:ro
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      # Keycloak's image has no curl/wget; the mounted script does a real HTTP
+      # GET against the management /health/ready via bash /dev/tcp.
+      test: ["CMD-SHELL", "bash /usr/local/bin/kc-healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    ports:
+      - "127.0.0.1:${KEYCLOAK_HTTP_PORT:-8090}:${KEYCLOAK_HTTP_PORT:-8090}"
+    networks: [db-net, oidc-net]
+    security_opt: ["no-new-privileges:true"]
+
+  # ===========================================================================
+  # Application services (profile: app) — built from deploy/Dockerfile.*
+  # All bind 0.0.0.0:8080 and answer GET /healthz (docs/operations.md §2).
+  # ===========================================================================
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: nisaba-app
+    <<: *common-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    environment:
+      <<: *rust-env
+      # Bind address the nisaba-app binary reads (NOT a generic PORT).
+      NISABA_APP_ADDR: "0.0.0.0:8080"
+      # The service binary always uses the durable PostgreSQL and S3 adapters.
+      # Missing or invalid configuration fails startup; in-memory adapters are test-only.
+      DATABASE_URL: ${DATABASE_URL:-}
+      NISABA_S3_ENDPOINT: ${NISABA_S3_ENDPOINT:-}
+      NISABA_S3_ACCESS_KEY: ${NISABA_S3_ACCESS_KEY:-}
+      NISABA_S3_SECRET_KEY: ${NISABA_S3_SECRET_KEY:-}
+      NISABA_S3_REGION: ${NISABA_S3_REGION:-local}
+      NISABA_S3_BUCKET_BLOBS: ${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}
+      NISABA_S3_BUCKET_OPLOG: ${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}
+      NISABA_OIDC_ISSUER: ${NISABA_OIDC_ISSUER:-http://localhost:8090/realms/nisaba}
+      NISABA_OIDC_DISCOVERY_URL: ${NISABA_OIDC_DISCOVERY_URL:-http://keycloak:8090/realms/nisaba}
+      NISABA_OIDC_AUDIENCE: ${NISABA_OIDC_AUDIENCE:-nisaba}
+      NISABA_OIDC_CLIENT_ID: ${NISABA_OIDC_CLIENT_ID:-nisaba-web}
+      # JWKS the app verifies token signatures against, read INLINE at startup
+      # (the app does not fetch a discovery URL today). Empty → deny all tokens
+      # (the safe default). Populate via NISABA_OIDC_JWKS_JSON in .env, or use
+      # `just e2e` (which mints a dev key + JWKS via deploy/dev-token.py).
+      NISABA_OIDC_JWKS_JSON: ${NISABA_OIDC_JWKS_JSON:-}
+      # app calls compile over svc-net; the shared token authorises the call.
+      NISABA_COMPILE_URL: ${NISABA_COMPILE_URL:-http://compile:8080}
+      NISABA_COMPILE_TOKEN: ${NISABA_COMPILE_TOKEN:?NISABA_COMPILE_TOKEN is required}
+      # Machine credential for sync's per-document authorization calls.
+      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:-}
+    healthcheck:
+      # /health/ready checks database connectivity.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-8100}:8080"
+    networks: [db-net, obj-net, oidc-net, svc-net]
+    security_opt: ["no-new-privileges:true"]
+
+  sync:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: nisaba-sync
+    <<: *common-logging
+    environment:
+      <<: *rust-env
+      # Bind address the nisaba-sync binary reads (NOT a generic PORT).
+      NISABA_SYNC_ADDR: "0.0.0.0:8080"
+      # Filesystem op-log/snapshots (sync's Rust store): this volume holds the data.
+      # sync reads no NISABA_S3_* variables — it has no object-store adapter — so none
+      # are injected here. Add them back together with the adapter, not before.
+      NISABA_SYNC_DATA_DIR: /data
+      # Sync validates OIDC tokens, then asks app for document membership.
+      NISABA_SYNC_OIDC_ISSUER: ${NISABA_SYNC_OIDC_ISSUER:-}
+      NISABA_SYNC_OIDC_AUDIENCE: ${NISABA_SYNC_OIDC_AUDIENCE:-}
+      NISABA_SYNC_OIDC_JWKS_URL: ${NISABA_SYNC_OIDC_JWKS_URL:-}
+      NISABA_SYNC_AUTHZ_URL: ${NISABA_SYNC_AUTHZ_URL:-http://app:8080/internal/sync/authorize}
+      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:-}
+      NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME: ${NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:-1}
+    volumes:
+      - sync-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    ports:
+      - "127.0.0.1:${SYNC_HOST_PORT:-8101}:8080"
+    # No obj-net: sync persists to its own volume, not to MinIO.
+    networks: [oidc-net, svc-net]
+    security_opt: ["no-new-privileges:true"]
+
+  # compile: internal-only. No published host port, svc-net only, no S3/DB
+  # credentials. Reachable only by app at compile:8080. Never proxied by nginx.
+  compile:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rust
+      args:
+        SERVICE: nisaba-compile
+    <<: *common-logging
+    environment:
+      <<: *rust-env
+      # Bind address the nisaba-compile binary reads (NOT a generic PORT).
+      NISABA_COMPILE_ADDR: "0.0.0.0:8080"
+      # Shared secret with app. compile must enforce this on POST /compile.
+      NISABA_COMPILE_TOKEN: ${NISABA_COMPILE_TOKEN:?NISABA_COMPILE_TOKEN is required}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks: [svc-net]
+    security_opt: ["no-new-privileges:true"]
+
+  web:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    <<: *common-logging
+    depends_on:
+      - app
+      - sync
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8103}:8080"
+    networks: [svc-net]
+    security_opt: ["no-new-privileges:true"]
+
+# ===========================================================================
+# Networks — segmented for least privilege (see docs/security.md §3)
+# ===========================================================================
+networks:
+  # Postgres backplane. Internal-only: postgres + the services that need SQL.
+  db-net:
+    driver: bridge
+    internal: true
+  # Object-storage backplane. Internal-only: minio + services that need S3.
+  obj-net:
+    driver: bridge
+    internal: true
+  # Keycloak OIDC backchannel. Internal-only: keycloak + token-verifying app.
+  oidc-net:
+    driver: bridge
+    internal: true
+  # Service mesh (app/sync/compile/web). Egress-capable (e.g. Typst packages).
+  svc-net:
+    driver: bridge
+
+# ===========================================================================
+# Volumes
+# ===========================================================================
+volumes:
+  postgres-data:
+  minio-data:
+  keycloak-data:
+  sync-data:

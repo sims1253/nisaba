@@ -1,0 +1,244 @@
+/* No external font @import: the UI must work offline and without third-party
+   requests; the stacks below fall back to system fonts when DM Sans/Mono are
+   not installed. */
+:root{font-family:'DM Sans',ui-sans-serif,system-ui,sans-serif;color:#18242d;background:#f4f6f5;font-synthesis:none;--ink:#18242d;--muted:#5f6f76;--line:#dce3e1;--blue:#2766a5;--blue-soft:#e8f1fa;--green:#23805d;--paper:#fffdfa}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.topbar :focus-visible{outline-color:#7fc4a8}body{margin:0}.topbar{height:58px;background:#172832;color:#eaf2f0;display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid #33444c}.brand,.top-actions,.toolbar-actions,.panel-heading,.pane-toolbar,.editor-footer,.preview-toolbar,.dialog-heading,.dialog-actions{display:flex;align-items:center}.brand{gap:10px;font-weight:600;font-size:15px}.mark{width:25px;height:25px;display:grid;place-items:center;border-radius:6px;background:#73b69c;color:#122c28;font-weight:700}.crumb{font-family:'DM Mono',monospace;color:#98aab0;font-size:11px;margin-left:8px;font-weight:400}.top-actions{gap:18px}.save-status{color:#a6beb4;font-size:12px}.icon-button,.quiet-button,.close-button{border:0;background:transparent;color:inherit;cursor:pointer}.icon-button{font-family:'DM Mono',monospace;color:#aec0c4;font-size:12px}.avatar{background:#d8a26e;border:0;border-radius:50%;color:#35251a;font-size:11px;font-weight:700;height:28px;width:28px}.workspace{height:calc(100vh - 58px);display:grid;grid-template-columns:235px 4px minmax(420px,1fr) 4px minmax(470px,1fr)}.outline{background:#f8faf9;border-right:1px solid var(--line);padding:23px 15px;position:relative}.panel-heading{justify-content:space-between;margin:0 7px 24px}.panel-heading h2{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:#556164;margin:0}.quiet-button{color:#5f6c6c;letter-spacing:2px}.quiet-button:hover{color:#274b55;background:#eef2f1;border-radius:4px}.doc-label{display:flex;align-items:center;gap:8px;padding:10px 10px;margin-bottom:10px;font-weight:600;font-size:13px;color:#31444a}.file-icon{color:#5a8dad}.lock{margin-left:auto;color:#a1adae}.outline-item{width:100%;display:flex;gap:9px;text-align:left;border:0;border-left:2px solid transparent;background:transparent;padding:9px 7px 9px 10px;color:#66767b;font-size:12px;cursor:pointer;transition:background .12s ease,color .12s ease}.outline-item.active{background:#eaf2f5;border-left-color:#4f87a2;color:#1f4355;font-weight:600}.outline-item:hover:not(.active){background:#eef2f1}.outline-number{font-family:'DM Mono',monospace;font-size:10px;color:#5e6d6f;min-width:38px}.outline-footer{position:absolute;bottom:25px;left:23px;right:23px;border-top:1px solid var(--line);padding-top:13px;color:#5e6a6a;font-size:10px;display:flex;gap:8px;align-items:center}.build-dot,.green-dot{display:inline-block;width:6px;height:6px;background:#62ac88;border-radius:50%}.editor-pane,.preview-pane{min-width:0;background:#fff}.editor-pane{border-right:1px solid var(--line);display:flex;flex-direction:column}.pane-toolbar{min-height:54px;justify-content:space-between;padding:6px 18px;border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap;gap:4px}.mode-label,.build-label{margin-left:10px;background:#f0f4f3;color:#5f6c70;border-radius:4px;font-size:10px;padding:4px 7px}.toolbar-actions{gap:8px;flex-wrap:wrap;justify-content:flex-end}.toolbar-button,.primary-button,.secondary-button{font:inherit;border-radius:5px;padding:7px 11px;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,filter .15s ease}.toolbar-button,.secondary-button{background:#fff;border:1px solid var(--line);color:#50646a;font-size:12px}.toolbar-button:hover,.secondary-button:hover{background:#f4f8f7;border-color:#bcc7c5}.primary-button{border:1px solid #2766a5;background:#2766a5;color:white;font-weight:600;font-size:12px}.primary-button:hover{background:#215890;border-color:#215890}.primary-button span{opacity:.65;font-family:'DM Mono',monospace;font-size:10px;margin-left:9px}.review-banner{height:35px;background:#fdf7ec;border-bottom:1px solid #f0e5ce;color:#856039;font-size:11px;display:flex;align-items:center;gap:8px;padding:0 18px}.review-banner strong{color:#77572b}.review-banner button{margin-left:auto;border:0;background:transparent;color:#8a5a22;font-size:11px;text-decoration:underline}.review-icon{background:#cf9c4d;color:white;border-radius:50%;font-size:9px;width:15px;height:15px;text-align:center}.editor-host{flex:1;overflow:auto}.cm-editor{height:100%;font-size:14px}.cm-scroller{font-family:'DM Mono',monospace!important;line-height:1.8;padding:27px 18px}.cm-gutters{background:#fff;border:0;color:#88969a}.cm-activeLineGutter,.cm-activeLine{background:#f7faf9}.cm-content{caret-color:#2766a5}.typst-heading{font-weight:600;color:#315b71}.typst-list-line{padding-left:14px;text-indent:-10px}
+.typst-list-marker{display:inline-block;width:16px;color:#5e6d6f;font-weight:600}.typst-list-marker-unordered{color:#6b7c7e}
+.typst-list-marker-ordered{font-family:'DM Mono',monospace;font-size:.85em;color:#3f6b80;font-weight:700}.construct-chip{font-family:'DM Sans',sans-serif;border:0;border-radius:4px;padding:3px 7px;margin:0 2px;cursor:pointer;font-size:11px;vertical-align:middle;background:#edf3f4;color:#407487;transition:filter .15s ease}.construct-citation{background:#e9f1fa;color:#37699d}.construct-figure,.construct-table{background:#f5ece0;color:#7a5a32}.construct-template{background:#edf5e9;color:#3e6b49}.construct-citation:hover,.construct-figure:hover,.construct-table:hover,.construct-template:hover{filter:brightness(.95)}.review-suggestion{background:#dff2e8;border-bottom:2px solid #70b18e;cursor:pointer;border-radius:2px}.review-suggestion:hover{background:#c9ead9}.review-comment{background:#fff0bf;border-bottom:2px solid #d7aa42;cursor:pointer;border-radius:2px}.review-comment:hover{background:#ffe89e}.review-comment-anchor{font:inherit;color:#946818;background:transparent;border:1px solid transparent;border-radius:50%;cursor:pointer;font-size:9px;line-height:1;padding:2px 3px;margin:0 1px;vertical-align:baseline}.review-comment-anchor:hover{background:#fff0bf;border-color:#d7aa42;color:#9a6b1f}.editor-footer{justify-content:space-between;padding:10px 18px;border-top:1px solid var(--line);font-size:10px;color:#627070}.editor-footer .green-dot{margin-right:6px}.preview-pane{background:#eef2f1;display:flex;flex-direction:column;position:relative}.preview-toolbar{min-height:38px;border-bottom:1px solid var(--line);padding:0 12px;gap:10px;background:#f8faf9}.view-tab{border:0;background:transparent;height:38px;color:#5a6a6e;font-size:11px;cursor:pointer;transition:color .15s ease,background .15s ease}.view-tab:hover{background:#eef2f1;color:#2d5d70}.view-tab.active{color:#2d5d70;border-bottom:2px solid #4c8ba1;font-weight:600}.page-count{margin-left:auto;font-size:11px;color:#5f6c70}
+.pdf-zoom-controls{display:flex;align-items:center;gap:2px;margin-left:auto}
+.pdf-zoom-controls[hidden]{display:none}
+.zoom-button{border:1px solid var(--line);background:#fff;color:#50646a;border-radius:4px;width:26px;height:26px;display:grid;place-items:center;cursor:pointer;font-size:14px;line-height:1;padding:0}
+.zoom-button:hover{background:#eef2f1;border-color:#bcc7c5}
+.zoom-button:disabled{opacity:.4;cursor:not-allowed}
+.zoom-level{font:11px 'DM Mono',monospace;min-width:44px;text-align:center;color:#5f6c70;user-select:none}
+.pdf-search-highlight{position:absolute;z-index:5;background:rgba(255,210,40,.35);border:2px solid rgba(255,180,0,.7);border-radius:2px;pointer-events:none;transition:opacity 1.5s ease-out;animation:pdf-highlight-pulse 1s ease-out 2}
+/* pdf.js v5 text-layer alignment (pdfjs-dist v5.7.284).
+   The viewer renders the pdf.js TextLayer into .pdf-text-layer, NOT .textLayer,
+   so the rules in pdf_viewer.css never match. pdf.js v5 sets --min-font-size on
+   the container and --font-height / --scale-x / --rotate on every span, then
+   RELIES on CSS to consume them via font-size + transform. Without the cascade
+   below the spans inherit the body font-size and are never scaled/rotated, so the
+   transparent selection boxes don't line up with the canvas glyphs. The rules
+   mirror pdf_viewer.css .textLayer (lines 885-935).
+   --total-scale-factor must equal the viewport (zoom) scale. The default 1.25
+   matches DEFAULT_ZOOM_INDEX in pdf-viewer.ts; for pixel-perfect alignment at
+   other zoom levels renderPage() should set it inline, e.g.
+   host.style.setProperty("--scale-factor", String(this.zoom)). */
+.pdf-page-shell{--scale-factor:1.25;--user-unit:1;--total-scale-factor:calc(var(--scale-factor) * var(--user-unit))}
+.pdf-text-layer{position:absolute;left:0;top:0;right:0;bottom:0;width:100%!important;height:100%!important;overflow:hidden;line-height:1;opacity:1;user-select:text;-webkit-user-select:text;--min-font-size:1;--text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size));--min-font-size-inv:calc(1 / var(--min-font-size))}
+.pdf-text-layer span:not(.markedContent){color:transparent;position:absolute;white-space:pre;transform-origin:0% 0%;z-index:1;--font-height:0;font-size:calc(var(--text-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
+.pdf-text-layer .markedContent{display:contents}
+.pdf-text-layer ::selection{background:rgba(100,160,255,.4)}
+.pdf-text-layer br{display:none}
+.pdf-loading{display:flex;align-items:center;justify-content:center;height:100%;color:#8a989b;font:12px 'DM Sans',sans-serif}
+@keyframes pdf-highlight-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,180,0,0)}50%{box-shadow:0 0 8px 3px rgba(255,180,0,.4)}}
+#document-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.pdf-viewer{overflow:auto;flex:1;min-height:0;padding:6px 6px 14px;background:#e8edeb}.pdf-page{width:max-content;min-width:300px;min-height:690px;margin:0 auto 14px;background:var(--paper);box-shadow:0 2px 10px #bac7c480;padding:0;color:#333b3c;font-family:Georgia,serif;position:relative}.pdf-running{font-family:'DM Sans',sans-serif;display:flex;justify-content:space-between;color:#9aa5a3;font-size:7px;letter-spacing:.1em;border-bottom:1px solid #dfe2db;padding-bottom:8px}.pdf-page h1{font-size:23px;font-weight:400;line-height:1.2;color:#1e424d;margin:34px 0 12px}.pdf-page h2{font-size:16px;font-weight:400;color:#356371;margin:25px 0 10px}.pdf-lede{font-size:11px;color:#788180}.pdf-page p{font-size:10px;line-height:1.65}.pdf-page hr{border:0;border-top:1px solid #d9dfdc;margin:26px 0}.pdf-page figure{margin:24px 0}.figure-placeholder{height:103px;background:#f1f4f0;border:1px solid #d7dfd7;color:#9daaa4;display:flex;align-items:center;justify-content:center;gap:8px;font:10px 'DM Sans'}.pdf-page figcaption,.pdf-page caption{font:9px 'DM Sans';color:#727e7e;text-align:left;padding-top:7px}.link-button{border:0;background:transparent;color:#3979a1;font-size:9px;cursor:pointer}.link-button:hover{text-decoration:underline}.pdf-page table{border-collapse:collapse;width:100%;font:9px 'DM Sans';margin-top:22px}.pdf-page th,.pdf-page td{border-bottom:1px solid #d7dfdc;text-align:left;padding:7px 5px}.pdf-page th{background:#edf3f1;color:#45616a;font-weight:600}.pdf-footer{font:7px 'DM Sans';color:#abb3ae;position:absolute;bottom:21px;left:49px;right:49px;border-top:1px solid #e1e4df;padding-top:7px;display:flex;justify-content:space-between}.secondary-page{min-height:520px}.skeleton-line{height:8px;background:linear-gradient(90deg,#eff2ee 25%,#e6eae6 37%,#eff2ee 63%);background-size:400% 100%;margin:13px 0;width:90%;animation:skeleton-shimmer 1.4s ease infinite}.skeleton-line.short{width:60%}@keyframes skeleton-shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}.connection-state{position:absolute;bottom:15px;right:23px;padding:7px 10px;background:#fff;border:1px solid var(--line);border-radius:5px;box-shadow:0 2px 9px #617a7620;font-size:10px;color:#5f6c70}.connection-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#55a77a;margin-right:7px}.edit-panel{border:1px solid var(--line);border-radius:9px;padding:0;width:385px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);overflow-y:auto;color:var(--ink);box-shadow:0 12px 40px #19333335}.edit-panel::backdrop{background:#17283245}.edit-panel form{padding:25px}.dialog-heading{justify-content:space-between}.eyebrow{font:10px 'DM Mono';letter-spacing:.12em;text-transform:uppercase;color:#5a6868}.dialog-heading h2{font-size:20px;margin:5px 0 15px;color:#274b55}.close-button{font-size:23px;color:#859292}.close-button:hover{color:#4a5757;background:#eef2f1;border-radius:5px}.edit-panel p{font-size:12px;color:#718080;line-height:1.5}.edit-panel label{display:block;font-size:11px;color:#556c70;margin-top:24px}.edit-panel input{display:block;width:100%;margin-top:7px;border:1px solid #ccd8d5;border-radius:4px;padding:9px;font:13px inherit}.dialog-actions{justify-content:flex-end;gap:8px;margin-top:28px}.empty-state{padding:20px 10px;color:var(--muted);font-size:12px}.empty-state h2,.empty-state h3{color:var(--ink);margin:0 0 8px}.empty-state p{line-height:1.5}.empty-preview{display:grid;place-items:center}.panel-note{font-size:12px;color:var(--muted);line-height:1.5}.reference-results{margin-top:18px;max-height:45vh;overflow:auto}.reference-item{display:grid;gap:7px;border-top:1px solid var(--line);padding:13px 0;font-size:12px}.reference-item span{color:var(--muted);font-size:11px}.fulltext-warning{color:#a06b29!important}.fulltext-ok{color:var(--green)!important}@media (max-width:1250px){body{min-width:0}.workspace{grid-template-columns:210px 4px minmax(380px,1fr) 4px minmax(420px,1fr)}.crumb{display:none}}@media (max-width:900px){.workspace{display:flex;flex-direction:column;height:auto}.outline{min-height:180px;border-right:0;border-bottom:1px solid var(--line)}.outline-footer{position:static;margin:15px 7px 0}.editor-pane,.preview-pane{min-height:550px}.topbar{padding:0 12px}.top-actions{gap:8px}.gutter,.review-pane,.review-gutter,.show-pane-tab{display:none!important}}
+
+/* Workspace additions: outline navigation, projection picker, panel lists. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.outline-row{display:flex;align-items:stretch;gap:0}
+.outline-row .outline-item{flex:1;min-width:0}
+.outline-delete{border:0;background:transparent;color:#c4a0a0;font-size:16px;cursor:pointer;padding:0 8px;opacity:0;transition:opacity .15s;flex-shrink:0}
+.outline-row:hover .outline-delete,.outline-row:focus-within .outline-delete{opacity:1}
+.outline-delete:hover{color:#c44;color:#b33;background:#fbebeb}
+.outline-back{display:block;width:100%;text-align:left;border:0;background:transparent;color:#7b888c;font:inherit;font-size:11px;padding:0 7px 14px;cursor:pointer}
+.outline-back:hover{color:#2766a5}
+.view-select select{font:inherit;font-size:12px;color:#50646a;background:#fff;border:1px solid var(--line);border-radius:5px;padding:6px 8px}.view-select select:hover{border-color:#bcc7c5}.edit-panel input:focus,.edit-panel select:focus,.edit-panel textarea:focus,.share-invite input:focus,.share-invite select:focus,.view-select select:focus{border-color:#2766a5;box-shadow:0 0 0 2px rgba(39,102,165,.2);outline:none}
+.outline-item.active .outline-number{color:#2d5d70}.outline-add{margin-top:6px;border-top:1px dashed var(--line);border-radius:0;color:#3f6b80}
+.document-path{margin-left:auto;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#839095;font:9px 'DM Mono',monospace;font-weight:400}
+.outline-item.active .document-path{color:#557785}
+.review-banner[hidden]{display:none}
+.review-list,.export-files{margin:14px 0 0;padding-left:18px;font-size:12px;color:#5c6c70;line-height:1.7}
+.export-files{max-height:32vh;overflow:auto}
+.export-files .link-button{font-size:11px;font-family:'DM Mono',monospace}
+.construct-source{font-family:'DM Mono',monospace;font-size:11px;background:#f4f7f6;border:1px solid var(--line);border-radius:5px;padding:9px;overflow:auto;color:#3d5158}
+.edit-panel select{display:block;width:100%;margin-top:7px;border:1px solid #ccd8d5;border-radius:4px;padding:9px;font:13px inherit;background:#fff}
+/* Textarea mirrors the input rule so the multi-field reference form's authors
+   box matches the other fields. resize:vertical keeps it from blowing out the row. */
+.edit-panel textarea{display:block;width:100%;margin-top:7px;border:1px solid #ccd8d5;border-radius:4px;padding:9px;font:13px inherit;resize:vertical;min-height:2.6em}
+.edit-panel button+button{margin-left:8px}
+.edit-panel .dialog-actions{margin-top:28px}
+.edit-panel .primary-button:disabled{opacity:.55;cursor:not-allowed}
+.prompt-error{font-size:11px;color:#a06b29;margin:8px 0 0}
+.reference-item .toolbar-button{justify-self:start}
+.share-invite{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 4px}
+.share-invite input,.share-invite select{font:inherit;border:1px solid #ccd8d5;border-radius:4px;padding:8px;background:#fff;color:var(--ink)}
+.share-invite input{flex:1 1 180px}
+.share-invite select{flex:0 0 auto}
+.share-members-heading{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:#7b888c;margin:22px 0 0}
+#sign-in:disabled{opacity:.55;cursor:not-allowed}
+/* No-document landing: hide editor/preview chrome and show a focused placeholder
+   per pane so the empty 3-column layout doesn't imply an open document. The panes
+   are column flex by default; centring the lone placeholder reads as intentional. */
+.pane-placeholder{display:none;flex:1;place-items:center;text-align:center}
+body:not(.has-document) .editor-chrome,body:not(.has-document) .preview-chrome{display:none}
+body:not(.has-document) .pane-placeholder{display:grid}
+body:not(.has-document) .editor-pane,body:not(.has-document) .preview-pane{justify-content:center}
+
+/* Share-link UI: link rows with copy/revoke buttons.
+   Reuses .reference-results / .reference-item spacing so the links list sits
+   naturally below the members list in the Share dialog. */
+.share-link-row{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding:10px 0;font-size:12px}
+.share-link-row code{font-family:'DM Mono',monospace;font-size:10px;color:#2d5d70;background:#eef3f6;border-radius:3px;padding:2px 5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.share-link-row .toolbar-button{flex-shrink:0;font-size:11px;padding:4px 8px}
+
+/* History timeline + diff view.
+   The timeline is a vertical list of clickable entries (newest first); each shows
+   the revision number, author, and relative timestamp. Selecting one loads its
+   body into the diff pane; selecting a second one computes a line-by-line diff.
+   The diff pane uses a monospace pre with added/removed lines highlighted. */
+.history-layout{display:grid;grid-template-columns:minmax(130px,180px) minmax(0,1fr);gap:0;margin-top:14px;min-height:300px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.history-timeline{list-style:none;margin:0;padding:0;overflow:auto;max-height:50vh;border-right:1px solid var(--line);background:#f8faf9}
+.history-entry{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-bottom:1px solid var(--line);cursor:pointer;font-size:11px}
+.history-entry:hover{background:#eaf2f5}
+.history-entry.selected{background:#e8f1fa;border-left:3px solid #2766a5}
+.history-entry-rev{font-family:'DM Mono',monospace;font-weight:600;color:#274b55;font-size:11px}
+.history-entry-meta{color:var(--muted);font-size:10px}
+.history-diff-pane{overflow:auto;max-height:50vh;padding:0;background:#fffdfa}
+.history-diff-pane pre{margin:0;padding:10px;font:11px 'DM Mono',monospace;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.diff-line-added{background:#e6f4e6;color:#1a5c1a;padding:0 3px;display:block}
+.diff-line-removed{background:#fce8e8;color:#8b1a1a;padding:0 3px;display:block}
+.diff-line-context{padding:0 3px;display:block}
+.history-empty{padding:20px;color:var(--muted);font-size:12px;text-align:center}
+
+/* Inline review popover (Overleaf-style thread view).
+   Anchored to the clicked comment/suggestion via getBoundingClientRect; positioned
+   fixed relative to the viewport. Amber for comments (matches .review-comment), green
+   accent for suggestions (matches .review-suggestion) so the kind is obvious at a glance.
+   The popover is appended to #app and uses z-index above the editor but below the modal
+   dialog backdrop so the overview dialog still wins when both are open. */
+.review-popover{position:fixed;z-index:50;width:268px;background:#fffdfa;border:1px solid var(--line);border-left:3px solid #d7aa42;border-radius:7px;box-shadow:0 8px 28px #19333326;font-size:12px;color:var(--ink);padding:0}
+.review-popover[hidden]{display:none}
+.review-popover-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:10px 11px 6px}
+.review-popover-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+.review-popover-meta strong{font-size:11px;color:#274b55}
+.review-popover-author{font-size:10px;color:var(--muted)}
+.review-popover-kind{align-self:flex-start;font:9px 'DM Mono',monospace;letter-spacing:.06em;text-transform:uppercase;border-radius:3px;padding:1px 5px;margin-bottom:2px}
+.review-popover-kind-comment{background:#fff0bf;color:#9a6b1f}
+.review-popover-kind-insert{background:#dff2e8;color:#2c6b4f}
+.review-popover-kind-delete{background:#fdecea;color:#a23a2c}
+.review-popover-close{border:0;background:transparent;font-size:18px;line-height:1;color:#9aa6a6;cursor:pointer;padding:0 2px;border-radius:4px}
+.review-popover-close:hover{background:#eef2f1;color:#566}
+.review-popover-body{margin:0;padding:2px 12px 10px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.review-popover-snippet{margin:0;padding:6px 11px 9px;border-left:0;font-style:italic;color:#3d5158;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.review-popover-actions{display:flex;justify-content:flex-end;gap:7px;padding:8px 11px 11px;border-top:1px solid var(--line)}
+
+/* Resizable + hideable workspace columns.
+   Gutters are 4px grid tracks inserted between the outline/editor/preview/review
+   columns; mousedown on one drives a JS resize that rewrites grid-template-columns.
+   `!important` on the hidden rules is needed because the panes default to
+   display:flex/grid, which otherwise override the [hidden] attribute. */
+.gutter{width:4px;cursor:col-resize;background:var(--line);position:relative;z-index:2;transition:background .08s}
+.gutter:hover{background:#bcc7c5}
+.gutter[hidden]{display:none!important}
+.workspace.dragging{cursor:col-resize;user-select:none}
+.workspace.dragging .gutter{background:#9aa6a4}
+.outline[hidden],.editor-pane[hidden],.preview-pane[hidden],.review-pane[hidden]{display:none!important}
+/* Toolbars wrap the title and actions; hide buttons dock against the right edge. */
+.panel-heading-actions{display:flex;align-items:center;gap:4px;margin-left:auto}
+.pane-toolbar-left{display:flex;align-items:center;gap:4px;min-width:0}
+.hide-button{border:0;background:transparent;color:#8f9a9a;font-size:16px;line-height:1;cursor:pointer;padding:2px 5px;border-radius:4px}
+.hide-button:hover{background:#eef2f1;color:#2766a5}
+.show-pane-tab{position:fixed;top:74px;z-index:20;width:16px;height:54px;display:grid;place-items:center;border:1px solid var(--line);background:#f8faf9;color:#7b888c;font-size:13px;cursor:pointer;box-shadow:0 1px 6px #1933331a;transition:background .08s,color .08s}
+.show-pane-tab[hidden]{display:none}
+.show-pane-tab:hover{background:#eaf2f5;color:#2766a5;border-color:#bcc7c5}
+.show-pane-tab-left{left:0;border-left:0;border-radius:0 5px 5px 0}
+.show-pane-tab-right{right:0;border-right:0;border-radius:5px 0 0 5px}
+.selection-comment-button{position:fixed;z-index:60;padding:4px 10px;font-size:12px;border:1px solid #d7aa42;background:#fffdfa;color:#9a6b1f;border-radius:5px;cursor:pointer;box-shadow:0 2px 8px #1933331a;white-space:nowrap}
+.selection-comment-button:hover{background:#fff0bf}
+
+/* Review sidebar (Overleaf-style docked 4th column).
+   Amber for comments (matches .review-comment), green for inserts (matches
+   .review-suggestion), red for deletes — the same accents as the inline marks and
+   the popover, so a card is recognisable against its source span. */
+.review-pane{background:#fbfcfc;border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.review-pane .pane-toolbar{background:#f8faf9}
+.review-sidebar-body{flex:1;min-height:0;overflow:auto;padding:10px 12px 16px;display:flex;flex-direction:column;gap:10px}
+.review-sidebar-toolbar{display:flex;gap:7px;flex-wrap:wrap}
+.toolbar-button.is-on{border-color:#cf9c4d;color:#967446;background:#fdf7ec}
+.toolbar-button:disabled{opacity:.5;cursor:not-allowed}
+.review-sidebar-toolbar .toolbar-button.is-on{border-color:#cf9c4d;color:#967446;background:#fdf7ec}
+.review-sidebar-empty{font-size:12px;color:var(--muted);line-height:1.5;padding:18px 4px}
+.review-cards{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.review-card{border:1px solid var(--line);border-left:3px solid var(--line);border-radius:6px;background:#fffdfa;padding:9px 10px;cursor:pointer;transition:background .08s,box-shadow .08s}
+.review-card:hover{background:#f4f8f7;box-shadow:0 1px 3px #19333314}
+.review-card-comment{border-left-color:#d7aa42}
+.review-card-suggestion{border-left-color:#70b18e}
+.review-card-head{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+.review-card-author{font-size:11px;color:var(--muted);margin-left:auto}
+.review-card-orphan{font-size:9px;color:#8a5a22;background:#fdf7ec;border-radius:3px;padding:1px 5px}
+.review-chip{font:9px 'DM Mono',monospace;letter-spacing:.06em;text-transform:uppercase;border-radius:3px;padding:2px 6px;color:#fff}
+.review-chip-comment{background:#d7aa42}
+.review-chip-insert{background:#5a9e7b}
+.review-chip-delete{background:#c0392b}
+.review-card-text{margin:0 0 7px;font-size:12px;color:#3d5158;line-height:1.45;white-space:pre-wrap;word-break:break-word;font-style:italic}
+.review-card-note{margin:0 0 7px;font-size:10px;color:#8a5a22}
+.review-card-actions{display:flex;justify-content:flex-end;gap:6px}
+.review-card-actions .toolbar-button,.review-card-actions .primary-button{font-size:11px;padding:4px 9px}
+.review-sidebar-bulk{margin-top:auto;padding-top:10px;border-top:1px solid var(--line);display:flex;gap:7px;justify-content:flex-end}
+
+/* Author identity: avatar chip (initials on a per-author colour) + timestamp.
+   --hue is set inline per author (authorHue in main.ts); hsl() turns it into a
+   soft tinted background with a readable dark-on-light foreground, so the same
+   name always renders the same colour across sessions and peers (Google Docs does
+   the same). The avatar is a flex-shrink:0 chip so long names never squeeze it. */
+.review-avatar{flex:0 0 auto;display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font:600 9px 'DM Sans',sans-serif;color:hsl(var(--hue,210),55%,24%);background:hsl(var(--hue,210),65%,90%);border:1px solid hsl(var(--hue,210),45%,80%);text-transform:uppercase;line-height:1}
+.review-card-author{display:inline-flex;align-items:baseline;gap:5px;min-width:0;font-size:11px;color:#3d5158;font-weight:600}
+/* The time is a lighter, smaller suffix inside the author line; truncates so a long
+   name still fits the card without wrapping the timestamp to its own line. */
+.review-card-time{font-size:10px;color:var(--muted);font-weight:400;white-space:nowrap}
+.review-card-head .review-avatar{margin-left:auto;order:2}
+.review-card-head .review-card-author{order:1;margin-left:0}
+.review-card-head .review-card-orphan{order:3}
+/* Popover avatar sits at the head's right edge (before the close button). */
+.review-popover-head .review-avatar{margin-left:auto}
+/* "Resolved by {name} · {time}" — shown beneath the snippet in the popover for a
+   resolved/accepted/rejected item. Muted italic to read as an audit line. */
+.review-resolved-line{display:block;margin:0 12px 8px;padding:5px 8px;font-size:10px;font-style:italic;color:#5a6f6a;background:#eef3f1;border-radius:4px}
+
+/* Accessibility: honour the user's reduced-motion preference so the PDF search
+   highlight pulse and any transitions don't animate for motion-sensitive users. */
+@media (prefers-reduced-motion:reduce){.pdf-search-highlight{animation:none;transition:opacity .01s}.gutter{transition:none}.show-pane-tab{transition:none}}
+
+/* Themed scrollbars for the custom-scroll surfaces (PDF viewer, review sidebar,
+   reference/export lists, history panes, source preview, dialog, diagnostics).
+   Firefox uses scrollbar-width/scrollbar-color; Chromium/Safari use the
+   ::-webkit-scrollbar pseudo-elements. The track is transparent and the thumb is
+   inset (background-clip:padding-box + transparent border) so it never touches the
+   content edge, matching the rest of the UI's hairline aesthetic. */
+.pdf-viewer,.review-sidebar-body,.reference-results,.export-files,.construct-source,.history-timeline,.history-diff-pane,.edit-panel,.diagnostics-list{scrollbar-width:thin;scrollbar-color:#c4cfcd transparent}
+.pdf-viewer::-webkit-scrollbar,.review-sidebar-body::-webkit-scrollbar,.reference-results::-webkit-scrollbar,.export-files::-webkit-scrollbar,.construct-source::-webkit-scrollbar,.history-timeline::-webkit-scrollbar,.history-diff-pane::-webkit-scrollbar,.edit-panel::-webkit-scrollbar,.diagnostics-list::-webkit-scrollbar{width:10px;height:10px}
+.pdf-viewer::-webkit-scrollbar-track,.review-sidebar-body::-webkit-scrollbar-track,.reference-results::-webkit-scrollbar-track,.export-files::-webkit-scrollbar-track,.construct-source::-webkit-scrollbar-track,.history-timeline::-webkit-scrollbar-track,.history-diff-pane::-webkit-scrollbar-track,.edit-panel::-webkit-scrollbar-track,.diagnostics-list::-webkit-scrollbar-track{background:transparent}
+.pdf-viewer::-webkit-scrollbar-thumb,.review-sidebar-body::-webkit-scrollbar-thumb,.reference-results::-webkit-scrollbar-thumb,.export-files::-webkit-scrollbar-thumb,.construct-source::-webkit-scrollbar-thumb,.history-timeline::-webkit-scrollbar-thumb,.history-diff-pane::-webkit-scrollbar-thumb,.edit-panel::-webkit-scrollbar-thumb,.diagnostics-list::-webkit-scrollbar-thumb{background:#c4cfcd;border:2px solid transparent;border-radius:6px;background-clip:padding-box}
+.pdf-viewer::-webkit-scrollbar-thumb:hover,.review-sidebar-body::-webkit-scrollbar-thumb:hover,.reference-results::-webkit-scrollbar-thumb:hover,.export-files::-webkit-scrollbar-thumb:hover,.construct-source::-webkit-scrollbar-thumb:hover,.history-timeline::-webkit-scrollbar-thumb:hover,.history-diff-pane::-webkit-scrollbar-thumb:hover,.edit-panel::-webkit-scrollbar-thumb:hover,.diagnostics-list::-webkit-scrollbar-thumb:hover{background:#a9b6b4;background-clip:padding-box}
+
+/* High-contrast / forced-colours mode: thicken focus rings and borders so
+   interactive elements stay clearly delineated when the OS enforces stronger
+   contrast. The default hairline borders (var(--line) ~ #dce3e1) wash out under
+   forced colours; a 2px solid mid-tone keeps fields and buttons perceptible. */
+@media (prefers-contrast:more){
+  :focus-visible{outline:3px solid #000;outline-offset:2px}
+  .topbar :focus-visible{outline:3px solid #fff}
+  .outline-item.active,.history-entry.selected{border-left-width:4px}
+  .toolbar-button,.secondary-button,.zoom-button,.edit-panel input,.edit-panel select,.edit-panel textarea,.share-invite input,.share-invite select,.view-select select{border:2px solid #50646a}
+}
+
+/* Printing: the app is screen-first, but printing should still produce a usable
+   artefact. Hide all chrome (topbar, toolbars, outline, gutters, review, and the
+   connection/diagnostics overlays) and render only the compiled preview pages as a
+   clean flowing document. Without this the dark topbar and multi-column grid print
+   and the page is mostly empty whitespace. */
+@media print{
+  .topbar,.outline,.gutter,.pane-toolbar,.editor-footer,.preview-toolbar,.connection-state,.diagnostics-list,.show-pane-tab,.selection-comment-button,.review-pane,.review-popover,.editor-pane{display:none!important}
+  .workspace{display:block;height:auto}
+  .preview-pane{display:block;min-height:0;border:0;background:#fff}
+  .pdf-viewer{overflow:visible;padding:0;background:#fff;height:auto}
+  .pdf-page{box-shadow:none;break-inside:avoid;page-break-inside:avoid}
+}
+
+/* Reduced-motion additions for the new transitions/animations introduced above
+   (outline hover fade, button hovers, select hover, skeleton shimmer). A second
+   media block is valid and cascades with the one at the top of this section. */
+@media (prefers-reduced-motion:reduce){
+  .outline-item,.quiet-button,.close-button,.view-select select{transition:none}
+  .skeleton-line{animation:none;background:#eff2ee}
+}

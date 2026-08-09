@@ -1,0 +1,53 @@
+name: web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.base.json'
+      - '.github/workflows/web.yml'
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.base.json'
+      - '.github/workflows/web.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Strict: install happens at the workspace root (single bun.lock), then
+  # scripts run inside the web package. There is no "skip if absent" fallback.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3'
+
+      - name: Install dependencies (workspace root, frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+        working-directory: web
+
+      - name: Build
+        run: bun run build
+        working-directory: web
+
+      - name: Test
+        run: bun run test
+        working-directory: web

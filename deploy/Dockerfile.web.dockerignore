@@ -1,0 +1,24 @@
+# BuildKit sidecar ignore for deploy/Dockerfile.web (context = repo root).
+# The web build only needs web/ and deploy/web/; exclude everything Rust + infra.
+
+.git
+.github
+docs
+crates
+services
+target
+**/target
+node_modules
+**/node_modules
+web/dist
+artifacts
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+/.claude
+deny.toml
+docker-compose.yml
+justfile
+rustfmt.toml

@@ -1,0 +1,1966 @@
+//! HTTP application service for projects, documents, references, and exports.
+//!
+//! The DTOs in this crate are deliberately owned by the HTTP service.  They are the stable
+//! wire contract; adapters can translate them to shared/domain crates when those crates settle.
+#![allow(clippy::many_single_char_names)]
+
+mod auth;
+mod compile_client;
+mod persistence;
+mod types;
+
+pub use auth::*;
+pub use compile_client::*;
+pub use persistence::{BlobStore, MemoryBlobStore, PostgresRepository, S3BlobStore};
+pub use types::*;
+
+use auth::{Permission, permitted, project_access, project_acl};
+
+use async_trait::async_trait;
+use axum::{
+    Json, Router,
+    extract::{DefaultBodyLimit, Path, State},
+    http::{HeaderMap, StatusCode, header},
+    middleware,
+    routing::{delete, get, post},
+};
+use base64::Engine as _;
+use chrono::Utc;
+use nisaba_core::{Document as CoreDocument, View as CoreView};
+use nisaba_export::{PdfCompliance, ProjectArchiveInput, build_project_archive, write_zip};
+use nisaba_references::{
+    Bibliography, Citation, FullText as CoreFullText, IssuedDate, Metadata as CoreMetadata, Person,
+    ReferenceEntry as CoreReferenceEntry, ReferenceId, bibliography_yaml, extract_citations,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::Arc,
+};
+use subtle::ConstantTimeEq;
+use uuid::Uuid;
+
+/// Reserved bibliography basename.
+const REFS_SOURCE_PATH: &str = "refs.yml";
+
+/// Reserved review support-file path.
+const MIN_SNAPSHOT_INTERVAL_SECS: i64 = 60;
+const REVIEW_SUPPORT_PATH: &str = "review.typ";
+
+/// The review support-file body.
+const REVIEW_SUPPORT_SOURCE: &str = "\
+#let add = it => text(fill: green)[+#it]
+#let del = it => text(fill: red)[#strike[#it]]
+#let rep-open = it => []
+#let rep-close = it => []
+";
+
+fn fulltext_blob_ref(reference_id: Uuid) -> String {
+    format!("fulltext/{reference_id}")
+}
+
+/// Hashes a share-link token with SHA-256 (hex).
+fn hash_token(token: &str) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(token.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Repository boundary. A durable Postgres adapter can implement this trait without changing
+/// HTTP DTOs. `MemoryRepository` is only the explicitly limited local/test adapter.
+#[async_trait]
+pub trait Repository: Send + Sync {
+    async fn create_project(
+        &self,
+        value: Project,
+        audit: Option<AuditEvent>,
+    ) -> Result<Project, RepoError>;
+    async fn get_project(&self, id: Uuid) -> Result<Project, RepoError>;
+    async fn list_projects(&self) -> Result<Vec<Project>, RepoError>;
+    async fn create_membership(
+        &self,
+        value: ProjectMembership,
+    ) -> Result<ProjectMembership, RepoError>;
+    async fn get_membership(
+        &self,
+        project_id: Uuid,
+        subject: &str,
+    ) -> Result<ProjectMembership, RepoError>;
+    async fn list_memberships(&self, project_id: Uuid)
+    -> Result<Vec<ProjectMembership>, RepoError>;
+    async fn update_project(
+        &self,
+        value: Project,
+        audit: Option<AuditEvent>,
+    ) -> Result<Project, RepoError>;
+    async fn delete_project(&self, id: Uuid, audit: Option<AuditEvent>) -> Result<(), RepoError>;
+    async fn create_document(
+        &self,
+        value: Document,
+        audit: Option<AuditEvent>,
+    ) -> Result<Document, RepoError>;
+    async fn get_document_by_id(&self, document_id: Uuid) -> Result<Document, RepoError>;
+    async fn list_documents(&self, project_id: Uuid) -> Result<Vec<Document>, RepoError>;
+    async fn update_document(
+        &self,
+        value: Document,
+        expected_revision: u64,
+        audit: Option<AuditEvent>,
+    ) -> Result<Document, RepoError>;
+    async fn delete_document(
+        &self,
+        document_id: Uuid,
+        audit: Option<AuditEvent>,
+    ) -> Result<(), RepoError>;
+    async fn create_reference(
+        &self,
+        value: ReferenceEntry,
+        audit: Option<AuditEvent>,
+    ) -> Result<ReferenceEntry, RepoError>;
+    async fn get_reference(&self, id: Uuid) -> Result<ReferenceEntry, RepoError>;
+    async fn list_references(&self, project_id: Uuid) -> Result<Vec<ReferenceEntry>, RepoError>;
+    async fn update_reference(
+        &self,
+        value: ReferenceEntry,
+        audit: Option<AuditEvent>,
+    ) -> Result<ReferenceEntry, RepoError>;
+    async fn delete_reference(&self, id: Uuid, audit: Option<AuditEvent>) -> Result<(), RepoError>;
+    async fn get_fulltext(&self, reference_id: Uuid) -> Result<FulltextMetadata, RepoError>;
+    async fn list_fulltexts(&self, project_id: Uuid) -> Result<Vec<FulltextMetadata>, RepoError>;
+    async fn put_fulltext(
+        &self,
+        value: FulltextMetadata,
+        audit: Option<AuditEvent>,
+    ) -> Result<FulltextMetadata, RepoError>;
+    async fn delete_fulltext(
+        &self,
+        reference_id: Uuid,
+        audit: Option<AuditEvent>,
+    ) -> Result<(), RepoError>;
+    async fn append_audit(&self, value: AuditEvent) -> Result<AuditEvent, RepoError>;
+    async fn list_audit(&self, project_id: Uuid) -> Result<Vec<AuditEvent>, RepoError>;
+    async fn save_document_revision(
+        &self,
+        document_id: Uuid,
+        project_id: Uuid,
+        body: String,
+        revision: u64,
+        author: Option<String>,
+    ) -> Result<DocumentRevision, RepoError>;
+    async fn list_document_revisions(
+        &self,
+        document_id: Uuid,
+    ) -> Result<Vec<DocumentRevision>, RepoError>;
+    async fn get_document_revision(&self, id: Uuid) -> Result<DocumentRevision, RepoError>;
+    async fn create_share_link(
+        &self,
+        project_id: Uuid,
+        role: &str,
+        created_by: &str,
+        label: Option<String>,
+    ) -> Result<ShareLink, RepoError>;
+    async fn list_share_links(&self, project_id: Uuid) -> Result<Vec<ShareLink>, RepoError>;
+    async fn delete_share_link(&self, token: &str) -> Result<(), RepoError>;
+    async fn resolve_share_link(&self, token: &str) -> Result<ShareLink, RepoError>;
+}
+
+#[derive(Default)]
+#[cfg(test)]
+struct MemoryData {
+    projects: HashMap<Uuid, Project>,
+    documents: HashMap<Uuid, Document>,
+    references: HashMap<Uuid, ReferenceEntry>,
+    fulltexts: HashMap<Uuid, FulltextMetadata>,
+    audit: Vec<AuditEvent>,
+    memberships: HashMap<(Uuid, String), ProjectMembership>,
+    doc_revisions: Vec<DocumentRevision>,
+    share_links: Vec<ShareLink>,
+}
+
+/// Deterministic in-memory repository used by tests and local development.
+#[cfg(test)]
+#[derive(Default)]
+pub struct MemoryRepository {
+    data: tokio::sync::RwLock<MemoryData>,
+}
+
+#[cfg(test)]
+impl MemoryRepository {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl Repository for MemoryRepository {
+    async fn create_project(
+        &self,
+        value: Project,
+        audit: Option<AuditEvent>,
+    ) -> Result<Project, RepoError> {
+        let mut d = self.data.write().await;
+        if d.projects.values().any(|p| p.name == value.name) {
+            return Err(RepoError::Conflict("project name already exists".into()));
+        }
+        d.projects.insert(value.id, value.clone());
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(value)
+    }
+    async fn get_project(&self, id: Uuid) -> Result<Project, RepoError> {
+        self.data
+            .read()
+            .await
+            .projects
+            .get(&id)
+            .cloned()
+            .ok_or(RepoError::NotFound)
+    }
+    async fn list_projects(&self) -> Result<Vec<Project>, RepoError> {
+        Ok(self.data.read().await.projects.values().cloned().collect())
+    }
+    async fn create_membership(
+        &self,
+        value: ProjectMembership,
+    ) -> Result<ProjectMembership, RepoError> {
+        let mut data = self.data.write().await;
+        if !data.projects.contains_key(&value.project_id) {
+            return Err(RepoError::NotFound);
+        }
+        let key = (value.project_id, value.subject.clone());
+        if data.memberships.contains_key(&key) {
+            return Err(RepoError::Conflict(
+                "project membership already exists".into(),
+            ));
+        }
+        data.memberships.insert(key, value.clone());
+        Ok(value)
+    }
+    async fn get_membership(
+        &self,
+        project_id: Uuid,
+        subject: &str,
+    ) -> Result<ProjectMembership, RepoError> {
+        self.data
+            .read()
+            .await
+            .memberships
+            .get(&(project_id, subject.to_owned()))
+            .cloned()
+            .ok_or(RepoError::NotFound)
+    }
+    async fn list_memberships(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectMembership>, RepoError> {
+        Ok(self
+            .data
+            .read()
+            .await
+            .memberships
+            .values()
+            .filter(|membership| membership.project_id == project_id)
+            .cloned()
+            .collect())
+    }
+    async fn update_project(
+        &self,
+        value: Project,
+        audit: Option<AuditEvent>,
+    ) -> Result<Project, RepoError> {
+        let mut d = self.data.write().await;
+        if !d.projects.contains_key(&value.id) {
+            return Err(RepoError::NotFound);
+        }
+        d.projects.insert(value.id, value.clone());
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(value)
+    }
+    async fn delete_project(&self, id: Uuid, audit: Option<AuditEvent>) -> Result<(), RepoError> {
+        let mut d = self.data.write().await;
+        if !d.projects.contains_key(&id) {
+            return Err(RepoError::NotFound);
+        }
+        // Cascade-delete children.
+        let doc_ids: HashSet<Uuid> = d
+            .documents
+            .values()
+            .filter(|doc| doc.project_id == id)
+            .map(|doc| doc.id)
+            .collect();
+        let ref_ids: HashSet<Uuid> = d
+            .references
+            .values()
+            .filter(|r| r.project_id == id)
+            .map(|r| r.id)
+            .collect();
+        d.documents.retain(|_, doc| doc.project_id != id);
+        d.fulltexts.retain(|rid, _| !ref_ids.contains(rid));
+        d.references.retain(|_, r| r.project_id != id);
+        d.memberships.retain(|(project_id, _), _| *project_id != id);
+        d.audit.retain(|e| e.project_id != id);
+        d.doc_revisions
+            .retain(|r| !doc_ids.contains(&r.document_id));
+        d.projects.remove(&id);
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(())
+    }
+    async fn create_document(
+        &self,
+        value: Document,
+        audit: Option<AuditEvent>,
+    ) -> Result<Document, RepoError> {
+        let mut d = self.data.write().await;
+        if !d.projects.contains_key(&value.project_id) {
+            return Err(RepoError::NotFound);
+        }
+        if d.documents
+            .values()
+            .any(|x| x.project_id == value.project_id && x.path == value.path)
+        {
+            return Err(RepoError::Conflict("document path already exists".into()));
+        }
+        d.documents.insert(value.id, value.clone());
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(value)
+    }
+    async fn get_document_by_id(&self, document_id: Uuid) -> Result<Document, RepoError> {
+        self.data
+            .read()
+            .await
+            .documents
+            .get(&document_id)
+            .cloned()
+            .ok_or(RepoError::NotFound)
+    }
+    async fn list_documents(&self, project_id: Uuid) -> Result<Vec<Document>, RepoError> {
+        let mut docs: Vec<Document> = self
+            .data
+            .read()
+            .await
+            .documents
+            .values()
+            .filter(|x| x.project_id == project_id)
+            .cloned()
+            .collect();
+        docs.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(docs)
+    }
+    async fn update_document(
+        &self,
+        value: Document,
+        expected_revision: u64,
+        audit: Option<AuditEvent>,
+    ) -> Result<Document, RepoError> {
+        let mut d = self.data.write().await;
+        let stored = d
+            .documents
+            .get(&value.id)
+            .ok_or(RepoError::NotFound)?
+            .clone();
+        if stored.revision != expected_revision {
+            return Err(RepoError::Conflict(format!(
+                "document revision is {}, expected {expected_revision}",
+                stored.revision
+            )));
+        }
+        d.documents.insert(value.id, value.clone());
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(value)
+    }
+    async fn delete_document(
+        &self,
+        document_id: Uuid,
+        audit: Option<AuditEvent>,
+    ) -> Result<(), RepoError> {
+        let mut d = self.data.write().await;
+        if d.documents.remove(&document_id).is_none() {
+            return Err(RepoError::NotFound);
+        }
+        d.doc_revisions.retain(|r| r.document_id != document_id);
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(())
+    }
+    async fn create_reference(
+        &self,
+        value: ReferenceEntry,
+        audit: Option<AuditEvent>,
+    ) -> Result<ReferenceEntry, RepoError> {
+        let mut d = self.data.write().await;
+        if !d.projects.contains_key(&value.project_id) {
+            return Err(RepoError::NotFound);
+        }
+        d.references.insert(value.id, value.clone());
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(value)
+    }
+    async fn get_reference(&self, id: Uuid) -> Result<ReferenceEntry, RepoError> {
+        self.data
+            .read()
+            .await
+            .references
+            .get(&id)
+            .cloned()
+            .ok_or(RepoError::NotFound)
+    }
+    async fn list_references(&self, p: Uuid) -> Result<Vec<ReferenceEntry>, RepoError> {
+        Ok(self
+            .data
+            .read()
+            .await
+            .references
+            .values()
+            .filter(|x| x.project_id == p)
+            .cloned()
+            .collect())
+    }
+    async fn update_reference(
+        &self,
+        value: ReferenceEntry,
+        audit: Option<AuditEvent>,
+    ) -> Result<ReferenceEntry, RepoError> {
+        let mut d = self.data.write().await;
+        if !d.references.contains_key(&value.id) {
+            return Err(RepoError::NotFound);
+        }
+        d.references.insert(value.id, value.clone());
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(value)
+    }
+    async fn delete_reference(&self, id: Uuid, audit: Option<AuditEvent>) -> Result<(), RepoError> {
+        let mut d = self.data.write().await;
+        if !d.references.contains_key(&id) {
+            return Err(RepoError::NotFound);
+        }
+        d.references.remove(&id);
+        d.fulltexts.remove(&id);
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(())
+    }
+    async fn get_fulltext(&self, id: Uuid) -> Result<FulltextMetadata, RepoError> {
+        self.data
+            .read()
+            .await
+            .fulltexts
+            .get(&id)
+            .cloned()
+            .ok_or(RepoError::NotFound)
+    }
+    async fn list_fulltexts(&self, p: Uuid) -> Result<Vec<FulltextMetadata>, RepoError> {
+        let d = self.data.read().await;
+        let reference_ids: HashSet<Uuid> = d
+            .references
+            .values()
+            .filter(|x| x.project_id == p)
+            .map(|x| x.id)
+            .collect();
+        Ok(d.fulltexts
+            .values()
+            .filter(|x| reference_ids.contains(&x.reference_id))
+            .cloned()
+            .collect())
+    }
+    async fn put_fulltext(
+        &self,
+        value: FulltextMetadata,
+        audit: Option<AuditEvent>,
+    ) -> Result<FulltextMetadata, RepoError> {
+        let mut d = self.data.write().await;
+        if !d.references.contains_key(&value.reference_id) {
+            return Err(RepoError::NotFound);
+        }
+        d.fulltexts.insert(value.reference_id, value.clone());
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(value)
+    }
+    async fn delete_fulltext(&self, id: Uuid, audit: Option<AuditEvent>) -> Result<(), RepoError> {
+        let mut d = self.data.write().await;
+        if d.fulltexts.remove(&id).is_none() {
+            return Err(RepoError::NotFound);
+        }
+        if let Some(event) = audit {
+            d.audit.push(event);
+        }
+        Ok(())
+    }
+    async fn append_audit(&self, value: AuditEvent) -> Result<AuditEvent, RepoError> {
+        self.data.write().await.audit.push(value.clone());
+        Ok(value)
+    }
+    async fn list_audit(&self, p: Uuid) -> Result<Vec<AuditEvent>, RepoError> {
+        Ok(self
+            .data
+            .read()
+            .await
+            .audit
+            .iter()
+            .filter(|x| x.project_id == p)
+            .cloned()
+            .collect())
+    }
+    async fn save_document_revision(
+        &self,
+        document_id: Uuid,
+        project_id: Uuid,
+        body: String,
+        revision: u64,
+        author: Option<String>,
+    ) -> Result<DocumentRevision, RepoError> {
+        let entry = DocumentRevision {
+            id: Uuid::new_v4(),
+            document_id,
+            project_id,
+            body,
+            revision,
+            author,
+            created_at: Utc::now(),
+        };
+        self.data.write().await.doc_revisions.push(entry.clone());
+        Ok(entry)
+    }
+    async fn list_document_revisions(
+        &self,
+        document_id: Uuid,
+    ) -> Result<Vec<DocumentRevision>, RepoError> {
+        Ok(self
+            .data
+            .read()
+            .await
+            .doc_revisions
+            .iter()
+            .filter(|r| r.document_id == document_id)
+            .rev()
+            .cloned()
+            .collect())
+    }
+    async fn get_document_revision(&self, id: Uuid) -> Result<DocumentRevision, RepoError> {
+        self.data
+            .read()
+            .await
+            .doc_revisions
+            .iter()
+            .find(|r| r.id == id)
+            .cloned()
+            .ok_or(RepoError::NotFound)
+    }
+    async fn create_share_link(
+        &self,
+        project_id: Uuid,
+        role: &str,
+        created_by: &str,
+        label: Option<String>,
+    ) -> Result<ShareLink, RepoError> {
+        let token = format!("nsl_{}", Uuid::new_v4().simple());
+        let link = ShareLink {
+            token_hash: hash_token(&token),
+            token,
+            project_id,
+            role: role.to_string(),
+            created_by: created_by.to_string(),
+            created_at: Utc::now(),
+            expires_at: None,
+            label,
+        };
+        self.data.write().await.share_links.push(link.clone());
+        Ok(link)
+    }
+    async fn list_share_links(&self, project_id: Uuid) -> Result<Vec<ShareLink>, RepoError> {
+        Ok(self
+            .data
+            .read()
+            .await
+            .share_links
+            .iter()
+            .filter(|l| l.project_id == project_id)
+            .cloned()
+            .collect())
+    }
+    async fn delete_share_link(&self, token: &str) -> Result<(), RepoError> {
+        let mut d = self.data.write().await;
+        let h = hash_token(token);
+        let before = d.share_links.len();
+        d.share_links.retain(|l| l.token_hash != h);
+        if d.share_links.len() == before {
+            return Err(RepoError::NotFound);
+        }
+        Ok(())
+    }
+    async fn resolve_share_link(&self, token: &str) -> Result<ShareLink, RepoError> {
+        let h = hash_token(token);
+        self.data
+            .read()
+            .await
+            .share_links
+            .iter()
+            .find(|l| l.token_hash == h)
+            .cloned()
+            .ok_or(RepoError::NotFound)
+    }
+}
+
+#[derive(Clone)]
+pub struct AppState {
+    pub repo: Arc<dyn Repository>,
+    pub auth: Authenticator,
+    pub compile: Arc<dyn CompileClient>,
+    pub references: Arc<dyn ReferenceExporter>,
+    pub blobs: Arc<dyn BlobStore>,
+    sync_authz_token: Option<[u8; 32]>,
+}
+impl AppState {
+    pub fn new(repo: Arc<dyn Repository>, auth: Authenticator) -> Self {
+        Self {
+            repo,
+            auth,
+            compile: Arc::new(UnconfiguredCompile),
+            references: Arc::new(UnconfiguredReferences),
+            blobs: Arc::new(MemoryBlobStore::default()),
+            sync_authz_token: None,
+        }
+    }
+    #[must_use]
+    pub fn with_sync_authz_token(mut self, token: impl Into<String>) -> Self {
+        let token = token.into();
+        self.sync_authz_token =
+            (!token.trim().is_empty()).then(|| Sha256::digest(token.as_bytes()).into());
+        self
+    }
+    #[must_use]
+    pub fn with_exporters(
+        mut self,
+        compile: Arc<dyn CompileClient>,
+        references: Arc<dyn ReferenceExporter>,
+    ) -> Self {
+        self.compile = compile;
+        self.references = references;
+        self
+    }
+    #[must_use]
+    pub fn with_blob_store(mut self, blobs: Arc<dyn BlobStore>) -> Self {
+        self.blobs = blobs;
+        self
+    }
+}
+
+fn id(raw: &str) -> Result<Uuid, AppError> {
+    Uuid::parse_str(raw).map_err(|_| AppError::BadRequest("invalid UUID".into()))
+}
+fn actor(p: &Principal) -> String {
+    p.subject.clone()
+}
+fn build_audit(
+    p: &Principal,
+    project_id: Uuid,
+    action: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    details: Value,
+) -> AuditEvent {
+    AuditEvent {
+        id: Uuid::new_v4(),
+        project_id,
+        actor: actor(p),
+        action: action.into(),
+        resource_type: resource_type.into(),
+        resource_id,
+        at: Utc::now(),
+        details,
+    }
+}
+async fn audit(
+    state: &AppState,
+    p: &Principal,
+    project_id: Uuid,
+    action: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    details: Value,
+) -> Result<(), AppError> {
+    state
+        .repo
+        .append_audit(AuditEvent {
+            id: Uuid::new_v4(),
+            project_id,
+            actor: actor(p),
+            action: action.into(),
+            resource_type: resource_type.into(),
+            resource_id,
+            at: Utc::now(),
+            details,
+        })
+        .await?;
+    Ok(())
+}
+async fn project_for(state: &AppState, raw: &str) -> Result<Project, AppError> {
+    state.repo.get_project(id(raw)?).await.map_err(Into::into)
+}
+
+async fn healthz() -> &'static str {
+    "ok"
+}
+
+async fn health_ready(State(state): State<AppState>) -> (StatusCode, &'static str) {
+    if state.repo.list_projects().await.is_err() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "database unavailable");
+    }
+    (StatusCode::OK, "ready")
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncAuthorizeRequest {
+    subject: String,
+    document: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SyncAuthorizeResponse {
+    role: &'static str,
+}
+
+fn constant_time_token_matches(expected: Option<&[u8; 32]>, presented: &str) -> bool {
+    let Some(expected) = expected else {
+        return false;
+    };
+    let presented = Sha256::digest(presented.as_bytes());
+    bool::from(expected.as_slice().ct_eq(presented.as_slice()))
+}
+
+async fn authorize_sync_document(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SyncAuthorizeRequest>,
+) -> Result<Json<SyncAuthorizeResponse>, AppError> {
+    let value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    if !constant_time_token_matches(state.sync_authz_token.as_ref(), token) {
+        return Err(AppError::Forbidden);
+    }
+    if request.subject.is_empty() {
+        return Err(AppError::Forbidden);
+    }
+    let document_id = Uuid::parse_str(&request.document)
+        .map_err(|_| AppError::BadRequest("invalid document UUID".into()))?;
+    let document = state
+        .repo
+        .get_document_by_id(document_id)
+        .await
+        .map_err(|_| AppError::Forbidden)?;
+    let membership = state
+        .repo
+        .get_membership(document.project_id, &request.subject)
+        .await
+        .map_err(|_| AppError::Forbidden)?;
+    let role = match membership.role {
+        MembershipRole::Owner | MembershipRole::Author => "author",
+        MembershipRole::Reviewer => "reviewer",
+        MembershipRole::ReadOnly => "read-only",
+    };
+    Ok(Json(SyncAuthorizeResponse { role }))
+}
+
+async fn materialize_document_body(
+    State(s): State<AppState>,
+    Path(document_id): Path<String>,
+    h: HeaderMap,
+    Json(body): Json<String>,
+) -> Result<StatusCode, AppError> {
+    let value = h
+        .get("authorization")
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    let token = value
+        .to_str()
+        .ok()
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    if !constant_time_token_matches(s.sync_authz_token.as_ref(), token) {
+        return Err(AppError::Forbidden);
+    }
+    let doc_id = id(&document_id)?;
+    let mut doc = s.repo.get_document_by_id(doc_id).await?;
+    doc.body = body;
+    doc.updated_at = Utc::now();
+    let old_revision = doc.revision;
+    doc.revision += 1;
+    s.repo.update_document(doc, old_revision, None).await?;
+    Ok(StatusCode::OK)
+}
+
+pub fn router(state: AppState) -> Router {
+    let acl_state = state.clone();
+    Router::new()
+        .route("/openapi.json", get(openapi))
+        .route("/projects", post(create_project).get(list_projects))
+        .route(
+            "/projects/{project_id}",
+            get(get_project).patch(patch_project).delete(delete_project),
+        )
+        .route(
+            "/projects/{project_id}/members",
+            get(list_members).post(add_member),
+        )
+        .route("/projects/{project_id}/membership", get(get_my_membership))
+        .route("/healthz", get(healthz))
+        .route("/health/ready", get(health_ready))
+        .route("/internal/sync/authorize", post(authorize_sync_document))
+        .route(
+            "/internal/document/{document_id}/materialize",
+            post(materialize_document_body),
+        )
+        .route("/api/compile", post(api_compile))
+        .route(
+            "/projects/{project_id}/documents",
+            post(create_document).get(list_documents),
+        )
+        .route(
+            "/projects/{project_id}/documents/{document_id}",
+            get(get_document)
+                .patch(patch_document)
+                .delete(delete_document),
+        )
+        .route(
+            "/projects/{project_id}/documents/{document_id}/history",
+            get(list_document_history),
+        )
+        .route(
+            "/projects/{project_id}/documents/{document_id}/history/{revision_id}",
+            get(get_document_revision),
+        )
+        .route(
+            "/projects/{project_id}/references",
+            post(create_reference).get(list_references),
+        )
+        .route(
+            "/projects/{project_id}/references/{reference_id}",
+            get(get_reference)
+                .patch(patch_reference)
+                .delete(delete_reference),
+        )
+        .route(
+            "/projects/{project_id}/references/{reference_id}/fulltext",
+            get(get_fulltext).put(put_fulltext).delete(delete_fulltext),
+        )
+        .route_layer(DefaultBodyLimit::max(MAX_FULLTEXT_BYTES.saturating_mul(2)))
+        .route("/projects/{project_id}/audit", get(list_audit))
+        .route("/projects/{project_id}/fulltexts", get(list_fulltexts))
+        .route("/projects/{project_id}/exports", post(export_project))
+        .route(
+            "/projects/{project_id}/share-links",
+            post(create_share_link).get(list_share_links),
+        )
+        .route(
+            "/projects/{project_id}/share-links/{token}",
+            delete(delete_share_link),
+        )
+        .route("/share/{token}/redeem", post(redeem_share_link))
+        .with_state(state)
+        .layer(middleware::from_fn_with_state(acl_state, project_acl))
+}
+
+// --- Project handlers ---
+
+async fn create_project(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(r): Json<ProjectCreate>,
+) -> Result<(StatusCode, Json<Project>), AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    if r.name.trim().is_empty() {
+        return Err(AppError::BadRequest("name is required".into()));
+    }
+    let now = Utc::now();
+    let id = Uuid::new_v4();
+    let value = Project {
+        id,
+        name: r.name,
+        created_at: now,
+        updated_at: now,
+    };
+    let event = build_audit(&p, id, "created", "project", id, json!({}));
+    let out = s.repo.create_project(value, Some(event)).await?;
+    s.repo
+        .create_membership(ProjectMembership {
+            project_id: out.id,
+            subject: p.subject.clone(),
+            role: MembershipRole::Owner,
+            created_at: Utc::now(),
+        })
+        .await?;
+    Ok((StatusCode::CREATED, Json(out)))
+}
+async fn list_projects(
+    State(s): State<AppState>,
+    h: HeaderMap,
+) -> Result<Json<Vec<Project>>, AppError> {
+    let principal = permitted(&s, &h, Permission::Read).await?;
+    let mut projects = Vec::new();
+    for project in s.repo.list_projects().await? {
+        if s.repo
+            .get_membership(project.id, &principal.subject)
+            .await
+            .is_ok()
+        {
+            projects.push(project);
+        }
+    }
+    Ok(Json(projects))
+}
+async fn get_project(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_raw): Path<String>,
+) -> Result<Json<Project>, AppError> {
+    let project = project_for(&state, &project_raw).await?;
+    project_access(&state, &headers, project.id, Permission::Read).await?;
+    Ok(Json(project))
+}
+async fn patch_project(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+    Json(r): Json<ProjectPatch>,
+) -> Result<Json<Project>, AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let mut v = project_for(&s, &pid).await?;
+    project_access(&s, &h, v.id, Permission::Manage).await?;
+    if let Some(name) = r.name {
+        if name.trim().is_empty() {
+            return Err(AppError::BadRequest("name is required".into()));
+        }
+        v.name = name;
+    }
+    v.updated_at = Utc::now();
+    let event = build_audit(&p, v.id, "updated", "project", v.id, json!({}));
+    let out = s.repo.update_project(v, Some(event)).await?;
+    Ok(Json(out))
+}
+async fn delete_project(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let project = project_for(&s, &pid).await?;
+    project_access(&s, &h, project.id, Permission::Manage).await?;
+    let event = build_audit(&p, project.id, "deleted", "project", project.id, json!({}));
+    s.repo.delete_project(project.id, Some(event)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn valid_document_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && !matches!(segment, "." | ".."))
+}
+
+// --- Document handlers ---
+
+async fn document_for_project(
+    state: &AppState,
+    project_raw: &str,
+    document_raw: &str,
+) -> Result<Document, AppError> {
+    let project = project_for(state, project_raw).await?;
+    let document = state.repo.get_document_by_id(id(document_raw)?).await?;
+    if document.project_id != project.id {
+        return Err(AppError::NotFound);
+    }
+    Ok(document)
+}
+async fn create_document(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+    Json(r): Json<DocumentCreate>,
+) -> Result<(StatusCode, Json<Document>), AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let project = project_for(&s, &pid).await?;
+    if !valid_document_path(r.path.trim()) {
+        return Err(AppError::BadRequest(
+            "path must be a safe project-relative path".into(),
+        ));
+    }
+    let id = Uuid::new_v4();
+    let event = build_audit(
+        &p,
+        project.id,
+        "created",
+        "document",
+        id,
+        json!({"path": r.path}),
+    );
+    let out = s
+        .repo
+        .create_document(
+            Document {
+                id,
+                project_id: project.id,
+                path: r.path,
+                title: r.title,
+                body: r.body,
+                data: r.data,
+                revision: 0,
+                updated_at: Utc::now(),
+            },
+            Some(event),
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(out)))
+}
+async fn list_documents(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+) -> Result<Json<Vec<Document>>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    let p = project_for(&s, &pid).await?;
+    Ok(Json(s.repo.list_documents(p.id).await?))
+}
+async fn get_document(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, did)): Path<(String, String)>,
+) -> Result<Json<Document>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    Ok(Json(document_for_project(&s, &pid, &did).await?))
+}
+async fn patch_document(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, did)): Path<(String, String)>,
+    Json(r): Json<DocumentPatch>,
+) -> Result<Json<Document>, AppError> {
+    let p = permitted(&s, &h, Permission::Document).await?;
+    let mut v = document_for_project(&s, &pid, &did).await?;
+    if let Some(expected) = r.expected_revision
+        && expected != v.revision
+    {
+        return Err(AppError::Conflict(format!(
+            "document revision is {}, expected {expected}",
+            v.revision
+        )));
+    }
+    if let Some(x) = r.path {
+        if !valid_document_path(x.trim()) {
+            return Err(AppError::BadRequest(
+                "path must be a safe project-relative path".into(),
+            ));
+        }
+        v.path = x;
+    }
+    if let Some(x) = r.body {
+        v.body = x;
+    }
+    if let Some(x) = r.title {
+        v.title = x;
+    }
+    if let Some(x) = r.data {
+        v.data = x;
+    }
+    let old_revision = v.revision;
+    v.revision += 1;
+    v.updated_at = Utc::now();
+    let event = build_audit(
+        &p,
+        id(&pid)?,
+        "updated",
+        "document",
+        v.id,
+        json!({"revision": v.revision}),
+    );
+    let out = s
+        .repo
+        .update_document(v.clone(), old_revision, Some(event))
+        .await?;
+    // Save a revision snapshot for the history timeline, throttled.
+    let mut should_snapshot = true;
+    if let Ok(existing) = s.repo.list_document_revisions(out.id).await
+        && let Some(latest) = existing.first()
+    {
+        let elapsed = Utc::now().timestamp() - latest.created_at.timestamp();
+        if elapsed < MIN_SNAPSHOT_INTERVAL_SECS {
+            should_snapshot = false;
+        }
+    }
+    if should_snapshot
+        && let Err(e) = s
+            .repo
+            .save_document_revision(
+                out.id,
+                out.project_id,
+                out.body.clone(),
+                out.revision,
+                Some(p.subject.clone()),
+            )
+            .await
+    {
+        eprintln!("warning: failed to save document revision snapshot: {e}");
+    }
+    Ok(Json(out))
+}
+async fn delete_document(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, did)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let p = permitted(&s, &h, Permission::Document).await?;
+    let v = document_for_project(&s, &pid, &did).await?;
+    let event = build_audit(&p, id(&pid)?, "deleted", "document", v.id, json!({}));
+    s.repo.delete_document(v.id, Some(event)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- Membership handlers ---
+
+async fn list_members(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_raw): Path<String>,
+) -> Result<Json<Vec<ProjectMembership>>, AppError> {
+    let project = project_for(&state, &project_raw).await?;
+    project_access(&state, &headers, project.id, Permission::Manage).await?;
+    Ok(Json(state.repo.list_memberships(project.id).await?))
+}
+async fn get_my_membership(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_raw): Path<String>,
+) -> Result<Json<ProjectMembership>, AppError> {
+    let project = project_for(&state, &project_raw).await?;
+    let principal = project_access(&state, &headers, project.id, Permission::Read).await?;
+    let membership = state
+        .repo
+        .get_membership(project.id, &principal.subject)
+        .await
+        .map_err(|_| AppError::Forbidden)?;
+    Ok(Json(membership))
+}
+async fn add_member(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_raw): Path<String>,
+    Json(request): Json<ProjectMemberCreate>,
+) -> Result<(StatusCode, Json<ProjectMembership>), AppError> {
+    let project = project_for(&state, &project_raw).await?;
+    project_access(&state, &headers, project.id, Permission::Manage).await?;
+    if request.subject.trim().is_empty() {
+        return Err(AppError::BadRequest("subject is required".into()));
+    }
+    if matches!(request.role, MembershipRole::Owner) {
+        return Err(AppError::BadRequest(
+            "owner access is assigned to the creator".into(),
+        ));
+    }
+    let membership = state
+        .repo
+        .create_membership(ProjectMembership {
+            project_id: project.id,
+            subject: request.subject,
+            role: request.role,
+            created_at: Utc::now(),
+        })
+        .await?;
+    Ok((StatusCode::CREATED, Json(membership)))
+}
+
+// --- Reference handlers ---
+
+async fn reference_for_project(
+    state: &AppState,
+    project_raw: &str,
+    reference_raw: &str,
+) -> Result<ReferenceEntry, AppError> {
+    let project = project_for(state, project_raw).await?;
+    let reference = state.repo.get_reference(id(reference_raw)?).await?;
+    if reference.project_id != project.id {
+        return Err(AppError::NotFound);
+    }
+    Ok(reference)
+}
+async fn create_reference(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+    Json(r): Json<ReferenceCreate>,
+) -> Result<(StatusCode, Json<ReferenceEntry>), AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let project = project_for(&s, &pid).await?;
+    let now = Utc::now();
+    let id = Uuid::new_v4();
+    let event = build_audit(&p, project.id, "created", "reference", id, json!({}));
+    let out = s
+        .repo
+        .create_reference(
+            ReferenceEntry {
+                id,
+                project_id: project.id,
+                metadata: r.metadata,
+                provenance: r.provenance,
+                created_at: now,
+                updated_at: now,
+            },
+            Some(event),
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(out)))
+}
+async fn list_references(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+) -> Result<Json<Vec<ReferenceEntry>>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    let project = project_for(&s, &pid).await?;
+    Ok(Json(s.repo.list_references(project.id).await?))
+}
+async fn get_reference(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, rid)): Path<(String, String)>,
+) -> Result<Json<ReferenceEntry>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    Ok(Json(reference_for_project(&s, &pid, &rid).await?))
+}
+async fn patch_reference(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, rid)): Path<(String, String)>,
+    Json(r): Json<ReferencePatch>,
+) -> Result<Json<ReferenceEntry>, AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let mut v = reference_for_project(&s, &pid, &rid).await?;
+    if let Some(x) = r.metadata {
+        v.metadata = x;
+    }
+    if r.provenance.is_some() {
+        v.provenance = r.provenance;
+    }
+    v.updated_at = Utc::now();
+    let event = build_audit(&p, v.project_id, "updated", "reference", v.id, json!({}));
+    let out = s.repo.update_reference(v, Some(event)).await?;
+    Ok(Json(out))
+}
+async fn delete_reference(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, rid)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let v = reference_for_project(&s, &pid, &rid).await?;
+    s.blobs
+        .delete(v.id)
+        .await
+        .map_err(|_| AppError::Dependency("blob store unavailable".into()))?;
+    let event = build_audit(&p, v.project_id, "deleted", "reference", v.id, json!({}));
+    s.repo.delete_reference(v.id, Some(event)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- Fulltext handlers ---
+
+async fn get_fulltext(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, rid)): Path<(String, String)>,
+) -> Result<Json<FulltextMetadata>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    let reference = reference_for_project(&s, &pid, &rid).await?;
+    Ok(Json(s.repo.get_fulltext(reference.id).await?))
+}
+async fn put_fulltext(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, rid)): Path<(String, String)>,
+    Json(r): Json<FulltextInput>,
+) -> Result<Json<FulltextMetadata>, AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let reference = reference_for_project(&s, &pid, &rid).await?;
+    if r.filename.trim().is_empty() {
+        return Err(AppError::BadRequest("filename is required".into()));
+    }
+    let contents = r
+        .contents_base64
+        .ok_or_else(|| AppError::BadRequest("contents_base64 is required".into()))
+        .and_then(|contents| {
+            base64::engine::general_purpose::STANDARD
+                .decode(contents)
+                .map_err(|_| AppError::BadRequest("contents_base64 is not valid base64".into()))
+        })?;
+    let expected_size = usize::try_from(r.size_bytes)
+        .map_err(|_| AppError::BadRequest("size_bytes does not fit on this platform".into()))?;
+    if contents.len() != expected_size {
+        return Err(AppError::BadRequest(
+            "size_bytes does not match contents_base64".into(),
+        ));
+    }
+    if contents.len() > MAX_FULLTEXT_BYTES {
+        return Err(AppError::BadRequest(
+            "fulltext exceeds the 64 MiB byte limit".into(),
+        ));
+    }
+    if r.content_type != "application/pdf" || contents.is_empty() {
+        return Err(AppError::BadRequest(
+            "fulltext contents must be a non-empty PDF".into(),
+        ));
+    }
+    s.blobs
+        .put(reference.id, contents)
+        .await
+        .map_err(|_| AppError::Dependency("blob store unavailable".into()))?;
+    let filename = r.filename.clone();
+    let event = build_audit(
+        &p,
+        reference.project_id,
+        "attached",
+        "fulltext",
+        reference.id,
+        json!({"filename":filename}),
+    );
+    let out = s
+        .repo
+        .put_fulltext(
+            FulltextMetadata {
+                reference_id: reference.id,
+                blob_ref: fulltext_blob_ref(reference.id),
+                filename: r.filename,
+                content_type: r.content_type,
+                size_bytes: r.size_bytes,
+                checksum_sha256: r.checksum_sha256,
+                uploaded_at: Utc::now(),
+            },
+            Some(event),
+        )
+        .await?;
+    Ok(Json(out))
+}
+async fn delete_fulltext(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, rid)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let reference = reference_for_project(&s, &pid, &rid).await?;
+    s.blobs
+        .delete(reference.id)
+        .await
+        .map_err(|_| AppError::Dependency("blob store unavailable".into()))?;
+    let event = build_audit(
+        &p,
+        reference.project_id,
+        "detached",
+        "fulltext",
+        reference.id,
+        json!({}),
+    );
+    s.repo.delete_fulltext(reference.id, Some(event)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn list_fulltexts(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+) -> Result<Json<Vec<FulltextMetadata>>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    let project = project_for(&s, &pid).await?;
+    Ok(Json(s.repo.list_fulltexts(project.id).await?))
+}
+
+// --- Audit handler ---
+
+async fn list_audit(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+) -> Result<Json<Vec<AuditEvent>>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    let p = project_for(&s, &pid).await?;
+    Ok(Json(s.repo.list_audit(p.id).await?))
+}
+
+// --- Document history handlers ---
+
+async fn list_document_history(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, did)): Path<(String, String)>,
+) -> Result<Json<Vec<DocumentRevision>>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    let doc = document_for_project(&s, &pid, &did).await?;
+    Ok(Json(s.repo.list_document_revisions(doc.id).await?))
+}
+
+async fn get_document_revision(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, _did, rid)): Path<(String, String, String)>,
+) -> Result<Json<DocumentRevision>, AppError> {
+    permitted(&s, &h, Permission::Read).await?;
+    let project = project_for(&s, &pid).await?;
+    let rev = s.repo.get_document_revision(id(&rid)?).await?;
+    if rev.project_id != project.id {
+        return Err(AppError::NotFound);
+    }
+    Ok(Json(rev))
+}
+
+// --- Compile proxy ---
+
+fn projected_source(
+    source: &str,
+    marks: &[MarkInput],
+    view: &CompileView,
+) -> Result<String, AppError> {
+    let mut document = CoreDocument::from_text(source);
+    for mark in marks {
+        let kind = match mark.kind.as_str() {
+            "insert" => nisaba_core::MarkKind::Insert,
+            "delete" => nisaba_core::MarkKind::Delete,
+            "comment" => nisaba_core::MarkKind::Comment,
+            "secret" => nisaba_core::MarkKind::Secret,
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "unknown mark kind: {}",
+                    mark.kind
+                )));
+            }
+        };
+        document.add_mark(nisaba_core::Mark::new(
+            nisaba_core::MarkId::new(mark.id.unwrap_or(mark.timestamp)),
+            nisaba_core::TextRange::new(
+                nisaba_core::Position::from_char_idx(mark.start),
+                nisaba_core::Position::from_char_idx(mark.end),
+            ),
+            kind,
+            nisaba_core::AuthorId::new(mark.author.clone()),
+            nisaba_core::Timestamp::new(mark.timestamp),
+            None,
+        ));
+    }
+    let core_view = match view {
+        CompileView::Baseline => CoreView::Baseline,
+        CompileView::Proposed => CoreView::Proposed,
+        CompileView::Redline => CoreView::Redline,
+        CompileView::Public => CoreView::Public,
+    };
+    Ok(document.project(core_view))
+}
+
+fn core_reference_entry(reference: &ReferenceEntry) -> Option<CoreReferenceEntry> {
+    let id = ReferenceId::new(reference.id.to_string()).ok()?;
+    Some(CoreReferenceEntry {
+        id,
+        metadata: core_metadata(&reference.metadata),
+        unknown_ris: Vec::new(),
+        fulltext: None,
+        provenance: Vec::new(),
+    })
+}
+
+fn core_metadata(metadata: &ReferenceMetadata) -> CoreMetadata {
+    CoreMetadata {
+        title: metadata.title.clone(),
+        authors: metadata
+            .authors
+            .iter()
+            .map(|author| Person::family(author.clone()))
+            .collect(),
+        issued: metadata.year.map(|year| IssuedDate {
+            year: i32::from(year),
+            ..IssuedDate::default()
+        }),
+        container_title: metadata.journal.clone(),
+        doi: metadata.doi.clone(),
+        pmid: metadata.pmid.clone(),
+        ..CoreMetadata::default()
+    }
+}
+
+fn references_bibliography_yaml(references: &[ReferenceEntry]) -> String {
+    let core: Vec<CoreReferenceEntry> =
+        references.iter().filter_map(core_reference_entry).collect();
+    bibliography_yaml(&core)
+}
+
+fn inject_bibliography(request: &mut CompileRequest, yaml: String) {
+    if yaml.trim().is_empty() {
+        return;
+    }
+    let entry_dir = request.entry.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let bib_path = if entry_dir.is_empty() {
+        REFS_SOURCE_PATH.to_owned()
+    } else {
+        format!("{entry_dir}/{REFS_SOURCE_PATH}")
+    };
+    if request.sources.contains_key(&bib_path) {
+        return;
+    }
+    request.sources.insert(bib_path, yaml);
+    if let Some(entry_source) = request.sources.get_mut(&request.entry)
+        && !entry_source.contains("#bibliography(")
+    {
+        entry_source.push_str("\n#bibliography(\"refs.yml\")\n");
+    }
+}
+
+fn inject_per_document_bibliography(
+    request: &mut CompileRequest,
+    doc_yaml: &BTreeMap<String, String>,
+) {
+    for (path, yaml) in doc_yaml {
+        if yaml.trim().is_empty() {
+            continue;
+        }
+        let (dir, file_name) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
+        let dir = dir.trim_start_matches('/');
+        let stem = file_name.trim_end_matches(".typ");
+        let bib_path = if dir.is_empty() {
+            format!("refs-{stem}.yml")
+        } else {
+            format!("{dir}/refs-{stem}.yml")
+        };
+        if request.sources.contains_key(&bib_path) {
+            continue;
+        }
+        request.sources.insert(bib_path, yaml.clone());
+        let call = format!("\n#bibliography(\"refs-{stem}.yml\", group: none)\n");
+        if let Some(source) = request.sources.get_mut(path)
+            && !source.contains("#bibliography(")
+        {
+            source.push_str(&call);
+        }
+    }
+}
+
+fn inject_redline_review(request: &mut CompileRequest) {
+    if !matches!(request.view, CompileView::Redline) {
+        return;
+    }
+    let Some(entry_source) = request.sources.get(&request.entry) else {
+        return;
+    };
+    let has_markers = ["#review.add[", "#review.del["]
+        .iter()
+        .any(|marker| entry_source.contains(marker))
+        || entry_source.contains("#review.rep-open[]")
+        || entry_source.contains("#review.rep-close[]");
+    if !has_markers {
+        return;
+    }
+    let entry_dir = request.entry.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let module_path = if entry_dir.is_empty() {
+        REVIEW_SUPPORT_PATH.to_owned()
+    } else {
+        format!("{entry_dir}/{REVIEW_SUPPORT_PATH}")
+    };
+    if request.sources.contains_key(&module_path) {
+        return;
+    }
+    request
+        .sources
+        .insert(module_path, REVIEW_SUPPORT_SOURCE.to_owned());
+    if let Some(entry_source) = request.sources.get_mut(&request.entry)
+        && !entry_source.contains("#import \"review.typ\"")
+        && !entry_source.contains("#import 'review.typ'")
+    {
+        entry_source.insert_str(0, "#import \"review.typ\" as review\n\n");
+    }
+}
+
+async fn api_compile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(mut request): Json<CompileRequest>,
+) -> Result<Json<CompileResponse>, AppError> {
+    let principal =
+        project_access(&state, &headers, request.project_id, Permission::Document).await?;
+    if request.sources.is_empty() || !request.sources.contains_key(&request.entry) {
+        return Err(AppError::BadRequest("sources must contain entry".into()));
+    }
+    let sources = std::mem::take(&mut request.sources);
+    request.sources = sources
+        .into_iter()
+        .map(|(path, source)| {
+            let projected = projected_source(
+                &source,
+                request.marks.get(&path).map_or(&[], Vec::as_slice),
+                &request.view,
+            )?;
+            Ok((path, projected))
+        })
+        .collect::<Result<_, AppError>>()?;
+    request.marks.clear();
+    let yaml = references_bibliography_yaml(&state.repo.list_references(request.project_id).await?);
+    inject_bibliography(&mut request, yaml);
+    inject_redline_review(&mut request);
+    let response = state.compile.compile(request.clone()).await?;
+    audit(
+        &state,
+        &principal,
+        request.project_id,
+        "compiled",
+        "compile",
+        request.project_id,
+        json!({"build_id": response.build_id}),
+    )
+    .await?;
+    Ok(Json(response))
+}
+
+// --- Export ---
+
+/// One document's gathered export data.
+struct DocumentExport {
+    path: String,
+    body: String,
+    citations: Vec<Citation>,
+    yaml: String,
+}
+
+async fn gather_documents(
+    repo: &dyn Repository,
+    project: &Project,
+    references: &[ReferenceEntry],
+) -> Result<Vec<DocumentExport>, AppError> {
+    let by_id: HashMap<String, CoreReferenceEntry> = references
+        .iter()
+        .filter_map(|r| core_reference_entry(r).map(|e| (e.id.to_string(), e)))
+        .collect();
+    let mut docs = Vec::new();
+    for document in repo.list_documents(project.id).await? {
+        let citations = extract_citations(&document.body).map_err(|error| {
+            AppError::BadRequest(format!(
+                "citation extraction failed for {}: {error}",
+                document.path
+            ))
+        })?;
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut cited: Vec<CoreReferenceEntry> = Vec::new();
+        let mut known_citations: Vec<nisaba_references::Citation> = Vec::new();
+        for citation in &citations {
+            let key = citation.reference_id.as_str().to_owned();
+            if by_id.contains_key(&key) {
+                known_citations.push(citation.clone());
+                if seen.insert(key.clone())
+                    && let Some(entry) = by_id.get(&key)
+                {
+                    cited.push(entry.clone());
+                }
+            }
+        }
+        let yaml = bibliography_yaml(&cited);
+        docs.push(DocumentExport {
+            path: document.path,
+            body: document.body,
+            citations: known_citations,
+            yaml,
+        });
+    }
+    Ok(docs)
+}
+
+async fn document_bibliographies(
+    repo: &dyn Repository,
+    blobs: &dyn BlobStore,
+    references: &[ReferenceEntry],
+    docs: &[DocumentExport],
+) -> Result<(Vec<Bibliography>, Vec<String>), AppError> {
+    let by_uuid: HashMap<String, &ReferenceEntry> =
+        references.iter().map(|r| (r.id.to_string(), r)).collect();
+    let mut bytes_cache: HashMap<String, CoreFullText> = HashMap::new();
+    let mut missing: Vec<String> = Vec::new();
+    let mut bibliographies = Vec::new();
+    for doc in docs {
+        if doc.citations.is_empty() {
+            continue;
+        }
+        let mut entries: Vec<CoreReferenceEntry> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for citation in &doc.citations {
+            let key = citation.reference_id.as_str();
+            if !seen.insert(key.to_owned()) {
+                continue;
+            }
+            let Some(reference) = by_uuid.get(key) else {
+                continue;
+            };
+            let Some(mut entry) = core_reference_entry(reference) else {
+                continue;
+            };
+            match bytes_cache.get(key) {
+                Some(fulltext) => entry.fulltext = Some(fulltext.clone()),
+                None => match fetch_fulltext(repo, blobs, reference.id).await {
+                    Ok(fulltext) => {
+                        entry.fulltext = Some(fulltext.clone());
+                        bytes_cache.insert(key.to_owned(), fulltext);
+                    }
+                    Err(()) => missing.push(key.to_owned()),
+                },
+            }
+            entries.push(entry);
+        }
+        let directory = format!("references-{}", bibliographies.len() + 1);
+        bibliographies.push(Bibliography {
+            directory,
+            entries,
+            citations: doc.citations.clone(),
+        });
+    }
+    Ok((bibliographies, missing))
+}
+
+async fn fetch_fulltext(
+    repo: &dyn Repository,
+    blobs: &dyn BlobStore,
+    reference_id: Uuid,
+) -> Result<CoreFullText, ()> {
+    let fulltext = repo.get_fulltext(reference_id).await.map_err(|_| ())?;
+    let bytes = blobs.get(reference_id).await.map_err(|_| ())?;
+    if bytes.is_empty() || fulltext.content_type != "application/pdf" {
+        return Err(());
+    }
+    Ok(CoreFullText {
+        blob_ref: fulltext.blob_ref,
+        media_type: fulltext.content_type,
+        contents: bytes,
+    })
+}
+
+fn decode_compile_pdf(compile: &CompileResponse) -> Result<Vec<u8>, AppError> {
+    let b64 = compile
+        .pdf_base64
+        .as_ref()
+        .ok_or_else(|| AppError::Conflict("compile produced no PDF".into()))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|error| AppError::Conflict(format!("compile PDF was not base64: {error}")))
+}
+
+async fn export_project(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+    Json(r): Json<ExportRequest>,
+) -> Result<Json<ExportResponse>, AppError> {
+    let principal = permitted(&s, &h, Permission::Document).await?;
+    let project = project_for(&s, &pid).await?;
+    let references = s.repo.list_references(project.id).await?;
+    let docs = gather_documents(s.repo.as_ref(), &project, &references).await?;
+    let (bibliographies, missing) =
+        document_bibliographies(s.repo.as_ref(), s.blobs.as_ref(), &references, &docs).await?;
+    if !missing.is_empty() {
+        return Err(AppError::Conflict(format!(
+            "cited references are missing fulltext PDFs: {}",
+            missing.join(", ")
+        )));
+    }
+    let mut sources = BTreeMap::new();
+    let mut doc_yaml = BTreeMap::new();
+    for doc in &docs {
+        sources.insert(doc.path.clone(), doc.body.clone());
+        doc_yaml.insert(doc.path.clone(), doc.yaml.clone());
+    }
+    let entry_dir = docs
+        .first()
+        .map_or("", |d| d.path.rsplit_once('/').map_or("", |(dir, _)| dir));
+    let master_path = if entry_dir.is_empty() {
+        "main.typ".to_owned()
+    } else {
+        format!("{entry_dir}/main.typ")
+    };
+    let master_source = docs
+        .iter()
+        .map(|doc| {
+            let name: &str = doc
+                .path
+                .rsplit_once('/')
+                .map_or(doc.path.as_str(), |(_, file)| file);
+            format!("#include \"{name}\"")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    sources.insert(master_path.clone(), master_source);
+    let mut compile_request = CompileRequest {
+        project_id: project.id,
+        entry: master_path,
+        sources,
+        marks: BTreeMap::new(),
+        mode: r.mode,
+        view: r.view,
+    };
+    inject_per_document_bibliography(&mut compile_request, &doc_yaml);
+    let compile = s.compile.compile(compile_request).await?;
+    let pdf = decode_compile_pdf(&compile)?;
+    let archive_documents = docs
+        .iter()
+        .map(|d| (d.path.clone(), d.body.clone()))
+        .collect();
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+    let archive_input = ProjectArchiveInput {
+        date,
+        name: project.name.clone(),
+        pdf,
+        documents: archive_documents,
+        bibliographies,
+    };
+    let export = build_project_archive(&archive_input, &pdf_compliance())
+        .map_err(|error| AppError::Conflict(format!("export blocked: {error}")))?;
+    let zip =
+        write_zip(&export).map_err(|error| AppError::Conflict(format!("zip failed: {error}")))?;
+    let references_export = s
+        .references
+        .export(project.clone(), archive_input.bibliographies.clone())
+        .await?;
+    audit(
+        &s,
+        &principal,
+        project.id,
+        "exported",
+        "export",
+        project.id,
+        json!({"zip_filename": export.pdf_filename}),
+    )
+    .await?;
+    Ok(Json(ExportResponse {
+        compile,
+        references: references_export,
+        zip_base64: Some(base64::engine::general_purpose::STANDARD.encode(zip)),
+        zip_filename: Some(export.pdf_filename),
+    }))
+}
+
+fn pdf_compliance() -> PdfCompliance {
+    PdfCompliance {
+        no_watermark: true,
+        not_protected: true,
+        commentable: true,
+        text_extractable: true,
+        indexes_rendered: true,
+        links_live: true,
+    }
+}
+
+// --- Share link handlers ---
+
+async fn create_share_link(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+    Json(r): Json<ShareLinkCreate>,
+) -> Result<(StatusCode, Json<ShareLink>), AppError> {
+    let p = permitted(&s, &h, Permission::Manage).await?;
+    let project = project_for(&s, &pid).await?;
+    if !matches!(r.role.as_str(), "author" | "reviewer" | "read-only") {
+        return Err(AppError::BadRequest("invalid share link role".into()));
+    }
+    let link = s
+        .repo
+        .create_share_link(project.id, &r.role, &p.subject, r.label)
+        .await?;
+    Ok((StatusCode::CREATED, Json(link)))
+}
+async fn list_share_links(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(pid): Path<String>,
+) -> Result<Json<Vec<ShareLink>>, AppError> {
+    permitted(&s, &h, Permission::Manage).await?;
+    let project = project_for(&s, &pid).await?;
+    Ok(Json(s.repo.list_share_links(project.id).await?))
+}
+async fn delete_share_link(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((pid, token)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    permitted(&s, &h, Permission::Manage).await?;
+    let project = project_for(&s, &pid).await?;
+    let links = s.repo.list_share_links(project.id).await?;
+    if !links.iter().any(|l| l.token == token) {
+        return Err(AppError::NotFound);
+    }
+    s.repo.delete_share_link(&token).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn redeem_share_link(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let principal = s.auth.authenticate(&h).await?;
+    let link = s.repo.resolve_share_link(&token).await?;
+    if let Some(exp) = link.expires_at
+        && exp < Utc::now()
+    {
+        return Err(AppError::BadRequest("share link has expired".into()));
+    }
+    let role = match link.role.as_str() {
+        "author" => MembershipRole::Author,
+        "reviewer" => MembershipRole::Reviewer,
+        "read-only" => MembershipRole::ReadOnly,
+        _ => return Err(AppError::BadRequest("invalid share link role".into())),
+    };
+    let existing = s
+        .repo
+        .get_membership(link.project_id, &principal.subject)
+        .await;
+    if existing.is_err() {
+        s.repo
+            .create_membership(ProjectMembership {
+                project_id: link.project_id,
+                subject: principal.subject.clone(),
+                role,
+                created_at: Utc::now(),
+            })
+            .await?;
+    }
+    Ok(Json(json!({"project_id": link.project_id})))
+}
+
+#[must_use]
+pub fn openapi_document() -> Value {
+    json!({"openapi":"3.1.0","info":{"title":"Nisaba app service","version":"0.1.0"},"security":[{"bearerAuth":[]}],"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer","bearerFormat":"JWT"}}},"paths":{"/projects":{"get":{"operationId":"listProjects"},"post":{"operationId":"createProject"}},"/projects/{project_id}":{"get":{"operationId":"getProject"},"patch":{"operationId":"updateProject"},"delete":{"operationId":"deleteProject"}},"/projects/{project_id}/documents":{"get":{"operationId":"listDocuments"},"post":{"operationId":"createDocument"}},"/projects/{project_id}/documents/{document_id}":{"get":{"operationId":"getDocument"},"patch":{"operationId":"updateDocument"},"delete":{"operationId":"deleteDocument"}},"/projects/{project_id}/references":{"get":{"operationId":"listReferences"},"post":{"operationId":"createReference"}},"/projects/{project_id}/references/{reference_id}/fulltext":{"get":{"operationId":"getFulltext"},"put":{"operationId":"putFulltext"},"delete":{"operationId":"deleteFulltext"}},"/projects/{project_id}/exports":{"post":{"operationId":"exportProject"}}}})
+}
+async fn openapi() -> Json<Value> {
+    Json(openapi_document())
+}
+
+pub async fn serve(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+) -> Result<(), std::io::Error> {
+    axum::serve(listener, router(state)).await
+}
+mod tests;

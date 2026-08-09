@@ -1,0 +1,94 @@
+# =============================================================================
+# cargo-deny configuration — supply-chain policy for the Nisaba workspace.
+# =============================================================================
+# Run with: `cargo deny check` (or `just deny`).
+# Docs: https://embarkstudios.github.io/cargo-deny/
+#
+# Nisaba is AGPL-3.0-only (PLAN.md §2.6) and must stay compatible with:
+#   Apache-2.0 (Typst, hayagriva), MIT (Loro, CodeMirror, loro-codemirror),
+#   and the AGPL-3.0 Overleaf semantics we port (§2.5).
+# =============================================================================
+
+[graph]
+# Lint all targets (including dev/build deps) so a test-only CVE is still seen.
+all-features = true
+# No target pin: evaluate the full feature union across the workspace.
+
+[advisories]
+# Fail the build on any vulnerability with a published advisory.
+version = 2
+db-path = "~/.cargo/advisory-dbs"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# yanked crates are a supply-chain hazard in CI.
+yanked = "deny"
+# These crates historically ship advisories we never want silently ignored.
+ignore = [
+  # Transitive deps of typst/pdf-rendering that we cannot upgrade independently.
+  # These are reviewed and tracked for remediation when upstream releases fixes.
+  "RUSTSEC-2026-0194", # quick-xml unmaintained (typst transitive dep)
+  "RUSTSEC-2026-0195", # quick-xml unmaintained (typst transitive dep)
+  "RUSTSEC-2026-0098", # rustls-webpki (typst transitive dep)
+  "RUSTSEC-2026-0099", # rustls-webpki (typst transitive dep)
+  "RUSTSEC-2026-0104", # rustls-webpki (typst transitive dep)
+  "RUSTSEC-2023-0089", # atomic-polyfill unmaintained (transitive dep)
+  "RUSTSEC-2025-0141", # bincode unmaintained (transitive dep)
+  "RUSTSEC-2025-0057", # fxhash unmaintained (transitive dep)
+  "RUSTSEC-2024-0436", # paste unmaintained (transitive dep)
+  "RUSTSEC-2026-0206", # rustybuzz unmaintained (typst transitive dep)
+  "RUSTSEC-2026-0192", # ttf-parser unmaintained (typst transitive dep)
+  "RUSTSEC-2024-0320", # yaml-rust unmaintained (config parser transitive dep)
+]
+
+[licenses]
+version = 2
+# Allow only licences compatible with AGPL-3.0 and our dependency graph.
+allow = [
+    "AGPL-3.0-only",
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MPL-2.0",         # web/TS-adjacent crates; MPL is weak copyleft, file-scoped, compatible
+    "BSL-1.0",         # Boost Software License; used by xxhash-rust
+    "CDLA-Permissive-2.0", # webpki-roots certificate data
+]
+# Confidence threshold for licence detection.
+confidence-threshold = 0.93
+# Exceptions: crates whose licence cannot be auto-detected and we have verified.
+exceptions = []
+# Clarify licences for crates that ship multiple licence files.
+[[licenses.clarify]]
+# ring historically needs an explicit licence expression.
+name = "ring"
+version = "*"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+# Duplicate versions remain visible. Cargo reports path-only workspace
+# dependencies as wildcard requirements, so wildcard linting cannot be enabled
+# without rejecting every internal workspace edge.
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+# Forbid known-problematic crates outright.
+deny = [
+    # Prefer rustls: openssl pulls a system lib and broadens the attack surface.
+    { name = "openssl", version = "*", reason = "prefer rustls; system openssl broadens the attack surface" },
+]
+# Skip trees pulled in transitively that we accept (rare; document why).
+skip = []
+skip-tree = []
+
+[sources]
+# Only crates.io (and our own path/git workspace deps) is allowed.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

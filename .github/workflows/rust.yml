@@ -1,0 +1,85 @@
+name: rust
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - 'rustfmt.toml'
+      - 'deny.toml'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - 'rustfmt.toml'
+      - 'deny.toml'
+      - '.github/workflows/rust.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The workspace sets pedantic lints (Cargo.toml [workspace.lints.clippy]).
+      # RUSTFLAGS=-D warnings makes them fail the build.
+      # Cargo.lock IS committed. --locked verifies it matches the manifests and
+      # fails if it would need regenerating, so it must not be regenerated first.
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --all-features --locked
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+      # --locked builds against the committed Cargo.lock and fails on drift.
+      - run: cargo test --workspace --all-targets --locked
+      - run: cargo test --workspace --doc --locked
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+      # Licences, advisories, bans, and sources are a blocking policy gate.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets --locked

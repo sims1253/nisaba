@@ -1,0 +1,20 @@
+# BuildKit sidecar ignore for deploy/Dockerfile.rust (context = repo root).
+# Honoured when building with `docker build -f deploy/Dockerfile.rust` under
+# BuildKit (default in Compose v2 + the #syntax directive in the Dockerfile).
+# Keeps the build context lean: no toolchain output, no editor/local state.
+
+.git
+.github
+docs
+target
+**/target
+node_modules
+**/node_modules
+web/dist
+artifacts
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+/.claude

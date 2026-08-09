@@ -1,0 +1,66 @@
+[package]
+name = "nisaba-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Loro CRDT WebSocket authority, relay, presence, and snapshot store for Nisaba."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "nisaba-sync"
+path = "src/main.rs"
+
+[features]
+default = ["server"]
+# Enables the axum HTTP/WebSocket server binary (and the production reqwest HTTP
+# transport for JWKS refresh + the document-authorization verifier). Disable for a
+# headless library build; the OIDC/JWT resolver and its traits still compile so
+# they are testable without a server.
+server = [
+  "dep:axum",
+  "dep:tower",
+  "dep:tower-http",
+  "dep:tokio-tungstenite",
+  "dep:reqwest",
+]
+
+[dependencies]
+loro = "1.13"
+tokio = { version = "1", features = ["full"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+dashmap = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+bytes = "1"
+thiserror = "2"
+bitflags = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# OIDC/JWT access resolution. `async-trait` is required for the object-safe
+# async `AccessResolver` / `DocumentAuthorizer` / `HttpFetch` traits (held as
+# `Arc<dyn ...>` in the registry). Both are already in the workspace graph via
+# the app service, so they add no new registry entries.
+async-trait = "0.1"
+jsonwebtoken = "9"
+
+# Server-only deps (kept optional so the pure CRDT core is testable headless).
+axum = { version = "0.8", features = ["ws"], optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", features = ["trace", "cors"], optional = true }
+tokio-tungstenite = { version = "0.30", optional = true }
+# rustls (never openssl) to satisfy cargo-deny; same feature set as the app
+# service's HTTP client. Used by the server-gated JWKS refresher and the HTTP
+# document-authorization verifier.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-tungstenite = "0.30"
+base64 = "0.22"

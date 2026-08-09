@@ -1,0 +1,33 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# JavaScript / TypeScript
+**/node_modules/
+**/dist/
+**/coverage/
+*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Generated reports and runtime data
+artifacts/
+.qa-reports/
+*.log
+*.tmp
+*.bak
+
+# Agent, editor, and OS state
+/.claude/
+/.prime/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

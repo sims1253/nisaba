@@ -1,0 +1,13 @@
+[package]
+name = "nisaba-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Pure document model for Nisaba: projects, review marks, projections, and resolution."
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"

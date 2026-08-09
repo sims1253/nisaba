@@ -1,0 +1,92 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+# =============================================================================
+# Nisaba Rust service image (compile / sync / app)
+# =============================================================================
+# One template builds any workspace binary via the SERVICE build arg:
+#
+#   docker build -f deploy/Dockerfile.rust -t nisaba-compile \
+#       --build-arg SERVICE=nisaba-compile .
+#
+# Design notes:
+#   * cargo-chef gives correct layer caching across the whole workspace — the
+#     dependency graph is compiled once and reused while source changes.
+#   * Runtime is debian-slim + non-root user + ca-certificates + curl (for the
+#     /healthz probe). distroless is a documented future hardening (security.md).
+#   * The binary is the only artifact copied; no toolchain in the runtime image.
+#   * Services bind 0.0.0.0:8080 and must implement GET /healthz
+#     (docs/operations.md §2). Each binary reads its OWN bind-address env var
+#     (NISABA_APP_ADDR / NISABA_SYNC_ADDR / NISABA_COMPILE_ADDR); `PORT` is a
+#     supported fallback — see docker-compose.yml.
+# =============================================================================
+# Tags document the intended upstream release; digests make rebuilds reproducible.
+ARG RUST_IMAGE=rust:1.94-slim-bookworm@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2
+ARG DEBIAN_IMAGE=debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+
+# ---------- chef base ----------
+FROM ${RUST_IMAGE} AS chef
+WORKDIR /usr/src/nisaba
+RUN cargo install cargo-chef --locked --version 0.1.77 \
+ && rustc --version
+
+# ---------- planner (computes dependency recipe from manifests only) ----------
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---------- builder (caches deps, then compiles the chosen service) ----------
+FROM chef AS builder
+ARG SERVICE=nisaba-compile
+# Cook the dependency graph from the recipe — this layer is cache-stable across
+# source-only changes and survives concurrent edits to workspace manifests.
+COPY --from=planner /usr/src/nisaba/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+# Now the real sources. Rebuild picks up changed sources cheaply.
+COPY . .
+RUN --mount=type=cache,target=/usr/src/nisaba/target \
+    cargo build --release -p "${SERVICE}" \
+ && cp "target/release/${SERVICE}" /usr/local/bin/service
+
+# ---------- runtime ----------
+FROM ${DEBIAN_IMAGE} AS runtime
+ARG SERVICE=nisaba-compile
+LABEL org.opencontainers.image.title="nisaba-${SERVICE}" \
+      org.opencontainers.image.source="https://github.com/sims1253/nisaba" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
+
+# Install runtime deps + create the non-root user. /data is the sync
+# op-log/snapshot dir (NISABA_SYNC_DATA_DIR); pre-create it owned by the
+# runtime user so a named volume mounts writable (it would be root-owned by
+# default, which the non-root user could not write to).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --uid 65532 --gid 0 --create-home --shell /usr/sbin/nologin nisaba \
+ && mkdir -p /data \
+ && chown -R 65532:0 /data
+
+# Drop privileges. read-only rootfs tolerates writes under /tmp and the home dir.
+USER 65532:0
+WORKDIR /home/nisaba
+
+# Each Rust binary reads its own bind-address env var. Defaulting all three here
+# means a standalone `docker run` of any service binds the advertised address;
+# Compose overrides the relevant one per service.
+ENV RUST_LOG=info \
+    RUST_BACKTRACE=1 \
+    NISABA_SERVICE="${SERVICE}" \
+    NISABA_APP_ADDR=0.0.0.0:8080 \
+    NISABA_SYNC_ADDR=0.0.0.0:8080 \
+    NISABA_COMPILE_ADDR=0.0.0.0:8080
+
+COPY --from=builder /usr/local/bin/service /usr/local/bin/service
+
+EXPOSE 8080
+
+# /healthz is the contract (docs/operations.md §2). The internal port is the
+# fixed, aligned 8080 — there is no PORT override to honour.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=5 \
+    CMD curl -fsS "http://127.0.0.1:8080/healthz" || exit 1
+
+# tini reaps zombie processes (compile workers, connection handlers).
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/service"]

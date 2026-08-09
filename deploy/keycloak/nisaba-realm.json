@@ -1,0 +1,140 @@
+{
+  "realm": "nisaba",
+  "enabled": true,
+  "sslRequired": "none",
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 30,
+  "maxFailureWaitSeconds": 900,
+  "displayName": "Nisaba - LOCAL DEVELOPMENT ONLY (replace all defaults for production; see deploy/keycloak/README.md)",
+  "roles": {
+    "realm": [
+      {
+        "name": "author",
+        "description": "Author and suggest changes; cannot accept/reject across the board.",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "reviewer",
+        "description": "Review, suggest, accept and reject changes (suggesting mode default).",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "read-only",
+        "description": "Read access only; no edits, no suggestions.",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "nisaba-web",
+      "name": "Nisaba Web",
+      "description": "Browser editor + preview client. PUBLIC client: authorization code + PKCE (S256). No client secret is exposed to the browser.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "frontchannelLogout": true,
+      "rootUrl": "http://127.0.0.1:5173",
+      "baseUrl": "/",
+      "redirectUris": [
+        "http://127.0.0.1:5173/*",
+        "http://localhost:5173/*",
+        "http://127.0.0.1:8103/*",
+        "http://localhost:8103/*"
+      ],
+      "webOrigins": [
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:8103",
+        "http://localhost:8103"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://127.0.0.1:5173/*,http://localhost:5173/*,http://127.0.0.1:8103/*,http://localhost:8103/*",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "use.refresh.tokens": "true",
+        "pkceCodeChallengeMethod": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "nisaba-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "nisaba-web",
+            "included.custom.audience": "nisaba",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"]
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "demo@nisaba.local",
+      "firstName": "Demo",
+      "lastName": "Author",
+      "credentials": [
+        { "type": "password", "value": "demo", "temporary": false }
+      ],
+      "realmRoles": ["author", "reviewer"]
+    },
+    {
+      "username": "reviewer",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "reviewer@nisaba.local",
+      "firstName": "Rita",
+      "lastName": "Reviewer",
+      "credentials": [
+        { "type": "password", "value": "reviewer", "temporary": false }
+      ],
+      "realmRoles": ["reviewer"]
+    },
+    {
+      "username": "reader",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "reader@nisaba.local",
+      "firstName": "Ray",
+      "lastName": "Reader",
+      "credentials": [
+        { "type": "password", "value": "reader", "temporary": false }
+      ],
+      "realmRoles": ["read-only"]
+    }
+  ]
+}

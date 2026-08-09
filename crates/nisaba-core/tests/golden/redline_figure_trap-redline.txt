@@ -1,0 +1,5 @@
+= Chapter Three
+
+#review.rep-open[]#figure(image("logo.svg")#review.rep-close[])
+
+Text darunter.

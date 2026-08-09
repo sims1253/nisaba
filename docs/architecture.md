@@ -1,0 +1,235 @@
+# Architecture
+
+This document describes how the Nisaba services fit together: the service
+boundaries, the data flow for the core authoring loop, the storage model, and
+the externally-visible service APIs. It is the operational complement to
+[`PLAN.md`](../PLAN.md) (which is the *what/why*) and [`docs/security.md`](security.md)
+/ [`docs/operations.md`](operations.md) (the *how to run it safely*).
+
+> **Regenerated from the actual codebase.** A CI check (see `.github/workflows/`)
+> validates that the service inventory below matches the workspace members.
+
+---
+
+## 1. Service inventory
+
+The following table is validated by CI against the Cargo workspace members
+(`Cargo.toml` `[workspace] members`) and the bun workspace members
+(`package.json` `workspaces`).
+
+| Service / Package  | Language    | Owns                                              | Status        |
+|--------------------|-------------|---------------------------------------------------|---------------|
+| `nisaba-compile`   | **Rust**    | Typst compilation (in-memory sources → PDF)       | impl. (`/healthz`) |
+| `nisaba-sync`      | Rust        | Loro CRDT authority, relay, presence, op-log      | impl. (`/healthz`, `/health/ready`) |
+| `nisaba-app`       | Rust        | CRUD, references, export orchestration, auth      | impl. (`/healthz`, `/health/ready`; Postgres + S3, inline JWKS) |
+| `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
+| `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
+| `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
+| `@nisaba/web`      | TypeScript  | CodeMirror 6 editor, paginated preview            | impl. |
+| `@nisaba/tools`    | TypeScript  | DOCX→Typst pipeline, visual-diff, PDF compliance  | impl. |
+| `postgres`         | —           | Metadata (projects, users, references)            | **live (infra)** |
+| `minio`            | —           | S3-compatible reference full-text blobs           | **live (infra)** |
+| `keycloak`         | Java        | OIDC identity provider                            | **live (infra, dev-only)** |
+
+`nisaba-compile` **must** be Rust: the Typst compiler is a callback `World` and
+warm `comemo` caches only survive if the process stays alive. The
+other services are Rust for crate sharing, but the boundary is a process
+boundary regardless.
+
+### Rust workspace members
+
+```
+crates/nisaba-core        — pure domain: Position, projection, marks
+crates/nisaba-references  — RIS reference format
+crates/nisaba-export      — export utilities
+services/app              — CRUD, references, export orchestration, auth
+services/compile          — Typst compilation
+services/sync             — Loro CRDT authority, relay, presence
+```
+
+### Bun workspace members
+
+```
+web     (@nisaba/web)   — CodeMirror 6 SPA
+tools   (@nisaba/tools) — template pipeline, visual-diff, PDF tooling
+```
+
+---
+
+## 2. Topology
+
+```
+                          ┌──────────────────────────────┐
+   browser (CodeMirror 6, │  web  (nginx, non-root :8080) │
+   Loro replica, viewer)  │  / → SPA   /api → app   /sync │
+         HTTP/WS          │            → sync (WebSocket) │
+         OIDC (redirect)  └──────────────┬───────────────┘
+                 ▲                        │ svc-net
+                 │           ┌────────────┼─────────────┐
+                 │           ▼            ▼             ▼
+        ┌────────────────┐ ┌────────┐ ┌────────┐
+        │   keycloak     │ │  app   │ │ sync   │   (compile called by app
+        │   (OIDC :8090) │ │ (CRUD) │ │ (CRDT) │    over svc-net on demand)
+        └───────┬────────┘ └───┬────┘ └────┬───┘
+        db-net  │          db+obj│          │ sync-data volume
+                │                │          │
+        ┌───────▼──────┐   ┌─────▼──────────▼────┐
+        │  postgres    │   │ minio (full-text)   │
+        │ nisaba + kc  │   │ + local sync store │
+        └──────────────┘   └─────────────────────┘
+                 internal networks and named volumes
+```
+
+Network segmentation is defined in `docker-compose.yml` and explained in
+[`security.md`](security.md) §"Network model". Three of the four networks are
+`internal: true` (no egress); only `svc-net` can reach the internet (e.g. so the
+compile service can fetch pinned Typst packages).
+
+---
+
+## 3. Data flow — the core authoring loop
+
+1. **Edit (web).** A writer types in CodeMirror 6. Hybrid inline decorations
+   render allowlisted constructs. The edit is applied to the local
+   Loro replica (WASM) and sent to `sync` over a WebSocket.
+2. **Collaborate (sync).** `sync` is the Loro authority: it relays ops to other
+   replicas, computes presence/awareness, and persists its op log and snapshots
+   in the configured filesystem data directory. Convergence is a CRDT property; syntactic
+   validity is not, so the editor reparses on every keystroke.
+3. **Project (app).** `app` owns path-addressed documents and references in Postgres,
+   and authorises the request
+   against the OIDC token, and orchestrates compiles and exports.
+4. **Compile (compile).** `app` sends the **projection** of the document to `compile` as plain Typst sources. `compile` knows nothing
+   about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, span
+   map, and (opt-in) page frames. Warm state is keyed by `project_id`.
+5. **Store reference files (minio).** Uploaded full-text PDFs land in
+   `nisaba-blobs`. Object keys are opaque ids — **never citation numbers**. Compile/export artifacts are still returned directly;
+   content-addressed artifact storage is roadmap work.
+
+The projection is the seam that keeps the compiler pure: `project(text, marks,
+view) -> String`. It is golden-file tested.
+
+---
+
+## 4. Service APIs
+
+### 4.1 `compile` — HTTP `POST /compile`
+
+The most important interface in the system. Narrow and stable.
+
+```
+POST /compile
+Content-Type: application/json
+{
+  "project_id": "uuid",
+  "entry": "m3/3-2-1.typ",
+  "sources": { "<path>": "<typst source>", ... },   // the projection, not the CRDT
+  "mode": "document" | "full",
+  "view": "baseline" | "proposed" | "redline",
+  "include_frames": false                             // opt-in, default false
+}
+→ 200 {
+  "pdf"?:       "<base64 bytes>",
+  "frames"?:    [ ... ],                              // empty unless include_frames is true
+  "span_map":   [ ... ],
+  "diagnostics":[ ... ],
+  "outline":    [ ... ],
+  "build_id":   "<opaque id>",
+  "instrumentation": { ... }
+}
+```
+
+- `mode: "document"` compiles the entry standalone; cross-references to other
+  document fragments render unresolved (acceptable for the current preview).
+- `mode: "full"` compiles the full project.
+- Warm `comemo` caches persist across calls for the same `project_id`.
+- SVG page frames are **opt-in** (`include_frames: true`); they default to off
+  (frames were previously computed eagerly for every page and consumed by nobody).
+
+### 4.2 `sync` — WebSocket
+
+Path convention: `wss://<host>/sync/{doc_id}` (the `web` nginx upgrades
+`/sync/` to the `sync` service). Framing is Loro's update protocol plus a
+presence channel.
+
+### 4.3 `app` — REST under `/api`
+
+The browser-facing CRUD API lives under `/api/*`; the `web` nginx strips the
+`/api` prefix and forwards to `app` (`/api/projects` → `/projects`). The
+exception is the exact `/api/compile` route, which nginx forwards verbatim.
+Routes:
+
+- Projects / documents (CRUD).
+- Reference library (project-scoped; provenance + full-text).
+- Export orchestration → drives `compile` and the RIS/attachment validator. `app` calls `compile` over `svc-net` at `compile:8080`,
+  authorising each call with the shared `NISABA_COMPILE_TOKEN`.
+- Auth: validates the OIDC bearer token; enforces roles `author`, `reviewer`,
+  `read-only`.
+- Internal sync authorization: `POST /internal/sync/authorize`.
+- Share links: `POST /share/{token}/redeem`.
+- Audit log: `GET /projects/{id}/audit`.
+- Completeness: `GET /projects/{id}/completeness`.
+
+### 4.4 Health — `GET /healthz` (all HTTP services)
+
+Every HTTP service exposes `GET /healthz` returning `200 ok`. This is the
+contract used by the Docker `HEALTHCHECK` directives. `app` and `sync` also serve
+`GET /health/ready`.
+
+---
+
+## 5. Storage model
+
+| Store      | What lives here                                              | Owner role    |
+|------------|--------------------------------------------------------------|---------------|
+| Postgres `nisaba`   | projects, documents, references, audit | `nisaba_app`  |
+| Postgres `keycloak` | Keycloak realm, users, sessions                           | `keycloak`    |
+| MinIO `nisaba-blobs` | uploaded reference full-text PDFs                       | `nisaba-app` (scoped) |
+| Named volume `sync-data` | Loro op log and snapshots                           | `nisaba-sync` |
+| MinIO `nisaba-oplog` | reserved by local bootstrap; no service uses it today    | none |
+
+- `app` always uses `PostgresRepository` and `S3BlobStore` in the service binary.
+  In-memory adapters are available only to unit tests.
+- Postgres and MinIO use **separate, least-privilege roles**.
+- MinIO buckets are **versioned** for recoverability.
+- Citation numbers are **never stored**; they are derived at build time.
+
+---
+
+## 6. Authentication & OIDC flow
+
+```
+browser ──(1) GET /api/whoami (no token)──▶ app : 401 { issuer, clientId }
+browser ──(2) redirect ────────────────────▶ keycloak /realms/nisaba (login)
+browser ◀──(3) authorization code ────────── keycloak
+browser ──(4) code → app (or direct token exchange) ─▶ tokens (access/refresh/id)
+browser ──(5) GET /api/... Authorization: Bearer <access> ─▶ app (validates, routes by role)
+```
+
+- Realm `nisaba`, client `nisaba-web` (**public**, authorisation-code +
+  PKCE `S256` — no client secret is exposed to the browser), roles `author` /
+  `reviewer` / `read-only`.
+- Roles are mapped into the access token as a **top-level `roles`** claim.
+- Today the app validates tokens against a JWKS read inline from
+  `NISABA_OIDC_JWKS_JSON` at startup.
+
+---
+
+## 7. Failure modes the architecture must not silently paper over
+
+1. **Shelling out to the Typst CLI** — kills warm caches. `compile` is a process.
+2. **Storing citation numbers** — corrupts export filenames on renumber.
+3. **Physically deleting tracked-deletion text** — makes reject impossible.
+4. **CRDT convergence ≠ syntactic validity** — reparse every keystroke.
+5. **Compile-pool memory** — warm caches for large projects are big.
+6. **Leaking product-specific hierarchy into storage** — keep the file model general.
+
+---
+
+## 8. Open contracts
+
+These are tracked as open questions in the implementation plan (§7).
+
+- Exact `sync` WebSocket message envelope.
+- `app` REST resource shapes (paths under `/api`).
+- Which PDF standards should be offered by default (for example PDF/A-2b or PDF/UA-1)?

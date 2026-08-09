@@ -1,0 +1,11 @@
+{
+  "name": "nisaba",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "web",
+    "tools",
+    "packages/*"
+  ]
+}

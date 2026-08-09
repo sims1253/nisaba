@@ -1,0 +1,13 @@
+[package]
+name = "nisaba-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Deterministic project archive and ZIP writer for Nisaba"
+
+[dependencies]
+nisaba-references = { path = "../nisaba-references" }
+
+[lints]
+workspace = true

@@ -1,0 +1,36 @@
+{
+  "name": "@nisaba/tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Repeatable DOCX→Typst template pipeline, visual-diff, and PDF compliance tooling for general document projects.",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "nisaba-tools": "bin/nisaba-tools.ts"
+  },
+  "scripts": {
+    "capabilities": "bun src/cli/index.ts capabilities",
+    "docx-introspect": "bun src/cli/index.ts docx-introspect",
+    "typst-skeleton": "bun src/cli/index.ts typst-skeleton",
+    "validate-schema": "bun src/cli/index.ts validate-schema",
+    "visual-diff": "bun src/cli/index.ts visual-diff",
+    "pdf-compliance": "bun src/cli/index.ts pdf-compliance",
+    "ris-roundtrip": "bun src/cli/index.ts ris-roundtrip",
+    "fixtures:gen": "bun src/cli/index.ts fixtures-gen",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.105",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

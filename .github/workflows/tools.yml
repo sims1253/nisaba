@@ -1,0 +1,204 @@
+name: tools
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/**'
+      - 'deploy/**'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - 'justfile'
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'services/**'
+      - 'web/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.base.json'
+      - 'docs/architecture.md'
+      - 'scripts/**'
+      - '.github/workflows/tools.yml'
+  pull_request:
+    paths:
+      - 'tools/**'
+      - 'deploy/**'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - 'justfile'
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'services/**'
+      - 'web/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.base.json'
+      - 'docs/architecture.md'
+      - 'scripts/**'
+      - '.github/workflows/tools.yml'
+  schedule:
+    # Weekly full run (incl. the external-tool job) regardless of activity.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: tools-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Detect which areas changed so the heavyweight external-tool job only runs
+  # when it can actually contribute signal (or when explicitly requested).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      external: ${{ steps.filter.outputs.external }}
+      infra: ${{ steps.filter.outputs.infra }}
+      app: ${{ steps.filter.outputs.app }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            external:
+              - 'tools/src/pdf/**'
+              - 'tools/src/visualdiff/**'
+              - 'tools/src/externals/**'
+              - 'tools/test/external-gated.test.ts'
+            infra:
+              - 'deploy/**'
+              - 'docker-compose.yml'
+              - '.env.example'
+            app:
+              - 'Cargo.toml'
+              - '**/Cargo.toml'
+              - 'services/**'
+              - 'web/**'
+              - 'deploy/**'
+              - 'docker-compose.yml'
+              - '.env.example'
+            docker:
+              - 'deploy/Dockerfile*'
+              - 'deploy/Dockerfile.*'
+              - 'docker-compose.yml'
+              - '.env.example'
+
+  # Strict tools gate (bun). Runs the typecheck + every unit test EXCEPT the
+  # external-tool suite, which needs LibreOffice/poppler/qpdf/ImageMagick and
+  # lives in its own job below. No silent skipping: a missing script or failing
+  # assertion fails the build.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies (workspace root, frozen lockfile)
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+        working-directory: tools
+      - name: Unit tests (external-tool suite excluded; runs in external-pdf-tools)
+        run: bun run test -- --exclude 'test/external-gated.test.ts'
+        working-directory: tools
+
+  # External PDF toolchain — an EXPLICIT, GATED job. It installs the real system
+  # tools (LibreOffice, poppler, qpdf, ImageMagick) + typst and runs the full
+  # tools/verify.sh, which exercises the external-gated PDF-compliance and
+  # visual-diff tests FOR REAL (no skip). Runs on dispatch/schedule, on main,
+  # and on PRs that touch the PDF/visual-diff/external-capability code.
+  external-pdf-tools:
+    needs: changes
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.ref == 'refs/heads/main' ||
+      needs.changes.outputs.external == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install external PDF toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libreoffice poppler-utils qpdf imagemagick
+      - name: Install typst (for the skeleton-compile check in verify.sh)
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) asset="typst-x86_64-unknown-linux-musl";;
+            aarch64) asset="typst-aarch64-unknown-linux-musl";;
+            *) echo "Unsupported arch: $arch"; exit 1;;
+          esac
+          latest=$(curl -sL https://api.github.com/repos/typst/typst/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+          echo "Installing typst $latest ($asset)"
+          curl -sL "https://github.com/typst/typst/releases/download/${latest}/${asset}.tar.xz" | tar xJ -C /tmp
+          sudo install -m755 "$(find /tmp -name typst -type f | head -1)" /usr/local/bin/typst
+          typst --version
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies (workspace root, frozen lockfile)
+        run: bun install --frozen-lockfile
+      - name: Full tools/verify.sh (external-gated tests run for real)
+        run: ./verify.sh
+        working-directory: tools
+
+  # Infra hygiene for files this stream owns: validate the resolved Compose
+  # config (temp env from .env.example) and lint the bootstrap/ops shell scripts.
+  infra-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml (temp env from .env.example)
+        run: ./deploy/validate-compose.sh
+
+      - name: Check architecture.md matches workspace
+        run: ./scripts/check-architecture.sh
+
+      - name: Shellcheck deploy scripts (install if absent)
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          fi
+          shellcheck \
+            scripts/cargo-audit.sh \
+            deploy/validate-compose.sh \
+            deploy/smoke.sh \
+            deploy/backup/backup.sh \
+            deploy/backup/restore.sh \
+            deploy/postgres/init/10-init-databases.sh \
+            deploy/minio/init-buckets.sh \
+            deploy/keycloak/healthcheck.sh
+
+  smoke:
+    needs: changes
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.ref == 'refs/heads/main' ||
+      needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke-test the infra tier
+        run: ./deploy/smoke.sh
+
+  compose-build:
+    needs: changes
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.ref == 'refs/heads/main' ||
+      needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the app-profile images (app/sync/compile/web)
+        run: |
+          tmp="$(mktemp)"
+          cp .env.example "$tmp"
+          docker compose --env-file "$tmp" --profile app build
+          rm -f "$tmp"

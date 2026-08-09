@@ -1,0 +1,53 @@
+# DOCX-to-Typst template pipeline
+
+The `tools/` workspace contains deterministic utilities for learning the structure of a DOCX
+file, generating a Typst starting point, and comparing rendered output. This is an optional
+import aid for general document projects; DOCX is not part of the core storage model.
+
+## Workflow
+
+1. **Introspect** a source DOCX into a stable JSON manifest.
+2. **Generate** a Typst skeleton containing detected headings, placeholders, tables, images,
+   page geometry, headers, and numbering hints.
+3. **Validate** a candidate source or manifest against the captured structure.
+4. **Render and compare** reference and candidate PDFs using explicit thresholds.
+5. **Record provenance** for source files, tool versions, commands, and output hashes.
+
+The repository's `fixtures/templates/sample-document.docx` is synthetic and exists only to
+exercise the pipeline. It is not a claim of visual parity with third-party templates.
+
+## Commands
+
+From `tools/`:
+
+```bash
+bun install --frozen-lockfile
+bun run cli -- capabilities
+bun run cli -- docx-introspect \
+  --input ../fixtures/templates/sample-document.docx \
+  --output /tmp/manifest.json
+bun run cli -- typst-skeleton \
+  --manifest /tmp/manifest.json \
+  --output /tmp/template.typ
+bun run cli -- validate-schema \
+  --manifest /tmp/manifest.json \
+  --typst /tmp/template.typ
+```
+
+For a visual comparison:
+
+```bash
+bun run cli -- visual-diff \
+  --reference reference.pdf \
+  --candidate candidate.pdf \
+  --workdir /tmp/visual-diff
+```
+
+Thresholds are explicit inputs. A successful comparison means only that the configured checks
+passed; it does not establish semantic equivalence or suitability for a particular use.
+
+## Determinism
+
+The synthetic DOCX uses fixed ZIP timestamps, stable part ordering, and fixed compression. JSON
+output is canonically ordered. Re-running generation should produce the same bytes and hashes.
+When output changes intentionally, regenerate and review both golden manifest and Typst skeleton.

@@ -1,0 +1,283 @@
+{
+  "document": {
+    "blocks": [
+      {
+        "kind": "heading",
+        "level": 1,
+        "styleId": "Heading1",
+        "text": "Sample Document"
+      },
+      {
+        "kind": "heading",
+        "level": 2,
+        "styleId": "Heading2",
+        "text": "Table of Contents"
+      },
+      {
+        "flags": {
+          "hasField": true,
+          "hasHyperlink": false,
+          "hasImage": false,
+          "hasList": false
+        },
+        "kind": "paragraph",
+        "text": "(Table of Contents)"
+      },
+      {
+        "flags": {
+          "hasField": false,
+          "hasHyperlink": false,
+          "hasImage": false,
+          "hasList": false
+        },
+        "kind": "paragraph",
+        "text": "Author: <<Author>>"
+      },
+      {
+        "flags": {
+          "hasField": false,
+          "hasHyperlink": false,
+          "hasImage": false,
+          "hasList": false
+        },
+        "kind": "paragraph",
+        "text": "<<Project>>"
+      },
+      {
+        "flags": {
+          "hasField": false,
+          "hasHyperlink": true,
+          "hasImage": false,
+          "hasList": false
+        },
+        "kind": "paragraph",
+        "text": "External Link"
+      },
+      {
+        "flags": {
+          "hasField": false,
+          "hasHyperlink": false,
+          "hasImage": true,
+          "hasList": false
+        },
+        "kind": "paragraph",
+        "text": ""
+      },
+      {
+        "kind": "table",
+        "ref": 0
+      },
+      {
+        "flags": {
+          "hasField": false,
+          "hasHyperlink": false,
+          "hasImage": false,
+          "hasList": true
+        },
+        "kind": "paragraph",
+        "text": "First item"
+      },
+      {
+        "flags": {
+          "hasField": false,
+          "hasHyperlink": false,
+          "hasImage": false,
+          "hasList": true
+        },
+        "kind": "paragraph",
+        "text": "Second item"
+      },
+      {
+        "kind": "pageBreak"
+      },
+      {
+        "kind": "heading",
+        "level": 3,
+        "styleId": "Heading3",
+        "text": "List of Tables"
+      },
+      {
+        "kind": "heading",
+        "level": 3,
+        "styleId": "Heading3",
+        "text": "List of Figures"
+      }
+    ],
+    "fields": [
+      {
+        "count": 1,
+        "instruction": "TOC \\o \"1-3\" \\h \\z \\u",
+        "type": "toc"
+      }
+    ],
+    "footers": [],
+    "headers": [
+      {
+        "part": "word/header1.xml",
+        "sha256": "24a32e4cda918004d79a83c93006bbd05cf9d03709e89cdc8fbe64bf23768c69",
+        "type": "default"
+      }
+    ],
+    "images": [
+      {
+        "heightEmu": 457200,
+        "index": 0,
+        "part": "word/media/logo.png",
+        "relId": "rId3",
+        "widthEmu": 914400
+      }
+    ],
+    "numbering": [
+      {
+        "abstractNumId": 0,
+        "levels": 2,
+        "numId": 1
+      }
+    ],
+    "placeholders": [
+      {
+        "count": 1,
+        "kind": "bracket",
+        "sample": "Author",
+        "token": "Author"
+      },
+      {
+        "count": 1,
+        "kind": "bracket",
+        "sample": "Project",
+        "token": "Project"
+      },
+      {
+        "count": 1,
+        "kind": "bracket",
+        "sample": "Version",
+        "token": "Version"
+      }
+    ],
+    "sections": [
+      {
+        "columns": {
+          "count": 1,
+          "spaceTwips": 720
+        },
+        "footerRefs": [],
+        "headerRefs": [
+          "header1.xml"
+        ],
+        "index": 0,
+        "margins": {
+          "bottomTwips": 1134,
+          "footerTwips": 720,
+          "headerTwips": 720,
+          "leftTwips": 1134,
+          "rightTwips": 1134,
+          "topTwips": 1134
+        },
+        "pageSize": {
+          "heightTwips": 16838,
+          "orientation": "portrait",
+          "widthTwips": 11906
+        }
+      }
+    ],
+    "sha256": "559f445d76d504cace1914f9e30b932c9aacaeb46f23b68069b320d80e65243b",
+    "tables": [
+      {
+        "columns": 2,
+        "hasHeaderRow": true,
+        "index": 0,
+        "rows": 2,
+        "styleId": "TableGrid"
+      }
+    ]
+  },
+  "generatedBy": "nisaba-tools@0.1.0",
+  "metadata": {
+    "appVersion": "0.1.0",
+    "application": "Nisaba Fixture Generator",
+    "characters": 300,
+    "company": "Nisaba",
+    "created": "2020-01-01T00:00:00Z",
+    "creator": "Nisaba Tools",
+    "keywords": "fixture, docx, template",
+    "language": "en-US",
+    "modified": "2020-01-02T00:00:00Z",
+    "pages": 3,
+    "revision": "1",
+    "subject": "sample document",
+    "templateName": "NisabaSampleTemplate.dotx",
+    "title": "Nisaba Sample Document Fixture",
+    "words": 42
+  },
+  "parts": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "docProps/app.xml",
+    "docProps/core.xml",
+    "word/_rels/document.xml.rels",
+    "word/document.xml",
+    "word/header1.xml",
+    "word/media/logo.png",
+    "word/numbering.xml",
+    "word/styles.xml"
+  ],
+  "requiredPlaceholders": [
+    "Author",
+    "Project",
+    "Version"
+  ],
+  "schemaVersion": "1",
+  "source": {
+    "bytes": 4285,
+    "fileName": "sample-document.docx",
+    "format": "docx",
+    "ooxmlNamespace": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "sha256": "da421e709d8a57d4a8802966450b506b45695fa8e6b56d5451e62c6b56bb2954"
+  },
+  "styles": {
+    "character": [
+      {
+        "id": "Hyperlink",
+        "isDefault": false,
+        "name": "Hyperlink",
+        "uiPriority": 99
+      }
+    ],
+    "defaultParagraph": "Normal",
+    "paragraph": [
+      {
+        "basedOn": "Normal",
+        "id": "Heading1",
+        "isDefault": false,
+        "name": "heading 1",
+        "uiPriority": 9
+      },
+      {
+        "basedOn": "Normal",
+        "id": "Heading2",
+        "isDefault": false,
+        "name": "heading 2",
+        "uiPriority": 9
+      },
+      {
+        "basedOn": "Normal",
+        "id": "Heading3",
+        "isDefault": false,
+        "name": "heading 3",
+        "uiPriority": 9
+      },
+      {
+        "id": "Normal",
+        "isDefault": true,
+        "name": "Normal"
+      }
+    ],
+    "table": [
+      {
+        "id": "TableGrid",
+        "isDefault": false,
+        "name": "Table Grid"
+      }
+    ]
+  }
+}
