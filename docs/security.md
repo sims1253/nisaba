@@ -15,7 +15,7 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
 
 1. **Least privilege by default.** Every principal gets the narrowest access
    that satisfies its job: separate DB roles, scoped S3 credentials, non-root
-   container users, internal-only networks.
+   container users, and segmented service networks.
 2. **Fail closed.** Missing config is fatal (`${VAR:?}` in Compose), not a
    silent insecure default.
 3. **No secrets in the repo.** `.env` is gitignored; only `.env.example`
@@ -46,15 +46,17 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
 
 ## 3. Network model
 
-Four Compose networks. Three are `internal: true` (no internet egress); only
-`svc-net` can reach the internet.
+Four segmented Compose bridge networks restrict lateral access through explicit
+membership. They are not marked `internal: true`: Docker 29 suppresses published
+host ports for containers attached only to internal networks, which would make the
+documented loopback-only Postgres, MinIO, and browser OIDC endpoints unreachable.
 
-| Network     | internal | Members                                | Purpose / egress rationale                |
-|-------------|:--------:|----------------------------------------|-------------------------------------------|
-| `db-net`    | yes      | postgres, keycloak, app                | SQL only; postgres/keycloak need no egress |
-| `obj-net`   | yes      | minio, minio-init, app, sync           | S3 only; minio needs no egress             |
-| `oidc-net`  | yes      | keycloak, app                          | app ↔ keycloak backchannel (JWKS)          |
-| `svc-net`   | **no**   | app, sync, compile, web                | service mesh; egress for Typst packages    |
+| Network     | Members                         | Purpose                              |
+|-------------|---------------------------------|--------------------------------------|
+| `db-net`    | postgres, keycloak, app         | SQL traffic                          |
+| `obj-net`   | minio, minio-init, app          | S3-compatible object traffic         |
+| `oidc-net`  | keycloak, app                   | app ↔ Keycloak backchannel           |
+| `svc-net`   | app, sync, compile, web         | application service mesh             |
 
 Consequences:
 
@@ -66,8 +68,9 @@ Consequences:
   reachable solely by `app` at `compile:8080`, and never proxied by nginx. The
   shared `NISABA_COMPILE_TOKEN` authorises `app → compile` calls and is injected
   into those two containers only.
-- `svc-net` is egress-capable so `compile` can fetch pinned Typst packages. The
-  egress surface is therefore limited to one service family.
+- Network membership, credentials, and explicit loopback port bindings—not an
+  `internal` network flag—enforce the local isolation boundaries. Production
+  should additionally apply outbound firewall policy where egress restriction is required.
 
 All published ports bind to `127.0.0.1` (loopback) only — the stack is not
 exposed on other interfaces. In production, a TLS-terminating reverse proxy is

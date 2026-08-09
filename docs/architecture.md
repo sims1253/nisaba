@@ -77,13 +77,14 @@ tools   (@nisaba/tools) — template pipeline, visual-diff, PDF tooling
         │  postgres    │   │ minio (full-text)   │
         │ nisaba + kc  │   │ + local sync store │
         └──────────────┘   └─────────────────────┘
-                 internal networks and named volumes
+                segmented networks and named volumes
 ```
 
 Network segmentation is defined in `docker-compose.yml` and explained in
-[`security.md`](security.md) §"Network model". Three of the four networks are
-`internal: true` (no egress); only `svc-net` can reach the internet (e.g. so the
-compile service can fetch pinned Typst packages).
+[`security.md`](security.md) §"Network model". Membership separates database,
+object-store, OIDC, and application-service traffic. Published developer ports
+bind only to `127.0.0.1`; production deployments should add outbound firewall
+policy where egress restriction is required.
 
 ---
 

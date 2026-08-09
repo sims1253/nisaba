@@ -7,6 +7,17 @@ ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.27-bookworm@sha256:f9dfa9c20b2b0b7
 FROM ${BUN_IMAGE} AS build
 WORKDIR /app
 
+# Vite substitutes OIDC configuration at build time. Keep these explicit build
+# arguments: setting only the runtime container environment would leave the
+# shipped static bundle with authentication disabled.
+ARG VITE_OIDC_ISSUER
+ARG VITE_OIDC_CLIENT_ID=nisaba-web
+ARG VITE_OIDC_SCOPE="openid profile email"
+ENV VITE_OIDC_ISSUER=${VITE_OIDC_ISSUER} \
+    VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID} \
+    VITE_OIDC_SCOPE=${VITE_OIDC_SCOPE}
+RUN test -n "$VITE_OIDC_ISSUER" && test -n "$VITE_OIDC_CLIENT_ID"
+
 # Workspace root: copy all workspace member manifests + lockfile for install.
 COPY package.json bun.lock tsconfig.base.json ./
 COPY web/package.json web/tsconfig.json web/

@@ -297,6 +297,10 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.web
+      args:
+        VITE_OIDC_ISSUER: ${NISABA_OIDC_ISSUER:-http://localhost:8090/realms/nisaba}
+        VITE_OIDC_CLIENT_ID: ${NISABA_OIDC_CLIENT_ID:-nisaba-web}
+        VITE_OIDC_SCOPE: openid profile email
     <<: *common-logging
     depends_on:
       - app
@@ -310,19 +314,18 @@ services:
 # Networks — segmented for least privilege (see docs/security.md §3)
 # ===========================================================================
 networks:
-  # Postgres backplane. Internal-only: postgres + the services that need SQL.
+  # Segmented bridges restrict lateral access by membership. These three cannot
+  # use Docker's `internal: true`: recent Docker releases suppress published
+  # localhost ports for containers attached only to internal networks, breaking
+  # the documented developer access to Postgres, MinIO, and Keycloak. Host
+  # exposure remains limited to the explicit 127.0.0.1 port bindings above.
   db-net:
     driver: bridge
-    internal: true
-  # Object-storage backplane. Internal-only: minio + services that need S3.
   obj-net:
     driver: bridge
-    internal: true
-  # Keycloak OIDC backchannel. Internal-only: keycloak + token-verifying app.
   oidc-net:
     driver: bridge
-    internal: true
-  # Service mesh (app/sync/compile/web). Egress-capable (e.g. Typst packages).
+  # Service mesh (app/sync/compile/web), also used for outbound package access.
   svc-net:
     driver: bridge
 
