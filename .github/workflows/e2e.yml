@@ -1,0 +1,77 @@
+name: e2e
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly full browser e2e run.
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: bunx playwright install --with-deps chromium
+        working-directory: web
+
+      - name: Build Docker images
+        run: |
+          tmp="$(mktemp)"
+          cp .env.example "$tmp"
+          # Fetch Keycloak JWKS after infra is up
+          docker compose --env-file "$tmp" up -d
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+          JWKS="$(curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs)"
+          NISABA_OIDC_JWKS_JSON="$JWKS" docker compose --env-file "$tmp" --profile app up -d --build
+          rm -f "$tmp"
+
+      - name: Wait for services
+        run: |
+          for svc in postgres minio keycloak app sync compile web; do
+            echo "waiting for $svc..."
+            for i in $(seq 1 60); do
+              status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' nisaba-$svc-1 2>/dev/null || echo none)
+              if [ "$status" = healthy ]; then echo "$svc healthy"; break; fi
+              sleep 3
+            done
+          done
+
+      - name: Run e2e tests
+        run: bunx playwright test --config e2e/
+        working-directory: web
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8103
+          E2E_KEYCLOAK_URL: http://127.0.0.1:8090
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: web/e2e/test-results/
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile app down -v --remove-orphans || true

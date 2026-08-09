@@ -157,6 +157,53 @@ audit:
         exit 1
     fi
 
+# ---------- E2E (browser) --------------------------------------------------
+
+# Start the full stack for e2e testing (requires .env with generated secrets).
+# The web image must be rebuilt with OIDC env vars baked in.
+e2e-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f .env ]; then
+        echo "[e2e] .env not found. Copy .env.example and generate secrets first." >&2
+        exit 1
+    fi
+    # Fetch JWKS from the running Keycloak (or start infra first).
+    if ! curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs >/dev/null 2>&1; then
+        docker compose up -d
+        echo "[e2e] waiting for Keycloak..."
+        for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs >/dev/null 2>&1; then
+                break
+            fi
+            sleep 5
+        done
+    fi
+    JWKS="$$(curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs)"
+    NISABA_OIDC_JWKS_JSON="$$JWKS" docker compose --profile app up -d --build
+
+# Run Playwright e2e tests against a running stack.
+e2e-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd web && bunx playwright install chromium --with-deps 2>/dev/null || true
+    bunx playwright test --config e2e/
+
+# Full e2e lifecycle: start stack, run tests, tear down.
+e2e-suite: e2e-up
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Wait for all services to be healthy
+    for svc in app sync compile web; do
+        echo "[e2e] waiting for $$svc..."
+        for i in $(seq 1 60); do
+            status=$$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' nisaba-$$svc-1 2>/dev/null || echo none)
+            if [ "$$status" = healthy ]; then break; fi
+            sleep 3
+        done
+    done
+    just e2e-test
+
 # ---------- Tools (tolerant) -----------------------------------------------
 
 # Run the tools verification suite if present (owned by the tools stream).

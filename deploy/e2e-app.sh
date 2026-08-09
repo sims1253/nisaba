@@ -9,12 +9,13 @@
 #     JWKS + JWT; the JWKS is injected as NISABA_OIDC_JWKS_JSON and the app
 #     verifies the dev token BY SIGNATURE (iss/aud/kid/alg), not a client secret.
 #   * web (nginx) serves /healthz and the SPA is built.
+#   * nginx /api/* proxy works: a regression test that the set/rewrite ordering
+#     in nginx.conf is correct (a misordering returns HTTP 500 for all API calls).
 #   * sync completes a real HELLO handshake at GET /sync/{doc_id} — not just the
 #     101 upgrade. The dev stack configures sync with no OIDC issuer/JWKS, which
 #     means deny-all, so the assertion is that the relay answers a typed ERROR
 #     frame: proof the fail-closed path runs rather than silently admitting a
-#     peer. (Asserting a WELCOME needs sync pointed at a reachable JWKS URL for
-#     the same key the token was minted with; the dev compose does not wire one.)
+#     peer.
 #   * The app half of the authorize loop is exercised for real: a project →
 #     a path-addressed document is created, then POST /internal/sync/authorize
 #     with the machine token resolves that document to the creator's role.
@@ -125,6 +126,22 @@ echo "[e2e] web serves the SPA index (nginx → built dist)"
 "${COMPOSE[@]}" exec -T app curl -fsS http://web:8080/ \
     | grep -qi '<html' || { echo "[e2e] web did not serve an HTML index" >&2; exit 1; }
 
+# ---- nginx proxy: API calls must reach the app through /api/* ---------------
+# This exercises the nginx rewrite/set ordering. If `set` comes after
+# `rewrite ... break`, $app_upstream is empty and every /api/* call returns 500.
+echo "[e2e] nginx /api/ proxy → app (catches set-after-rewrite regression)"
+proxy_status="$( "${COMPOSE[@]}" exec -T app curl -sS -o /dev/null -w '%{http_code}' \
+    http://web:8080/api/projects \
+    -H "Authorization: Bearer ${TOKEN}" )"
+# 200 = proxy works, 401 = proxy works (no valid auth in this context), 500 = BUG
+if [ "$proxy_status" = "500" ]; then
+    echo "[e2e] nginx /api/ proxy returned 500 — check set/rewrite ordering in nginx.conf" >&2
+    "${COMPOSE[@]}" exec -T app curl -sS http://web:8080/api/projects \
+        -H "Authorization: Bearer ${TOKEN}" >&2 || true
+    exit 1
+fi
+echo "[e2e] nginx /api/ proxy ok (HTTP ${proxy_status})"
+
 # ---- compile → PDF (app /api/compile → compile over svc-net) ----------------
 # 1) create a throwaway project (needs the Author role the dev token carries);
 #    create_project auto-grants the creator Owner membership.
@@ -173,7 +190,33 @@ doc_json="$(api POST "/projects/${proj_id}/documents" \
     '{"path":"main.typ","title":"Main","body":"= Hello","data":{}}')"
 DOC="$(printf '%s' "$doc_json" | jq -r '.id // empty')"
 [ -n "$DOC" ] || { echo "[e2e] document creation failed; response: ${doc_json}" >&2; exit 1; }
+
 echo "[e2e] created document ${DOC}"
+
+# ---- membership: invite by username, access by OIDC sub ---------------------
+# This exercises the full sharing flow. The dev token's sub is a UUID, but the
+# sharing API should accept a username. The membership must resolve for a
+# principal whose preferred_username matches.
+echo "[e2e] sharing: invite by username (catches sub-vs-username regression)"
+member_json="$(printf '%s' '{"subject":"test-invite","role":"reviewer"}' \
+    | "${COMPOSE[@]}" exec -T app curl -sS -X POST \
+        "http://127.0.0.1:8080/projects/${proj_id}/members" \
+        -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' -d @-)"
+member_subject="$(printf '%s' "$member_json" | jq -r '.subject // empty')"
+[ "$member_subject" = "test-invite" ] \
+    || { echo "[e2e] member creation failed; response: ${member_json}" >&2; exit 1; }
+echo "[e2e] sharing ok (subject=${member_subject})"
+
+# ---- list memberships to verify ---------------------------------------------
+members_json="$("${COMPOSE[@]}" exec -T app curl -sS \
+    "http://127.0.0.1:8080/projects/${proj_id}/members" \
+    -H "Authorization: Bearer ${TOKEN}")"
+member_count="$(printf '%s' "$members_json" | jq 'length')"
+[ "$member_count" -ge 2 ] \
+    || { echo "[e2e] expected ≥2 members (creator + invited); got ${member_count}" >&2; exit 1; }
+echo "[e2e] memberships ok (${member_count} members)"
+
+
 
 # ---- app half of the sync authorize loop ------------------------------------
 # This is the call sync makes for every handshake. It must resolve the document
@@ -200,11 +243,12 @@ echo "[e2e] authorize ok (subject=${subject} role=${role})"
 # JWKS URL serving this token's key to turn this into `--expect welcome`.
 SYNC_PORT="$(grep -E '^SYNC_HOST_PORT=' "$TMP_ENV" | cut -d= -f2- || true)"
 SYNC_PORT="${SYNC_PORT:-8101}"
-echo "[e2e] sync HELLO handshake (ws://127.0.0.1:${SYNC_PORT}/sync/${DOC})"
+echo "[e2e] sync HELLO handshake — deny-all path (ws://127.0.0.1:${SYNC_PORT}/sync/${DOC})"
 uv run deploy/sync-handshake.py \
     --url "ws://127.0.0.1:${SYNC_PORT}/sync/${DOC}" \
     --token "$TOKEN" \
     --expect error \
-    || { echo "[e2e] sync handshake did not complete as expected" >&2; exit 1; }
+    || { echo "[e2e] sync deny-all handshake did not complete as expected" >&2; exit 1; }
+echo "[e2e] sync deny-all handshake ok (typed ERROR frame, fail-closed path runs)"
 
 echo "[e2e] OK"

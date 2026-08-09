@@ -1,8 +1,13 @@
 import type { PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist"
 
+// pdfjs-dist worker: the `new URL(..., import.meta.url)` pattern does not
+// resolve reliably under all bundler/nginx combinations. Importing the worker
+// entry directly lets Vite emit it as a hashed asset and wire the URL.
+import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker"
+
 async function loadPdfDocument(url: string): Promise<PDFDocumentProxy> {
   const { GlobalWorkerOptions, getDocument } = await import("pdfjs-dist")
-  GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url).toString()
+  GlobalWorkerOptions.workerPort = new PdfWorker()
   return getDocument({ url }).promise
 }
 

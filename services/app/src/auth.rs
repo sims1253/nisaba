@@ -24,6 +24,10 @@ use crate::types::{AppError, MembershipRole};
 pub struct Principal {
     pub subject: String,
     pub roles: HashSet<Role>,
+    /// The `preferred_username` claim (e.g. "demo"), used for membership
+    /// lookups when the sharing UI invited by username rather than OIDC sub.
+    #[allow(dead_code)]
+    pub preferred_username: Option<String>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -123,6 +127,7 @@ impl Authenticator {
         Ok(Principal {
             subject: token.claims.sub,
             roles,
+            preferred_username: token.claims.preferred_username,
         })
     }
 }
@@ -135,6 +140,8 @@ struct Claims {
     aud: Value,
     #[serde(default)]
     roles: Vec<String>,
+    #[serde(default)]
+    preferred_username: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -170,12 +177,26 @@ pub(crate) async fn project_access(
     permission: Permission,
 ) -> Result<Principal, AppError> {
     let principal = permitted(state, headers, permission).await?;
-    state
+    // Try the OIDC sub first; fall back to preferred_username so that
+    // memberships created through the UI sharing flow (which sends the
+    // human-typed username) also resolve.
+    if state
         .repo
         .get_membership(project_id, &principal.subject)
         .await
-        .map_err(|_| AppError::Forbidden)?;
-    Ok(principal)
+        .is_ok()
+    {
+        return Ok(principal);
+    }
+    if let Some(ref username) = principal.preferred_username {
+        state
+            .repo
+            .get_membership(project_id, username)
+            .await
+            .map_err(|_| AppError::Forbidden)?;
+        return Ok(principal);
+    }
+    Err(AppError::Forbidden)
 }
 
 pub(crate) async fn project_acl(
@@ -192,11 +213,21 @@ pub(crate) async fn project_acl(
         Ok(principal) => principal,
         Err(error) => return error.into_response(),
     };
-    let Ok(membership) = state
+    // Try the OIDC sub first; fall back to preferred_username so that
+    // memberships created through the UI sharing flow (which sends the
+    // human-typed username) also resolve.
+    let membership = if let Ok(m) = state
         .repo
         .get_membership(project_id, &principal.subject)
         .await
-    else {
+    {
+        m
+    } else if let Some(ref username) = principal.preferred_username {
+        let Ok(m) = state.repo.get_membership(project_id, username).await else {
+            return AppError::Forbidden.into_response();
+        };
+        m
+    } else {
         return AppError::Forbidden.into_response();
     };
     let is_document = request.uri().path().contains("/document");

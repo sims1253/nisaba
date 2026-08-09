@@ -49,6 +49,7 @@ export interface AuthToken {
   readonly accessToken: string
   readonly expiresAt?: number
   readonly tokenType?: string
+  readonly refreshToken?: string
 }
 
 export interface AuthTokenService {
@@ -202,9 +203,14 @@ export function createOidcClient(config: OidcConfig, tokenStore: AuthTokenServic
         const endpoint = config.tokenEndpoint ?? `${config.issuer.replace(/\/$/, "")}/protocol/openid-connect/token`
         const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", client_id: config.clientId, redirect_uri: config.redirectUri, code, code_verifier: pending.codeVerifier }) })
         if (!response.ok) throw new Error(`OIDC token exchange returned HTTP ${response.status}`)
-        const body = await response.json() as { access_token?: string; expires_in?: number; token_type?: string }
+        const body = await response.json() as { access_token?: string; expires_in?: number; token_type?: string; refresh_token?: string }
         if (!body.access_token) throw new Error("OIDC token response did not contain an access token")
-        const token = { accessToken: body.access_token, ...(body.expires_in === undefined ? {} : { expiresAt: Date.now() + body.expires_in * 1000 }), ...(body.token_type === undefined ? {} : { tokenType: body.token_type }) }
+        const token: AuthToken = {
+          accessToken: body.access_token,
+          ...(body.expires_in === undefined ? {} : { expiresAt: Date.now() + body.expires_in * 1000 }),
+          ...(body.token_type === undefined ? {} : { tokenType: body.token_type }),
+          ...(body.refresh_token === undefined ? {} : { refreshToken: body.refresh_token })
+        }
         await Effect.runPromise(tokenStore.set(token))
         return token
       },
@@ -242,4 +248,55 @@ export function currentUserDisplayName(): string {
     const payload = JSON.parse(atob(b64))
     return payload.preferred_username ?? payload.email ?? payload.sub ?? "anonymous"
   } catch { return "anonymous" }
+}
+
+
+/** Refresh the access token using the stored refresh_token grant. */
+export async function refreshAccessToken(): Promise<AuthToken | undefined> {
+  const config = oidcConfigFromEnv()
+  if (!config) return undefined
+  const stored = readStoredToken()
+  if (!stored?.refreshToken) return undefined
+  const endpoint = config.tokenEndpoint ?? `${config.issuer.replace(/\/$/, "")}/protocol/openid-connect/token`
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: config.clientId,
+      refresh_token: stored.refreshToken
+    })
+  })
+  if (!response.ok) {
+    clearStoredToken()
+    return undefined
+  }
+  const body = await response.json() as { access_token?: string; expires_in?: number; token_type?: string; refresh_token?: string }
+  if (!body.access_token) return undefined
+  const token: AuthToken = {
+    accessToken: body.access_token,
+    ...(body.expires_in === undefined ? {} : { expiresAt: Date.now() + body.expires_in * 1000 }),
+    ...(body.token_type === undefined ? {} : { tokenType: body.token_type }),
+    ...(body.refresh_token ?? stored.refreshToken === undefined ? {} : { refreshToken: body.refresh_token ?? stored.refreshToken })
+  }
+  try { sessionStorage.setItem(storageKey, JSON.stringify(token)) } catch { /* storage unavailable */ }
+  return token
+}
+
+/**
+ * Proactively refreshes the access token ~60s before it expires, using the
+ * OIDC refresh_token grant. Call once on sign-in. Cancels any previous timer.
+ */
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
+export function scheduleTokenRefresh(): void {
+  if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+  const stored = readStoredToken()
+  if (!stored?.expiresAt || !stored?.refreshToken) return
+  const msUntilRefresh = stored.expiresAt - Date.now() - 60_000
+  if (msUntilRefresh <= 0) {
+    void refreshAccessToken()
+    return
+  }
+  refreshTimer = setTimeout(() => void refreshAccessToken(), msUntilRefresh)
 }

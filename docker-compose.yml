@@ -253,6 +253,10 @@ services:
       NISABA_SYNC_AUTHZ_URL: ${NISABA_SYNC_AUTHZ_URL:-http://app:8080/internal/sync/authorize}
       NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:-}
       NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME: ${NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:-1}
+      # Roles claim path in the JWT. Keycloak's realm-roles mapper emits a
+      # top-level "roles" claim; the sync default ("realm_access.roles") will
+      # never match and every token is rejected.
+      NISABA_SYNC_OIDC_ROLES_CLAIM: ${NISABA_SYNC_OIDC_ROLES_CLAIM:-roles}
     volumes:
       - sync-data:/data
     healthcheck:

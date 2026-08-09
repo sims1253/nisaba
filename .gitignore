@@ -31,3 +31,7 @@ artifacts/
 *~
 .DS_Store
 Thumbs.db
+
+# Playwright e2e artifacts
+web/e2e/test-results/
+web/playwright-report/
