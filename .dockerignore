@@ -1,0 +1,24 @@
+# Version-control and local agent/editor state
+.git
+.github
+.claude
+.qa-reports
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+
+# Dependency and build outputs
+**/node_modules
+**/target
+**/dist
+**/coverage
+artifacts
+
+# Local caches and noise
+**/.cache
+**/.pytest_cache
+**/__pycache__
+*.log
+.DS_Store

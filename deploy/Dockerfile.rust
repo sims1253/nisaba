@@ -39,10 +39,20 @@ ARG SERVICE=nisaba-compile
 # Cook the dependency graph from the recipe — this layer is cache-stable across
 # source-only changes and survives concurrent edits to workspace manifests.
 COPY --from=planner /usr/src/nisaba/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-# Now the real sources. Rebuild picks up changed sources cheaply.
+# Keep Cargo's registry, Git checkout, and target directories in BuildKit cache
+# mounts. In particular, use the SAME target cache for `chef cook` and the real
+# build: baking the cooked target into a layer and then hiding it behind a cache
+# mount duplicates the complete dependency graph and can exhaust CI runner disk.
+RUN --mount=type=cache,id=nisaba-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=nisaba-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=nisaba-rust-target,target=/usr/src/nisaba/target,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json
+# Now the real sources. Rebuild picks up changed sources cheaply. The binary is
+# copied outside the target cache so the runtime stage can consume it.
 COPY . .
-RUN --mount=type=cache,target=/usr/src/nisaba/target \
+RUN --mount=type=cache,id=nisaba-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=nisaba-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=nisaba-rust-target,target=/usr/src/nisaba/target,sharing=locked \
     cargo build --release -p "${SERVICE}" \
  && cp "target/release/${SERVICE}" /usr/local/bin/service
 
