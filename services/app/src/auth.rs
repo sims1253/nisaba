@@ -125,7 +125,11 @@ impl Authenticator {
             }
         }
         Ok(Principal {
-            subject: token.claims.sub,
+            subject: token
+                .claims
+                .sub
+                .clone()
+                .unwrap_or_else(|| token.claims.preferred_username.clone().unwrap_or_default()),
             roles,
             preferred_username: token.claims.preferred_username,
         })
@@ -134,7 +138,8 @@ impl Authenticator {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Claims {
-    sub: String,
+    #[serde(default)]
+    sub: Option<String>,
     exp: usize,
     iss: String,
     aud: Value,

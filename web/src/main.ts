@@ -23,7 +23,7 @@ import { connectSync, isImportingRemote, type SyncStatus } from "./sync"
 import { VirtualPdfViewer } from "./pdf-viewer"
 import * as api from "./api"
 import type { CompileView, Fulltext, MarkInput, MembershipRole, NisabaDocument, Project, Reference } from "./api"
-import { AuthTokenLive, OidcClient, OidcClientLive, onAuthFailure, readStoredAccessToken, currentUserDisplayName, isOidcCallback, oidcConfigFromEnv } from "./auth"
+import { AuthTokenLive, OidcClient, OidcClientLive, onAuthFailure, readStoredAccessToken, currentUserDisplayName, isOidcCallback, oidcConfigFromEnv, scheduleTokenRefresh } from "./auth"
 import { emptyReviewState, reviewReducer, type ReviewItem, type ReviewState } from "./review"
 import { createCursorAt, resolveCursor } from "./cursor"
 import "./styles.css"
@@ -93,6 +93,8 @@ const state: Workspace = {
  * every time a document loads.
  */
 const loroCompartment = new Compartment()
+/** Controls whether the editor accepts input (disabled for read-only roles). */
+const editableComp = new Compartment()
 let activeLoro = new LoroDoc()
 
 /**
@@ -1711,6 +1713,7 @@ const editor = new EditorView({
         }
       }),
       diagnosticCompartment.of(diagnosticField()),
+      editableComp.of(EditorView.editable.of(true)),
       EditorView.updateListener.of((update) => {
         if (update.selectionSet || update.docChanged) {
           updateSelectionCommentButton(update.view)
@@ -2605,6 +2608,8 @@ function renderReviewBanner(): void {
  */
 function applyRoleGates(): void {
   const canManage = state.role === undefined || state.role === "owner" || state.role === "author"
+  const canWrite = canManage || state.role === "reviewer"
+  const readOnly = state.role === "read-only"
   const exportButton = el<HTMLElement>("#export-button")
   if (exportButton) exportButton.hidden = !canManage
   // Share/Invite is available to owners and authors (the roles the server allows
@@ -2615,6 +2620,25 @@ function applyRoleGates(): void {
   // History is read-only and useful for all members.
   const historyButton = el<HTMLElement>("#history-button")
   if (historyButton) historyButton.hidden = !state.selected
+
+  // Read-only viewers: disable all write controls and make the editor read-only
+  // so they cannot type into it and believe their edits are saved. The backend
+  // also rejects these (403), but the UI should not expose the controls at all.
+  if (editor) editor.dispatch({ effects: editableComp.reconfigure(EditorView.editable.of(!readOnly)) })
+
+  const deleteProjectBtns = document.querySelectorAll<HTMLButtonElement>(".delete-project-btn")
+  deleteProjectBtns.forEach((btn) => { btn.hidden = readOnly; btn.disabled = readOnly })
+  const addDocBtn = el<HTMLButtonElement>("#add-document-btn")
+  if (addDocBtn) { addDocBtn.hidden = readOnly; addDocBtn.disabled = readOnly }
+  const deleteDocBtns = document.querySelectorAll<HTMLButtonElement>(".delete-document-btn")
+  deleteDocBtns.forEach((btn) => { btn.hidden = readOnly; btn.disabled = readOnly })
+  const compileBtn = el<HTMLButtonElement>("#compile-button")
+  if (compileBtn) compileBtn.disabled = readOnly
+  const bannerToggle = el<HTMLInputElement>("#review-banner-toggle")
+  if (bannerToggle) bannerToggle.disabled = readOnly || state.role === "reviewer"
+  const addRefBtn = el<HTMLButtonElement>("#add-reference-btn")
+  if (addRefBtn) { addRefBtn.hidden = !canWrite; addRefBtn.disabled = !canWrite }
+
   if (state.role === "reviewer" && !state.review.suggesting) {
     // Force suggesting on once, on role resolution; renderReviewBanner keeps the
     // toggle disabled so the reviewer cannot turn it back off.
@@ -3385,6 +3409,7 @@ function completeSignIn(): Promise<void> {
     () => {
       state.signedIn = true
       window.history.replaceState({}, "", window.location.pathname)
+      scheduleTokenRefresh()
       status("Signed in")
     },
     (error: unknown) => {
@@ -3564,6 +3589,7 @@ void completeSignIn().then(() => {
     status("Sign in to view your projects")
     return
   }
+  scheduleTokenRefresh()
   run(api.listProjects(), (projects) => {
     state.projects = projects
     renderProjects()

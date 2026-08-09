@@ -94,9 +94,29 @@
             "id.token.claim": "false",
             "access.token.claim": "true"
           }
+        },
+        {
+          "name": "subject-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "claim.name": "sub",
+            "jsonType.label": "String"
+          }
         }
       ],
-      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"]
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
     }
   ],
   "users": [
@@ -108,9 +128,16 @@
       "firstName": "Demo",
       "lastName": "Author",
       "credentials": [
-        { "type": "password", "value": "demo", "temporary": false }
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
       ],
-      "realmRoles": ["author", "reviewer"]
+      "realmRoles": [
+        "author",
+        "reviewer"
+      ]
     },
     {
       "username": "reviewer",
@@ -120,9 +147,15 @@
       "firstName": "Rita",
       "lastName": "Reviewer",
       "credentials": [
-        { "type": "password", "value": "reviewer", "temporary": false }
+        {
+          "type": "password",
+          "value": "reviewer",
+          "temporary": false
+        }
       ],
-      "realmRoles": ["reviewer"]
+      "realmRoles": [
+        "reviewer"
+      ]
     },
     {
       "username": "reader",
@@ -132,9 +165,15 @@
       "firstName": "Ray",
       "lastName": "Reader",
       "credentials": [
-        { "type": "password", "value": "reader", "temporary": false }
+        {
+          "type": "password",
+          "value": "reader",
+          "temporary": false
+        }
       ],
-      "realmRoles": ["read-only"]
+      "realmRoles": [
+        "read-only"
+      ]
     }
   ]
 }

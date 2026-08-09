@@ -7,15 +7,14 @@
  */
 
 import { test, expect } from "@playwright/test"
-import { signIn, createProject, createDocument } from "./helpers"
+import { signIn, createProject, openFirstProject } from "./helpers"
 
 test.describe("Compile and PDF preview", () => {
   test("compile renders a PDF preview", async ({ page }) => {
     await signIn(page, { username: "demo", password: "demo", role: "author" })
     await createProject(page, "Compile Test")
-    await createDocument(page, "main.typ", "Compile Doc")
+    await openFirstProject(page)
 
-    // Type a minimal valid Typst document
     const editor = page.locator(".cm-content")
     await editor.click()
     await page.keyboard.press("Control+a")
@@ -38,9 +37,8 @@ test.describe("Compile and PDF preview", () => {
   test("compile error is surfaced to the user", async ({ page }) => {
     await signIn(page, { username: "demo", password: "demo", role: "author" })
     await createProject(page, "Compile Error Test")
-    await createDocument(page, "main.typ", "Error Doc")
+    await openFirstProject(page)
 
-    // Type invalid Typst
     const editor = page.locator(".cm-content")
     await editor.click()
     await page.keyboard.press("Control+a")

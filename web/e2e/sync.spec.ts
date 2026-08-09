@@ -7,13 +7,13 @@
  */
 
 import { test, expect } from "@playwright/test"
-import { signIn, createProject, createDocument, BASE_URL } from "./helpers"
+import { signIn, createProject, openFirstProject, BASE_URL } from "./helpers"
 
 test.describe("Sync WebSocket", () => {
   test("sync connection establishes and shows live status", async ({ page }) => {
     await signIn(page, { username: "demo", password: "demo", role: "author" })
     await createProject(page, "Sync Test")
-    await createDocument(page, "main.typ", "Sync Doc")
+    await openFirstProject(page)
 
     // Wait for the sync connection to attempt
     await page.waitForTimeout(5000)
