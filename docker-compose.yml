@@ -91,7 +91,7 @@ services:
   # the one-machine self-hosting baseline. The app talks to it via the
   # standard S3 API (aws-sdk-s3); no application code changes were needed.
   seaweedfs:
-    image: chrislusf/seaweedfs:4.41
+    image: chrislusf/seaweedfs:4.41@sha256:43b768cd62b00d132439cda881b93fd1adebf1b315e996e794087743821d771d
     <<: [*default-restart, *common-logging]
     command: >-
       server -s3 -dir=/data
@@ -117,7 +117,7 @@ services:
 
   # One-shot: create buckets + enable versioning. Idempotent.
   seaweedfs-init:
-    image: amazon/aws-cli:2.25.28
+    image: amazon/aws-cli:2.36.20@sha256:8af59c0d96b104000cce4f11e211c06385240d72c515198159041f13ebe459fa
     depends_on:
       seaweedfs:
         condition: service_healthy

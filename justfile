@@ -91,7 +91,7 @@ s3 *ARGS:
         -e AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}" \
         -e AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}" \
         -e AWS_ENDPOINT_URL=http://seaweedfs:8333 \
-        amazon/aws-cli:2.25.28 s3 {{ARGS}}
+        amazon/aws-cli:2.36.20 s3 {{ARGS}}
 
 # ---------- Rust workspace -------------------------------------------------
 
