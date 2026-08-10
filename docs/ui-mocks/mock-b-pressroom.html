@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock B — Pressroom · Nisaba</title>
+<!--
+  MOCK B — "PRESSROOM"
+  Concept: focus-first. One thing is docked at a time (a narrow tool rail picks
+  which), navigation goes through a ⌘K jump bar, compile output lands in a
+  press-log drawer at the bottom instead of a modal or a hidden list, and
+  review is a keyboard-triaged queue: select an item, its span is framed in
+  the text, act with ⌘1 / ⌘2. Nothing floats; everything docks.
+-->
+<style>
+  :root{
+    --ink:#12140f; --paper:#fcfcfa; --dock:#f4f5f1; --rule:#d8dad2; --rule2:#c4c7bc;
+    --muted:#6c7066; --green:#176b45; --green-soft:#e3efe8;
+    --red:#b0402f; --amber:#9c7214;
+    --sans:ui-sans-serif,system-ui,"Segoe UI",sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);display:flex;overflow:hidden}
+  button{font:inherit;background:none;border:0;cursor:pointer;color:inherit}
+
+  /* ---------- tool rail ---------- */
+  .rail{flex:0 0 46px;background:var(--ink);display:flex;flex-direction:column;align-items:center;padding-top:8px;z-index:3}
+  .rail .logo{width:30px;height:30px;display:grid;place-items:center;color:#e8eadf;font-family:var(--mono);
+              font-weight:700;font-size:13px;border:1px solid #3a3f36;margin-bottom:14px}
+  .rail button{width:38px;height:38px;display:grid;place-items:center;color:#9aa394;font-size:15px;position:relative;margin:1px 0}
+  .rail button:hover{color:#e8eadf;background:#22261e}
+  .rail button.on{color:#e8eadf;background:#2c3129;box-shadow:inset 2px 0 0 #7fb08f}
+  .rail button .bdg{position:absolute;top:2px;right:1px;background:#d8b13c;color:#12140f;font-family:var(--mono);
+                    font-size:8px;font-weight:700;min-width:13px;height:13px;display:grid;place-items:center}
+  .rail .gap{flex:1}
+  .rail .who{width:26px;height:26px;border-radius:50%;background:#7a5a8c;color:#fff;font-size:9px;
+             display:grid;place-items:center;font-family:var(--mono);margin-bottom:10px}
+  .rail button .tip{display:none}
+  .rail button{position:relative}
+
+  /* ---------- dock (one at a time) ---------- */
+  .dock{flex:0 0 292px;background:var(--dock);border-right:1px solid var(--rule2);display:flex;flex-direction:column;min-height:0}
+  .dock header{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:12px 14px 10px;border-bottom:1px solid var(--rule2)}
+  .dock header h2{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--muted);font-weight:700}
+  .dock header .x{color:var(--muted);font-size:14px;padding:0 3px}
+  .dock header .x:hover{color:var(--ink)}
+  .queue{flex:1;overflow:auto}
+  .qhead{position:sticky;top:0;background:var(--dock);display:flex;gap:6px;padding:9px 14px;border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:9.5px;color:var(--muted)}
+  .qhead .f{border:1px solid var(--rule2);padding:2px 8px;cursor:pointer}
+  .qhead .f.on{background:var(--ink);color:#e8eadf;border-color:var(--ink)}
+  .qrow{border-bottom:1px solid var(--rule);padding:10px 14px 10px 12px;cursor:pointer;display:grid;
+        grid-template-columns:18px 1fr;gap:8px;background:transparent}
+  .qrow:hover{background:#eceee6}
+  .qrow.sel{background:#fff;box-shadow:inset 2.5px 0 0 var(--green)}
+  .qrow .g{font-family:var(--mono);font-size:13px;font-weight:700;line-height:1.3}
+  .qrow .g.i{color:var(--green)} .qrow .g.c{color:var(--amber)} .qrow .g.d{color:var(--red)}
+  .qrow .who{font-family:var(--mono);font-size:9.5px;color:var(--muted);letter-spacing:.04em;margin-bottom:3px}
+  .qrow .who b{color:var(--ink)}
+  .qrow .x{font-size:12px;font-style:italic;line-height:1.45;color:#2c2f27}
+  .qrow .keys{display:flex;gap:6px;margin-top:8px}
+  .qrow .keys button{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;border:1px solid var(--rule2);padding:3px 9px;color:var(--muted);background:var(--paper)}
+  .qrow .keys button.pri{background:var(--green);border-color:var(--green);color:#eef6f0;font-weight:700}
+  .qrow .keys button:hover{color:var(--ink)}
+  .qrow .keys button.pri:hover{color:#fff}
+  .qrow .kbd{opacity:.55;margin-left:4px}
+  .dockfoot{flex:0 0 auto;border-top:1px solid var(--rule2);padding:9px 14px;display:flex;justify-content:space-between;
+            font-family:var(--mono);font-size:9.5px;color:var(--muted)}
+  .dockfoot button{color:var(--muted);letter-spacing:.05em}
+  .dockfoot button:hover{color:var(--ink)}
+
+  /* ---------- stage ---------- */
+  .stage{flex:1;display:flex;flex-direction:column;min-width:0}
+  .cmdrow{flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:9px 16px;border-bottom:1px solid var(--rule);background:var(--paper)}
+  .jump{flex:1;max-width:560px;display:flex;align-items:center;gap:9px;border:1px solid var(--rule2);background:var(--paper);
+         padding:7px 11px;font-family:var(--mono);font-size:11.5px;color:var(--muted);cursor:text}
+  .jump:hover{border-color:#a9ada0}
+  .jump .pr{color:var(--green);font-weight:700}
+  .jump .k{margin-left:auto;font-size:9px;border:1px solid var(--rule);padding:1px 5px;color:var(--muted)}
+  .mode{display:flex;border:1px solid var(--rule2);font-family:var(--mono);font-size:9.5px;letter-spacing:.08em}
+  .mode button{padding:6px 12px;color:var(--muted);border-right:1px solid var(--rule2)}
+  .mode button:last-child{border-right:0}
+  .mode button.on{background:var(--ink);color:#eef0e7;font-weight:700}
+  .presence{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9.5px;color:var(--muted)}
+  .presence .pp{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:8px}
+  .compile{flex:0 0 auto;background:var(--green);color:#eef6f0;font-family:var(--mono);font-size:10.5px;
+           font-weight:700;letter-spacing:.1em;padding:9px 18px;display:flex;gap:9px;align-items:center}
+  .compile span{opacity:.6;font-size:9px;font-weight:400}
+  .compile:hover{background:#12573a}
+
+  .panes{flex:1;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);min-height:0}
+
+  /* editor */
+  .ed{overflow:auto;background:var(--paper);border-right:1px solid var(--rule)}
+  .ed .measure{max-width:660px;margin:0 auto;padding:30px 30px 120px}
+  .ln{font-family:var(--mono);font-size:13px;line-height:1.9;white-space:pre-wrap;color:#33352d;position:relative}
+  .ln.hd1{font-size:17px;font-weight:700;padding-top:12px}
+  .ln.hd2{font-size:14px;font-weight:700;padding-top:8px}
+  .cm{font-style:italic;color:#93988a}
+  .cite{color:#2f5f8f;border-bottom:1px solid #c3d2de;cursor:pointer}
+  /* the selected queue item frames its span and docks its actions under the line */
+  .tgt{background:var(--green-soft);outline:1.5px solid var(--green);outline-offset:1px}
+  .ins{background:var(--green-soft);border-bottom:1.5px solid var(--green)}
+  .del{color:var(--red);text-decoration:line-through;background:#f8e9e5}
+  .cmt{background:#f5ecd2;border-bottom:1.5px solid var(--amber)}
+  .inlinebar{position:absolute;left:0;top:100%;z-index:6;display:flex;align-items:center;gap:0;
+             background:var(--ink);color:#e8eadf;font-family:var(--mono);font-size:10px;box-shadow:0 4px 14px #12140f33}
+  .inlinebar .lbl{padding:6px 10px;color:#9aa394;border-right:1px solid #33382e;letter-spacing:.05em}
+  .inlinebar button{padding:6px 12px;letter-spacing:.06em;color:#cfe3d5}
+  .inlinebar button:hover{background:#2c3129;color:#fff}
+  .inlinebar button.acc{color:#8fd3ae;font-weight:700}
+  .inlinebar .k{opacity:.5;font-size:8.5px;margin-left:5px}
+
+  /* preview */
+  .pv{background:#ecede8;display:flex;flex-direction:column;min-width:0}
+  .pv .bar{flex:0 0 auto;display:flex;gap:12px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--rule);
+           font-family:var(--mono);font-size:9.5px;color:var(--muted);background:var(--dock)}
+  .pv .bar b{color:var(--ink)}
+  .pv .bar .z{margin-left:auto;display:flex;gap:9px}
+  .pv .pages{flex:1;overflow:auto;padding:20px 24px 32px}
+  .sheet{width:100%;max-width:470px;min-height:600px;margin:0 auto 18px;background:#fff;box-shadow:0 1px 2px #b6b9ae,0 8px 20px #b6b9ae55;
+         padding:44px 48px 56px;position:relative}
+  .sheet h1{font:400 18px/1.3 Georgia,serif;margin:24px 0 8px}
+  .sheet .auth{font:9px Georgia,serif;color:#77786e;margin-bottom:12px}
+  .sheet h2{font:700 12px Georgia,serif;margin:16px 0 6px}
+  .sheet p{font:9px/1.6 Georgia,serif;text-align:justify;margin-bottom:6px}
+  .sheet table{border-collapse:collapse;width:100%;font:8px Georgia,serif;margin:10px 0}
+  .sheet th{border-top:1.1px solid #3f4238;border-bottom:1px solid #83867a;text-align:left;padding:3px 5px}
+  .sheet td{border-bottom:1px solid #dadcd0;padding:3px 5px}
+  .run{display:flex;justify-content:space-between;font-family:var(--mono);font-size:7px;letter-spacing:.13em;color:#979a8c;border-bottom:1px solid #e2e4d8;padding-bottom:6px}
+
+  /* ---------- press-log drawer ---------- */
+  .press{flex:0 0 148px;border-top:1px solid var(--rule2);background:var(--dock);display:flex;flex-direction:column;min-height:0}
+  .press .tabs{flex:0 0 auto;display:flex;align-items:center;gap:0;border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:9.5px}
+  .press .tabs button{padding:7px 13px;color:var(--muted);letter-spacing:.08em;border-right:1px solid var(--rule)}
+  .press .tabs button.on{color:var(--ink);font-weight:700;box-shadow:inset 0 -2px 0 var(--green);background:var(--paper)}
+  .press .tabs .st{margin-left:auto;padding:0 14px;color:var(--muted);letter-spacing:.04em}
+  .press .tabs .st b{color:var(--green)}
+  .log{flex:1;overflow:auto;font-family:var(--mono);font-size:10.5px;line-height:1.75;padding:8px 14px;color:#43463c}
+  .log .t{color:#9a9d90;margin-right:8px}
+  .log .ok{color:var(--green);font-weight:700}
+  .log .w{color:var(--amber);font-weight:700}
+  .log .jmp{border-bottom:1px dotted var(--rule2);cursor:pointer;color:var(--ink)}
+  .log .jmp:hover{border-bottom-color:var(--ink)}
+</style>
+</head>
+<body>
+
+<!-- tool rail: pick ONE dock -->
+<nav class="rail">
+  <span class="logo">N</span>
+  <button title="Files (⌘1)">▤</button>
+  <button title="Sections (⌘2)">≡</button>
+  <button class="on" title="Review queue (⌘3)">✎<span class="bdg">3</span></button>
+  <button title="History &amp; checkpoints (⌘4)">⟲</button>
+  <button title="References (⌘5)">⁂</button>
+  <button title="Share &amp; members (⌘6)">⤴</button>
+  <button title="Export (⌘7)">⇩</button>
+  <span class="gap"></span>
+  <button title="Settings">⚙</button>
+  <span class="who" title="twinkleburst — owner">TW</span>
+</nav>
+
+<!-- the one open dock: review queue -->
+<aside class="dock">
+  <header><h2>REVIEW · 3 OPEN</h2><button class="x" title="Close dock (⌘0)">×</button></header>
+  <div class="queue">
+    <div class="qhead"><span class="f on">ALL 3</span><span class="f">SUGGESTIONS 2</span><span class="f">COMMENTS 1</span><span class="f">MINE</span></div>
+
+    <div class="qrow sel">
+      <span class="g i">+</span>
+      <div>
+        <div class="who"><b>twinkleburst</b> · 12 min ago · main.typ:8</div>
+        <div class="x">“Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.”</div>
+        <div class="keys"><button class="pri">ACCEPT<span class="kbd">⌘1</span></button><button>REJECT<span class="kbd">⌘2</span></button><button>NEXT<span class="kbd">⌘↓</span></button></div>
+      </div>
+    </div>
+
+    <div class="qrow">
+      <span class="g c">✦</span>
+      <div>
+        <div class="who"><b>sparkletoes</b> · 1 h ago · main.typ:12</div>
+        <div class="x">Can we cite the crystal calibration report here? Reviewers will ask.</div>
+      </div>
+    </div>
+
+    <div class="qrow">
+      <span class="g d">−</span>
+      <div>
+        <div class="who"><b>clawson</b> · 3 h ago · main.typ:10 · <span style="color:var(--amber)">anchor lost</span></div>
+        <div class="x">“…and therefore fairies are real.”</div>
+      </div>
+    </div>
+  </div>
+  <div class="dockfoot"><span>2 suggestions · 1 comment</span><span><button>ACCEPT ALL</button> · <button>REJECT ALL</button></span></div>
+</aside>
+
+<div class="stage">
+  <!-- jump bar + mode + the one primary action -->
+  <div class="cmdrow">
+    <span class="jump"><span class="pr">❯</span> jump to file, section, reference, action…<span class="k">⌘K</span></span>
+    <span class="presence"><span class="pp" style="background:#4d7a5e">CL</span><span class="pp" style="background:#7a5a8c">SP</span>editing §results</span>
+    <span class="mode"><button>SOURCE</button><button class="on">SPLIT</button><button>PAGE</button></span>
+    <button class="compile">COMPILE <span>⌘↵</span></button>
+  </div>
+
+  <div class="panes">
+    <div class="ed">
+      <div class="measure">
+        <div class="ln hd1"><span class="cm">=</span> Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Abstract</div>
+        <div class="ln">We document seventeen months of field observations of honey badgers (Mellivora capensis) attending subterranean fairy raves in the Welsh countryside. Using enchanted monitoring crystals and glitter-spectroscopy, we characterize attendance patterns, acoustic entrainment, and interspecies social dynamics. <span class="ins tgt">Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.</span><span class="inlinebar"><span class="lbl">SUGGESTION 1/3 · TWINKLEBURST</span><button class="acc">ACCEPT<span class="k">⌘1</span></button><button>REJECT<span class="k">⌘2</span></button><button>COMMENT<span class="k">⌘3</span></button></span></div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Introduction</div>
+        <div class="ln">The honey badger has long been regarded as a solitary species. Recent anecdotal reports, however, describe badgers congregating at fairy social gatherings <span class="cite">#cite(&lt;twinkleburst-2024&gt;)</span>, raising questions about the ecological drivers of this behaviour. <span class="del">Some researchers dispute this entirely.</span></div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln">Field sites were selected across Cwm Derwen and Tywyn Hollow. <span class="cmt">Monitoring stations recorded continuously for 510 days.</span> Acoustic analysis used cross-correlation of vocalization envelopes with the dominant bass frequency.</div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Results</div>
+        <div class="ln">Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked to the fairy audio system.</div>
+      </div>
+    </div>
+
+    <div class="pv">
+      <div class="bar"><span>p <b>1/12</b></span><span>build <b>#41</b> ✓</span><span class="z"><button>−</button><b>100%</b><button>+</button></span></div>
+      <div class="pages">
+        <div class="sheet">
+          <div class="run"><span>HONEY BADGERS AT FAIRY RAVES</span><span>2026</span></div>
+          <h1>Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</h1>
+          <div class="auth">A. Twinkleburst¹, S. Sparkletoes², R. Clawson³</div>
+          <h2>Abstract</h2>
+          <p>We document seventeen months of field observations of honey badgers (<i>Mellivora capensis</i>) attending subterranean fairy raves in the Welsh countryside. Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.</p>
+          <h2>1&nbsp;&nbsp;Introduction</h2>
+          <p>The honey badger has long been regarded as a solitary species. Recent anecdotal reports, however, describe badgers congregating at fairy social gatherings [1].</p>
+          <h2>2&nbsp;&nbsp;Results</h2>
+          <p>Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked to the fairy audio system.</p>
+          <table>
+            <tr><th>Site</th><th>BPM</th><th>Freq.</th><th>Locked</th><th>Coh.</th></tr>
+            <tr><td>Site 1</td><td>142</td><td>48 Hz</td><td>Yes</td><td>0.91</td></tr>
+            <tr><td>Site 2</td><td>138</td><td>45 Hz</td><td>Yes</td><td>0.88</td></tr>
+            <tr><td>Site 4</td><td>150</td><td>52 Hz</td><td>Yes</td><td>0.95</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- press log: build output as a docked strip, not a modal or hidden list -->
+  <div class="press">
+    <div class="tabs">
+      <button class="on">PRESS LOG</button><button>ERRORS 0</button><button>WARNINGS 1</button>
+      <span class="st">build 41 · checkpoint c128 · <b>✓ ok</b> in 1.82 s → 12 pages</span>
+    </div>
+    <div class="log">
+      <div><span class="t">12:04:31</span><span class="ok">ok</span>   build 41 finished — 12 pages, 1 warning, artifact 9f2c…e1</div>
+      <div><span class="t">12:04:30</span><span class="w">warn</span> <span class="jmp">main.typ:212</span> unused label &lt;fig-model&gt; — no reference points to it</div>
+      <div><span class="t">12:04:29</span>info  compiling main.typ (checkpoint c128, typst 0.13.1)</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -844,7 +844,6 @@ async fn live_fulltext_rejects_non_pdf_magic() {
     )
     .await;
     let reference_id = reference["id"].as_str().unwrap().to_string();
-    use base64::Engine as _;
     let bogus = base64::engine::general_purpose::STANDARD.encode("not a pdf");
     let upload = request(
         app.clone(),
