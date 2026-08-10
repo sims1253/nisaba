@@ -1,0 +1,15 @@
+--- a/node_modules/loro-codemirror/dist/sync.js
++++ b/node_modules/loro-codemirror/dist/sync.js
+@@ -33,10 +33,10 @@
+                     const text = this.getTextFromDoc(this.doc);
+                     // Skip if the event is not a text event
+                     if (diff.type !== "text")
+-                        return;
++                        continue;
+                     // Skip if the event is not for the current document
+                     if (target !== text.id)
+-                        return;
++                        continue;
+                     const textDiff = diff.diff;
+                     for (const delta of textDiff) {
+                         if (delta.insert) {

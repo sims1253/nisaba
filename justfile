@@ -104,6 +104,11 @@ test:
 build:
     cargo build --workspace --release
 
+# Postgres-backed live API integration tests for the app service (the compose
+# stack must be running; skips cleanly when no database is reachable).
+test-live:
+    cargo test -p nisaba-app --test live_api
+
 clippy:
     cargo clippy --workspace --all-targets
 
@@ -193,14 +198,11 @@ e2e-test:
 e2e-suite: e2e-up
     #!/usr/bin/env bash
     set -euo pipefail
-    # Wait for all services to be healthy
+    # Wait for all services to be healthy (helper lives in scripts/ because the
+    # justfile template parser rejects the quoting needed inline).
     for svc in app sync compile web; do
         echo "[e2e] waiting for $$svc..."
-        for i in $(seq 1 60); do
-            status=$$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' nisaba-$$svc-1 2>/dev/null || echo none)
-            if [ "$$status" = healthy ]; then break; fi
-            sleep 3
-        done
+        ./scripts/wait-healthy.sh "$$svc" || true
     done
     just e2e-test
 

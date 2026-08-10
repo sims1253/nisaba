@@ -58,7 +58,11 @@ TOKEN_DIR="$(mktemp -d -t nisaba-e2e-token-XXXXXX)"
 PROJECT="nisaba-e2e-$$"
 grep -vE '^(NISABA_SYNC_OIDC_ISSUER|NISABA_SYNC_OIDC_AUDIENCE|NISABA_SYNC_OIDC_JWKS_URL)=' "$ENV_EXAMPLE" > "$TMP_ENV"
 
-COMPOSE=(docker compose --env-file "$TMP_ENV" -p "$PROJECT")
+# `--profile app` is required or the app tier (app/sync/compile/web) never
+# starts: they are declared under `profiles: ["app"]` in docker-compose.yml and
+# a plain `up` only brings up the infra tier, leaving every app probe to fail
+# with "container not running".
+COMPOSE=(docker compose --env-file "$TMP_ENV" -p "$PROJECT" --profile app)
 
 cleanup() {
     local rc=$?
@@ -73,8 +77,13 @@ trap cleanup EXIT
 # dev-token.py prints the output dir on stdout (single line); notes → stderr.
 ISSUER="$(grep -E '^NISABA_OIDC_ISSUER=' "$TMP_ENV" | cut -d= -f2- || true)"
 ISSUER="${ISSUER:-http://localhost:8090/realms/nisaba}"
-echo "[e2e] minting dev OIDC token (issuer=${ISSUER})"
-TOKEN_DIR="$(uv run deploy/dev-token.py --issuer "$ISSUER" \
+AUDIENCE="$(grep -E '^NISABA_OIDC_AUDIENCE=' "$TMP_ENV" | cut -d= -f2- || true)"
+AUDIENCE="${AUDIENCE:-nisaba}"
+echo "[e2e] minting dev OIDC token (issuer=${ISSUER} audience=${AUDIENCE})"
+# --audience MUST match the app's NISABA_OIDC_AUDIENCE or every request 401s
+# with "JWT validation failed" (the dev-token default is "nisaba", which no
+# longer matches .env.example's "nisaba-web").
+TOKEN_DIR="$(uv run deploy/dev-token.py --issuer "$ISSUER" --audience "$AUDIENCE" \
     --out-dir "$TOKEN_DIR" 2>/dev/null)"
 # Export so compose's ${NISABA_OIDC_JWKS_JSON:-} interpolation picks it up.
 # (Shell export is more robust for a JSON value than embedding it in .env.)
@@ -218,6 +227,55 @@ echo "[e2e] memberships ok (${member_count} members)"
 
 
 
+# ---- regression assertions for the 2026-08-09 fixes ------------------------
+# Each of these failed before the fixes; they now assert the corrected behavior
+# against the REAL Postgres-backed app (project deletion, share-link revocation,
+# NUL validation, member removal, nested-document export, duplicate DOI).
+
+echo "[e2e] regression: project deletion actually deletes (was 404+rollback)"
+scratch="$(api POST /projects '{"name":"e2e-delete-scratch"}')"
+scratch_id="$(printf '%s' "$scratch" | jq -r '.id // empty')"
+[ -n "$scratch_id" ] || { echo "[e2e] scratch project creation failed" >&2; exit 1; }
+del_code="$("${COMPOSE[@]}" exec -T app curl -sS -o /dev/null -w '%{http_code}' -X DELETE     "http://127.0.0.1:8080/projects/${scratch_id}" -H "Authorization: Bearer ${TOKEN}")"
+[ "$del_code" = "204" ] || { echo "[e2e] project DELETE returned ${del_code} (expected 204)" >&2; exit 1; }
+echo "[e2e] regression: project deletion ok (204)"
+
+echo "[e2e] regression: share-link revocation revokes (was always 404)"
+link_json="$(api POST "/projects/${proj_id}/share-links" '{"role":"read-only"}')"
+link_token="$(printf '%s' "$link_json" | jq -r '.token // empty')"
+[ -n "$link_token" ] || { echo "[e2e] share-link creation failed" >&2; exit 1; }
+rev_code="$("${COMPOSE[@]}" exec -T app curl -sS -o /dev/null -w '%{http_code}' -X DELETE     "http://127.0.0.1:8080/projects/${proj_id}/share-links/${link_token}"     -H "Authorization: Bearer ${TOKEN}")"
+[ "$rev_code" = "204" ] || { echo "[e2e] share-link DELETE returned ${rev_code} (expected 204)" >&2; exit 1; }
+redeem_code="$("${COMPOSE[@]}" exec -T app curl -sS -o /dev/null -w '%{http_code}' -X POST     "http://127.0.0.1:8080/share/${link_token}/redeem"     -H "Authorization: Bearer ${TOKEN}")"
+[ "$redeem_code" = "404" ] || { echo "[e2e] redeem after revoke returned ${redeem_code} (expected 404)" >&2; exit 1; }
+echo "[e2e] regression: share-link revocation ok (204 + 404 after revoke)"
+
+echo "[e2e] regression: NUL bytes rejected (was HTTP 500)"
+nul_code="$("${COMPOSE[@]}" exec -T app curl -sS -o /dev/null -w '%{http_code}' -X POST \
+    "http://127.0.0.1:8080/projects" -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Content-Type: application/json' -d '{"name":"bad\u0000name"}')"
+[ "$nul_code" = "400" ] || { echo "[e2e] NUL name returned ${nul_code} (expected 400)" >&2; exit 1; }
+echo "[e2e] regression: NUL rejected ok (400)"
+
+echo "[e2e] regression: member removal works (was no endpoint)"
+rm_code="$("${COMPOSE[@]}" exec -T app curl -sS -o /dev/null -w '%{http_code}' -X DELETE     "http://127.0.0.1:8080/projects/${proj_id}/members/test-invite"     -H "Authorization: Bearer ${TOKEN}")"
+[ "$rm_code" = "204" ] || { echo "[e2e] member DELETE returned ${rm_code} (expected 204)" >&2; exit 1; }
+echo "[e2e] regression: member removal ok (204)"
+
+echo "[e2e] regression: nested-document export compiles (was 409 file-not-found)"
+api POST "/projects/${proj_id}/documents"     '{"path":"chapters/01-intro.typ","title":"Intro","body":"= Chapter One","data":{}}' >/dev/null
+export_json="$(api POST "/projects/${proj_id}/exports"     '{"entry":"main.typ","mode":"full","view":"baseline"}')"
+export_zip="$(printf '%s' "$export_json" | jq -r '.zip_base64 // empty')"
+[ -n "$export_zip" ] || { echo "[e2e] nested export returned no zip; response: ${export_json}" >&2; exit 1; }
+echo "[e2e] regression: nested-document export ok (zip present)"
+
+echo "[e2e] regression: duplicate DOI rejected (was silently accepted)"
+doi="10.5555/e2e-$(date +%s)"
+api POST "/projects/${proj_id}/references"     "{\"metadata\":{\"title\":\"One\",\"authors\":[\"A\"],\"doi\":\"${doi}\",\"extra\":{}}}" >/dev/null
+dup_code="$("${COMPOSE[@]}" exec -T app curl -sS -o /dev/null -w '%{http_code}' -X POST     "http://127.0.0.1:8080/projects/${proj_id}/references"     -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json'     -d "{\"metadata\":{\"title\":\"Two\",\"authors\":[\"B\"],\"doi\":\"${doi}\",\"extra\":{}}}")"
+[ "$dup_code" = "409" ] || { echo "[e2e] duplicate DOI returned ${dup_code} (expected 409)" >&2; exit 1; }
+echo "[e2e] regression: duplicate DOI rejected ok (409)"
+
 # ---- app half of the sync authorize loop ------------------------------------
 # This is the call sync makes for every handshake. It must resolve the document
 # to the caller's project membership; the project creator is auto-granted Owner,
@@ -225,9 +283,8 @@ echo "[e2e] memberships ok (${member_count} members)"
 AUTHZ_TOKEN="$(grep -E '^NISABA_SYNC_AUTHZ_TOKEN=' "$TMP_ENV" | cut -d= -f2- || true)"
 [ -n "$AUTHZ_TOKEN" ] || { echo "[e2e] .env.example has no NISABA_SYNC_AUTHZ_TOKEN" >&2; exit 1; }
 echo "[e2e] app POST /internal/sync/authorize (the call sync makes per handshake)"
-subject="$(printf '%s' "$TOKEN" | cut -d. -f2 \
-    | { read -r p; printf '%s' "$p$(printf '=%.0s' $(seq $(( (4 - ${#p} % 4) % 4 ))))"; } \
-    | base64 -d 2>/dev/null | jq -r '.sub')"
+# Decode `sub` from the dev JWT (base64url payload) robustly.
+subject="$(python3 -c 'import sys,base64,json; p=sys.argv[1].split(".")[1]; p += "=" * (-len(p) % 4); print(json.loads(base64.urlsafe_b64decode(p))["sub"])' "$TOKEN")"
 authz_json="$(printf '{"document":"%s","subject":"%s"}' "$DOC" "$subject" \
     | "${COMPOSE[@]}" exec -T app curl -sS -X POST http://127.0.0.1:8080/internal/sync/authorize \
         -H "Authorization: Bearer ${AUTHZ_TOKEN}" -H 'Content-Type: application/json' -d @-)"

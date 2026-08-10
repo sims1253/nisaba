@@ -348,8 +348,14 @@ async fn handle_message(
         Frame::Update(b) => {
             if let Err(e) = room.handle_update(peer, role, &b).await {
                 let code = match &e {
-                    crate::error::SyncError::Access(_) => codes::FORBIDDEN,
+                    // A review-policy violation is a permission-style denial.
+                    crate::error::SyncError::Access(_)
+                    | crate::error::SyncError::ReviewPolicy(_) => codes::FORBIDDEN,
                     crate::error::SyncError::Limit(_) => codes::TOO_LARGE,
+                    // Undecodable Loro bytes are a *client* input problem, not
+                    // a server fault: report it as a protocol error (4000)
+                    // instead of the misleading 4500 "internal error".
+                    crate::error::SyncError::Loro(_) => codes::PROTOCOL,
                     _ => codes::INTERNAL,
                 };
                 let _ = send_error(socket, code, &e.to_string()).await;

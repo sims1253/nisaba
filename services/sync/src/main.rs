@@ -35,9 +35,10 @@ use std::time::Duration;
 use jsonwebtoken::Algorithm;
 use nisaba_sync::http::{HttpFetch, ReqwestHttpFetch};
 use nisaba_sync::{
-    AccessResolver, Clock, Config, DenyAllAuthorizer, DocRegistry, DocumentAuthorizer,
-    FsOpLogStore, FsSnapshotStore, HttpDocumentAuthorizer, JwksCache, JwtConfig, JwtValidator,
-    OidcAccessResolver, Role, StaticAccessResolver, SystemClock, TokenCache, run_jwks_refresher,
+    AccessResolver, Clock, Config, DenyAllAuthorizer, DenyAllSeedVerifier, DocRegistry,
+    DocumentAuthorizer, FsOpLogStore, FsSnapshotStore, HttpDocumentAuthorizer, HttpSeedVerifier,
+    JwksCache, JwtConfig, JwtValidator, OidcAccessResolver, Role, SeedVerifier,
+    StaticAccessResolver, SystemClock, TokenCache, run_jwks_refresher,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -57,8 +58,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
     let access = build_access_resolver(clock.clone())?;
+    let seed_verifier = build_seed_verifier()?;
 
-    let registry = DocRegistry::new(op_log, snapshots, config.clone(), clock, access);
+    let registry = DocRegistry::with_seed_verifier(
+        op_log,
+        snapshots,
+        config.clone(),
+        clock,
+        access,
+        seed_verifier,
+    );
     let router = nisaba_sync::server::build(registry.clone(), config.clone());
 
     let interval = nisaba_sync::server::maintenance_interval(&config);
@@ -67,6 +76,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%addr, "nisaba-sync bind address resolved");
     nisaba_sync::server::serve(router, addr).await?;
     Ok(())
+}
+
+/// Build the reviewer seed verifier from environment variables.
+///
+/// `NISABA_SYNC_SEED_VERIFY_URL` (the app's internal document-body endpoint)
+/// with the shared service token (`NISABA_SYNC_AUTHZ_TOKEN`) verifies that a
+/// reviewer's seed of an empty document room matches the app's stored body.
+/// Unset → [`DenyAllSeedVerifier`]: reviewer seeds are denied (fail-closed)
+/// until an author connects and seeds the room.
+fn build_seed_verifier() -> Result<Arc<dyn SeedVerifier>, Box<dyn std::error::Error>> {
+    let env_nonempty = |name: &str| env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let Some(url) = env_nonempty("NISABA_SYNC_SEED_VERIFY_URL") else {
+        tracing::warn!(
+            "NISABA_SYNC_SEED_VERIFY_URL is unset: reviewer seeds of empty rooms are denied              (an author must connect first). Set it to the app's internal document-body              endpoint to allow reviewers to open brand-new documents."
+        );
+        return Ok(Arc::new(DenyAllSeedVerifier));
+    };
+    let service_token = env_nonempty("NISABA_SYNC_AUTHZ_TOKEN").ok_or(
+        "NISABA_SYNC_SEED_VERIFY_URL requires NISABA_SYNC_AUTHZ_TOKEN (the shared app token)",
+    )?;
+    Ok(Arc::new(HttpSeedVerifier::new(
+        build_http_transport()?,
+        url,
+        service_token,
+        Duration::from_secs(3),
+    )))
 }
 
 /// Build the access policy from environment variables.
@@ -102,9 +137,14 @@ fn build_access_resolver(
         return Ok(Arc::new(StaticAccessResolver::allow_all(Role::Author)));
     }
 
-    let issuer = env::var("NISABA_SYNC_OIDC_ISSUER").ok();
-    let audience = env::var("NISABA_SYNC_OIDC_AUDIENCE").ok();
-    let jwks_url = env::var("NISABA_SYNC_OIDC_JWKS_URL").ok();
+    // An empty variable is treated the same as an unset one (Compose defaults
+    // unset vars to the empty string): with no OIDC configuration the service
+    // boots into the deny-all resolver instead of crashing with
+    // "OIDC issuer must be set" on every start.
+    let env_nonempty = |name: &str| env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let issuer = env_nonempty("NISABA_SYNC_OIDC_ISSUER");
+    let audience = env_nonempty("NISABA_SYNC_OIDC_AUDIENCE");
+    let jwks_url = env_nonempty("NISABA_SYNC_OIDC_JWKS_URL");
     let present = [&issuer, &audience, &jwks_url]
         .iter()
         .filter(|o| o.is_some())

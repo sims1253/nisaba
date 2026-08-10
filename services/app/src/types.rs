@@ -161,8 +161,23 @@ pub struct ReferenceCreate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferencePatch {
-    pub metadata: Option<ReferenceMetadata>,
+    pub metadata: Option<ReferenceMetadataPatch>,
     pub provenance: Option<Provenance>,
+}
+
+/// Partial reference metadata for `PATCH /references/{id}`: every field is
+/// optional and only the fields present are merged into the stored metadata.
+/// `year`/`doi`/`pmid`/`journal` use `Option<Option<T>>` so `null` clears the
+/// value while absence leaves it untouched.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReferenceMetadataPatch {
+    pub title: Option<String>,
+    pub authors: Option<Vec<String>>,
+    pub year: Option<Option<u16>>,
+    pub doi: Option<Option<String>>,
+    pub pmid: Option<Option<String>>,
+    pub journal: Option<Option<String>>,
+    pub extra: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,7 +272,7 @@ pub struct ExportResponse {
     pub zip_filename: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MembershipRole {
     Owner,
@@ -294,7 +309,7 @@ pub enum RepoError {
 pub enum AppError {
     #[error("unauthorized: {0}")]
     Unauthorized(String),
-    #[error("forbidden")]
+    #[error("You don't have permission to do that")]
     Forbidden,
     #[error("bad request: {0}")]
     BadRequest(String),

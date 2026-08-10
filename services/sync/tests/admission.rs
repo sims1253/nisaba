@@ -29,6 +29,7 @@ async fn room_with(config: Config) -> Arc<DocRoom> {
             Arc::new(MemorySnapshotStore::default()),
             Arc::new(config),
             Arc::new(SystemClock),
+            Arc::new(nisaba_sync::DenyAllSeedVerifier),
         )
         .await
         .unwrap(),

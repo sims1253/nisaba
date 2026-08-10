@@ -25,6 +25,7 @@ async fn room_with_clock(clock: Arc<ManualClock>) -> Arc<DocRoom> {
                 ..Config::default()
             }),
             clock,
+            Arc::new(nisaba_sync::DenyAllSeedVerifier),
         )
         .await
         .unwrap(),

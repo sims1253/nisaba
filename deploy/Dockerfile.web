@@ -21,8 +21,15 @@ RUN test -n "$VITE_OIDC_ISSUER" && test -n "$VITE_OIDC_CLIENT_ID"
 # Workspace root: copy all workspace member manifests + lockfile for install.
 COPY package.json bun.lock tsconfig.base.json ./
 COPY web/package.json web/tsconfig.json web/
+# Dependency patches must exist before the (explicit) postinstall applies them.
+COPY web/patches web/patches
 COPY tools/package.json tools/tsconfig.json tools/
 RUN bun install --frozen-lockfile
+# bun skips root lifecycle scripts when the lockfile is unchanged, so the
+# loro-codemirror fix (patches/loro-codemirror+0.3.3.patch — the import handler
+# used to abort on the first non-text event, blanking the editor after a review
+# snapshot) must be applied explicitly.
+RUN cd web && bun run postinstall
 
 # Copy the web source for the build.
 COPY web/ web/

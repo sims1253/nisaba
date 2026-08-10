@@ -35,6 +35,7 @@ pub mod presence;
 pub mod protocol;
 pub mod registry;
 pub mod room;
+pub mod seed;
 pub mod snapshot;
 pub mod time;
 
@@ -58,6 +59,7 @@ pub use registry::DocRegistry;
 pub use room::{
     CLOSE_NORMAL, CLOSE_RESYNC_REQUIRED, CloseSignal, DocRoom, JoinOutcome, close_signal,
 };
+pub use seed::{DenyAllSeedVerifier, HttpSeedVerifier, SeedVerifier};
 pub use snapshot::{FsSnapshotStore, MemorySnapshotStore, Snapshot, SnapshotStore};
 pub use time::{Clock, ManualClock, SystemClock};
 

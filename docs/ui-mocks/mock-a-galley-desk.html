@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock A — Galley Desk · Nisaba</title>
+<!--
+  MOCK A — "GALLEY DESK"
+  Concept: the writing desk. Three persistent zones (navigator / source / page),
+  review lives in the editor margin like a proofreader's marks, and ONE status
+  strip along the bottom consolidates sync, cursor, view, and build state.
+  No cards, no banners, no floating pills: ruled lists, dot leaders, hairlines,
+  squared edges. Serif chrome for the apparatus, mono for source and metadata.
+-->
+<style>
+  :root{
+    --paper:#fbfaf6; --desk:#f3f1ea; --ink:#1c1b17; --muted:#75705f;
+    --rule:#ddd9cc; --rule-dark:#c8c3b2;
+    --red:#a63a2e;            /* editor's pencil: primary action + deletes */
+    --green:#2e7d4f;          /* insertions */
+    --amber:#a4761b;          /* comments  */
+    --blue:#31597e;           /* links, constructs */
+    --serif:"Source Serif 4",Charter,Georgia,"Times New Roman",serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:var(--serif);color:var(--ink);background:var(--paper);display:flex;flex-direction:column;overflow:hidden}
+  button{font:inherit;background:none;border:0;cursor:pointer;color:inherit}
+  ::selection{background:#e8dfc2}
+
+  /* ---------- masthead ---------- */
+  .mast{height:46px;flex:0 0 auto;display:flex;align-items:baseline;gap:18px;
+        padding:0 16px;border-bottom:1px solid var(--rule-dark);background:var(--paper)}
+  .wordmark{font-variant:small-caps;letter-spacing:.14em;font-weight:600;font-size:17px}
+  .wordmark em{font-style:normal;color:var(--red)}
+  .crumb{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.02em}
+  .crumb b{color:var(--ink);font-weight:600}
+  .crumb .sw{border-bottom:1px solid var(--rule-dark);padding-bottom:1px;cursor:pointer}
+  .mast-right{margin-left:auto;display:flex;align-items:center;gap:16px}
+  .presence{display:flex;align-items:center}
+  .ppl{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+       font-family:var(--mono);font-size:9px;border:1.5px solid var(--paper);
+       margin-left:-6px;color:#fff}
+  .ppl:first-child{margin-left:0}
+  .saved{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.04em}
+  .me{font-family:var(--mono);font-size:11px;color:var(--ink);border-left:1px solid var(--rule);padding-left:16px}
+
+  /* ---------- main grid ---------- */
+  .desk{flex:1;display:grid;grid-template-columns:236px minmax(0,1.35fr) minmax(0,1fr);min-height:0}
+
+  /* ---------- navigator ---------- */
+  .nav{border-right:1px solid var(--rule-dark);background:var(--desk);overflow:auto;
+       padding:14px 0 20px;font-size:13px}
+  .nav h3{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;color:var(--muted);
+          font-weight:600;padding:14px 16px 6px;text-transform:uppercase}
+  .nav h3 .n{float:right;color:#a39e8c;font-weight:400}
+  .tree{list-style:none;font-family:var(--mono);font-size:11.5px;line-height:1.5}
+  .tree li{padding:1.5px 16px 1.5px 0;white-space:nowrap;cursor:pointer;color:#3d3a30;display:flex}
+  .tree li:hover{background:#eae7db}
+  .tree li.on{background:#e4e0d1;box-shadow:inset 2px 0 0 var(--red);color:var(--ink);font-weight:600}
+  .tree .tw{color:#a39e8c;display:inline-block;width:14px;text-align:center;flex:0 0 auto}
+  .tree .ind{display:inline-block;width:12px;flex:0 0 auto;border-left:1px dotted var(--rule-dark);align-self:stretch;margin-right:4px}
+  .tree .ext{color:#a39e8c;font-size:10px;margin-left:auto;padding-left:10px}
+  .tree .entry{color:var(--red);font-size:9px;margin-left:auto;letter-spacing:.1em}
+  .sect{list-style:none}
+  .sect li{display:flex;align-items:baseline;padding:2px 16px;cursor:pointer;color:#3d3a30}
+  .sect li:hover{background:#eae7db}
+  .sect li.on{color:var(--red);font-weight:600}
+  .sect .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sect .dots{flex:1;border-bottom:1px dotted var(--rule-dark);margin:0 6px;transform:translateY(-3px)}
+  .sect .pg{font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .sect .h2{padding-left:28px;font-size:12px}
+  .meta{margin:18px 16px 0;border-top:1px solid var(--rule-dark);padding-top:10px;
+        font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.9}
+  .meta b{color:var(--ink);font-weight:600}
+
+  /* ---------- source column ---------- */
+  .src{display:flex;flex-direction:column;min-width:0;background:var(--paper)}
+  .dochead{flex:0 0 auto;display:flex;align-items:baseline;gap:14px;padding:10px 24px 8px;
+           border-bottom:1px solid var(--rule)}
+  .dochead .name{font-variant:small-caps;letter-spacing:.1em;font-size:15px;font-weight:600}
+  .dochead .rev{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.05em}
+  .dochead .rev b{color:var(--ink)}
+  .scroll{flex:1;overflow:auto;min-height:0}
+  /* the measure reserves a real margin column: text in column 1, marginalia in
+     column 2 — notes never sit on top of the text they annotate */
+  .measure{max-width:100%;margin:0;padding:26px 24px 80px 34px;display:grid;
+           grid-template-columns:minmax(0,1fr) 200px;column-gap:24px;position:relative}
+  .ln{font-family:var(--mono);font-size:13px;line-height:1.85;color:#33312a;
+      white-space:pre-wrap;position:relative;grid-column:1}
+  .ln.hd1{font-size:17px;font-weight:700;color:var(--ink);padding-top:14px}
+  .ln.hd2{font-size:14px;font-weight:700;color:var(--ink);padding-top:10px}
+  .cm{font-style:italic;color:#8d8875}                    /* markup sigils */
+  .cite{color:var(--blue);border-bottom:1px solid #b9c6d4;cursor:pointer}
+  .xref{color:var(--blue)}
+  /* tracked changes, rendered as text — not chips */
+  .ins{background:#e2efe5;border-bottom:1.5px solid var(--green);cursor:pointer}
+  .del{color:var(--red);text-decoration:line-through;text-decoration-thickness:1.5px;cursor:pointer;background:#f7e9e6}
+  .cmt{background:#f6ecd4;border-bottom:1.5px solid var(--amber);cursor:pointer}
+  /* margin apparatus: flags sit in the gutter, aligned to their line */
+  .flag{position:absolute;right:-27px;top:6px;font-family:var(--mono);font-size:10px;
+        width:17px;height:17px;display:grid;place-items:center;cursor:pointer;
+        border:1px solid currentColor;background:var(--paper);font-weight:700}
+  .flag.i{color:var(--green)} .flag.c{color:var(--amber)} .flag.d{color:var(--red)}
+  /* expanded margin note: a true marginalium in the reserved margin column */
+  .mnote{position:absolute;right:-227px;top:24px;width:200px;z-index:5;
+         border:1px solid var(--rule-dark);border-top:2.5px solid var(--amber);
+         background:var(--paper);box-shadow:3px 3px 0 #e9e5d7;padding:9px 11px 8px}
+  .mnote .who{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;color:var(--muted)}
+  .mnote .who b{color:var(--ink)}
+  .mnote p{font-size:12px;line-height:1.5;margin:5px 0 8px;font-style:italic}
+  .mnote .acts{display:flex;gap:12px;border-top:1px solid var(--rule);padding-top:7px;
+               font-family:var(--mono);font-size:10px}
+  .mnote .acts button{letter-spacing:.05em;color:var(--muted)}
+  .mnote .acts button:first-child{color:var(--red);font-weight:700}
+  .mnote .acts button:hover{color:var(--ink)}
+
+  /* ---------- page column ---------- */
+  .pagecol{border-left:1px solid var(--rule-dark);background:#e9e7de;display:flex;flex-direction:column;min-width:0}
+  .pagebar{flex:0 0 auto;display:flex;align-items:baseline;gap:14px;padding:10px 18px 8px;
+           border-bottom:1px solid var(--rule);background:var(--desk);
+           font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.05em}
+  .pagebar b{color:var(--ink)}
+  .pagebar .z{margin-left:auto;display:flex;gap:10px}
+  .pagebar .z button{color:var(--muted);font-family:var(--mono);font-size:11px}
+  .pagebar .z button:hover{color:var(--ink)}
+  .pages{flex:1;overflow:auto;padding:22px 26px 40px}
+  .sheet{width:540px;max-width:100%;min-height:700px;margin:0 auto 20px;background:#fffdf8;
+         box-shadow:0 1px 2px #b9b4a3,0 6px 18px #b9b4a355;padding:52px 56px 64px;position:relative}
+  .sheet .run{display:flex;justify-content:space-between;font-family:var(--mono);font-size:7.5px;
+              letter-spacing:.14em;color:#9a9584;border-bottom:1px solid #e4e0d2;padding-bottom:7px}
+  .sheet h1{font-size:21px;font-weight:400;line-height:1.25;margin:30px 0 10px}
+  .sheet .auth{font-size:10px;color:#7c7767;margin-bottom:16px}
+  .sheet h2{font-size:13.5px;font-weight:700;margin:20px 0 7px}
+  .sheet p{font-size:9.8px;line-height:1.62;text-align:justify;margin-bottom:7px}
+  .sheet table{border-collapse:collapse;width:100%;font-size:8.6px;margin:12px 0}
+  .sheet th{border-top:1.2px solid #4a463a;border-bottom:1px solid #8a8574;text-align:left;padding:4px 6px;font-weight:700}
+  .sheet td{border-bottom:1px solid #ddd8c6;padding:3.5px 6px}
+  .sheet .folio{position:absolute;bottom:22px;left:56px;right:56px;display:flex;justify-content:space-between;
+                font-family:var(--mono);font-size:7.5px;color:#9a9584;border-top:1px solid #e4e0d2;padding-top:6px}
+  .sheet.two{min-height:480px}
+  .skl{height:7px;background:#efece2;margin:11px 0}
+  .skl.s{width:58%}
+
+  /* ---------- status strip ---------- */
+  .strip{flex:0 0 auto;height:32px;display:flex;align-items:center;gap:0;overflow:hidden;
+         border-top:1px solid var(--rule-dark);background:var(--desk);
+         font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .strip .cell{padding:0 11px;border-right:1px solid var(--rule);height:100%;display:flex;align-items:center;gap:7px;white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .strip .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  .strip .views{display:flex;height:100%;flex:0 1 auto;overflow:hidden}
+  .strip .views button{padding:0 10px;height:100%;border-right:1px solid var(--rule);letter-spacing:.08em;font-size:9.5px;color:var(--muted)}
+  .strip .views button.on{color:var(--ink);font-weight:700;box-shadow:inset 0 -2px 0 var(--red)}
+  .strip .right{margin-left:auto;display:flex;height:100%;flex:0 0 auto}
+  .strip .ok{color:var(--green);font-weight:700}
+  .strip .warn{color:var(--amber)}
+  .strip .compile{background:var(--red);color:#fbf7ef;padding:0 18px;flex:0 0 auto;font-size:10.5px;
+                  letter-spacing:.1em;font-weight:700;height:100%;display:flex;align-items:center;gap:9px}
+  .strip .compile span{opacity:.6;font-size:9px}
+  .strip .export{padding:0 14px;flex:0 0 auto;border-left:1px solid var(--rule);letter-spacing:.08em;color:var(--muted)}
+  .strip .export:hover{color:var(--ink)}
+
+  .tag{position:fixed;left:8px;bottom:40px;font-family:var(--mono);font-size:9px;color:#b0ab99;letter-spacing:.1em}
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <span class="wordmark">Nisaba<em>.</em></span>
+  <span class="crumb">field-lab&nbsp;/&nbsp;<b class="sw">interspecies-acoustics&nbsp;⌄</b>&nbsp;/&nbsp;main.typ</span>
+  <div class="mast-right">
+    <span class="presence" title="twinkleburst (you) · sparkletoes, editing §Results · clawson, viewing page 2">
+      <span class="ppl" style="background:#7a5a8c">SP</span><span class="ppl" style="background:#4d7a5e">CL</span>
+    </span>
+    <span class="saved">all changes saved · 12:04</span>
+    <span class="me">twinkleburst ▾</span>
+  </div>
+</header>
+
+<div class="desk">
+
+  <!-- ═══ Navigator: files as a real tree; document sections with leaders ═══ -->
+  <nav class="nav">
+    <h3>Files <span class="n">6</span></h3>
+    <ul class="tree">
+      <li class="on"><span class="tw">◆</span>main.typ<span class="entry">ENTRY</span></li>
+      <li><span class="tw">▾</span>chapters/</li>
+      <li><span class="ind"></span><span class="tw"> </span>introduction.typ</li>
+      <li><span class="ind"></span><span class="tw"> </span>methods.typ</li>
+      <li><span class="ind"></span><span class="tw"> </span>results.typ</li>
+      <li><span class="ind"></span><span class="tw"> </span>appendix.typ</li>
+      <li><span class="tw">▸</span>assets/<span class="ext">3</span></li>
+      <li style="color:var(--red)"><span class="tw">＋</span>new file…</li>
+    </ul>
+
+    <h3>Sections — main.typ</h3>
+    <ul class="sect">
+      <li><span class="t">Abstract</span><span class="dots"></span><span class="pg">4</span></li>
+      <li><span class="t">Introduction</span><span class="dots"></span><span class="pg">12</span></li>
+      <li class="on"><span class="t">Field Methods</span><span class="dots"></span><span class="pg">31</span></li>
+      <li class="h2"><span class="t">Monitoring stations</span><span class="dots"></span><span class="pg">44</span></li>
+      <li><span class="t">Results</span><span class="dots"></span><span class="pg">88</span></li>
+      <li class="h2"><span class="t">Acoustic analysis</span><span class="dots"></span><span class="pg">102</span></li>
+      <li><span class="t">Discussion</span><span class="dots"></span><span class="pg">141</span></li>
+      <li><span class="t">Limitations</span><span class="dots"></span><span class="pg">190</span></li>
+    </ul>
+
+    <div class="meta">
+      references <b>8 / 8 full-text</b><br>
+      checkpoints <b>128</b> · last c128<br>
+      entrypoint <b>main.typ</b>
+    </div>
+  </nav>
+
+  <!-- ═══ Source: measure-constrained, review marks live in the margin ═══ -->
+  <section class="src">
+    <div class="dochead">
+      <span class="name">main.typ</span>
+      <span class="rev">rev <b>128</b> · baseline <b>r120</b> · track changes <b>on</b></span>
+    </div>
+    <div class="scroll">
+      <div class="measure">
+        <div class="ln hd1"><span class="cm">=</span> Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Abstract</div>
+        <div class="ln">We document seventeen months of field observations of honey badgers (Mellivora capensis) attending subterranean fairy raves in the Welsh countryside. Using enchanted monitoring crystals and glitter-spectroscopy, we characterize attendance patterns, acoustic entrainment, and interspecies social dynamics. <span class="ins">Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.</span><span class="flag i">+</span></div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Introduction</div>
+        <div class="ln">The honey badger has long been regarded as a solitary species. Recent anecdotal reports, however, describe badgers congregating at fairy social gatherings <span class="cite">#cite(&lt;twinkleburst-2024&gt;)</span>, raising questions about the ecological drivers of this behaviour. <span class="del">Some researchers dispute this entirely.</span><span class="flag d">-</span></div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln">Field sites were selected across Cwm Derwen and Tywyn Hollow. <span class="cmt">Monitoring stations recorded continuously for 510 days.</span> Acoustic analysis used cross-correlation of vocalization envelopes with the dominant bass frequency.<span class="flag c">1</span>
+          <span class="mnote">
+            <span class="who"><b>sparkletoes</b> · 1 h ago · comment</span>
+            <p>Can we cite the crystal calibration report here? Reviewers will ask.</p>
+            <span class="acts"><button>RESOLVE</button><button>REPLY</button><button>QUOTE ↩</button></span>
+          </span>
+        </div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Results</div>
+        <div class="ln">Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked to the fairy audio system (see <span class="xref">@tbl-acoustic</span>).</div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln"><span class="cm">#figure(</span>table(columns: 5, …<span class="cm">), caption: [Acoustic analysis…])</span> <span class="xref">&lt;tbl-acoustic&gt;</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ Page: the compiled artefact ═══ -->
+  <section class="pagecol">
+    <div class="pagebar">
+      <span>page <b>1 / 12</b></span><span>·</span><span>build <b>#41</b> from checkpoint <b>c128</b></span>
+      <span class="z"><button>−</button><b>100%</b><button>+</button><button>fit</button></span>
+    </div>
+    <div class="pages">
+      <div class="sheet">
+        <div class="run"><span>HONEY BADGERS AT FAIRY RAVES</span><span>MELLIVORA PRESS · 2026</span></div>
+        <h1>Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</h1>
+        <div class="auth">A. Twinkleburst¹, S. Sparkletoes², R. Clawson³ — ¹Dept. of Mustelid Acoustics · ²Faerie Studies Institute · ³Forensic Glitter Lab</div>
+        <h2>Abstract</h2>
+        <p>We document seventeen months of field observations of honey badgers (<i>Mellivora capensis</i>) attending subterranean fairy raves in the Welsh countryside. Using enchanted monitoring crystals and glitter-spectroscopy, we characterize attendance patterns, acoustic entrainment, and interspecies social dynamics. Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.</p>
+        <h2>1&nbsp;&nbsp;Introduction</h2>
+        <p>The honey badger has long been regarded as a solitary species. Recent anecdotal reports, however, describe badgers congregating at fairy social gatherings [1], raising questions about the ecological drivers of this behaviour.</p>
+        <h2>2&nbsp;&nbsp;Results</h2>
+        <p>Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked to the fairy audio system.</p>
+        <table>
+          <tr><th>Site</th><th>BPM</th><th>Vocal freq.</th><th>Phase-locked</th><th>Coherence</th></tr>
+          <tr><td>Site 1 (Cwm Derwen)</td><td>142</td><td>48 Hz</td><td>Yes</td><td>0.91</td></tr>
+          <tr><td>Site 2 (Tywyn Hollow)</td><td>138</td><td>45 Hz</td><td>Yes</td><td>0.88</td></tr>
+          <tr><td>Site 4 (Ystrad Tunnel)</td><td>150</td><td>52 Hz</td><td>Yes</td><td>0.95</td></tr>
+        </table>
+        <div class="folio"><span>TWINKLEBURST ET AL.</span><span>1</span></div>
+      </div>
+      <div class="sheet two">
+        <div class="skl"></div><div class="skl"></div><div class="skl s"></div>
+        <div class="skl"></div><div class="skl"></div><div class="skl s"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ═══ One strip for all glanceable state ═══ -->
+<footer class="strip">
+  <span class="cell"><span class="dot"></span>synced · 3 peers</span>
+  <span class="cell">ln 12, col 47</span>
+  <span class="cell">4,812 words</span>
+  <span class="views"><button class="on">PROPOSED</button><button>BASELINE</button><button>REDLINE</button><button>PUBLIC</button></span>
+  <span class="right">
+    <span class="cell"><span class="ok">✓ build 41</span> · <span class="warn">1 warn</span></span>
+    <button class="export">EXPORT ⇩</button>
+    <button class="compile">COMPILE <span>⌘↵</span></button>
+  </span>
+</footer>
+
+<span class="tag">MOCK A — GALLEY DESK</span>
+</body>
+</html>

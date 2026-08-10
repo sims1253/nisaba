@@ -122,9 +122,51 @@ impl SimPeer {
         }
     }
 
+    /// Submit every locally-captured update through the room, returning the
+    /// first error instead of panicking.
+    pub async fn submit_result(&self, room: &Arc<DocRoom>) -> Result<(), nisaba_sync::SyncError> {
+        for u in self.captured_updates() {
+            room.handle_update(self.peer, self.role, &u).await?;
+        }
+        Ok(())
+    }
+
+    /// Submit only the FIRST captured update (for tests that need to exercise
+    /// one specific frame, e.g. a combined text+review transaction).
+    pub async fn submit_first(&self, room: &Arc<DocRoom>) -> Result<(), nisaba_sync::SyncError> {
+        if let Some(u) = self.captured_updates().into_iter().next() {
+            room.handle_update(self.peer, self.role, &u).await?;
+        }
+        Ok(())
+    }
+
     /// Drain and return the locally-captured updates without submitting them.
     pub fn captured_updates(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.pending.lock().unwrap())
+    }
+
+    /// Write the review container's `items` value (a JSON string) and commit,
+    /// exactly like the web client's `persistReview`.
+    pub fn set_review(&self, items_json: &str) {
+        self.doc
+            .get_map(nisaba_sync::authority::REVIEW_CONTAINER)
+            .insert(
+                nisaba_sync::authority::REVIEW_ITEMS_KEY,
+                items_json.to_string(),
+            )
+            .unwrap();
+        self.doc.commit();
+    }
+
+    /// The peer's current review `items` value, if any.
+    pub fn review_items(&self) -> Option<String> {
+        self.doc
+            .get_map(nisaba_sync::authority::REVIEW_CONTAINER)
+            .get(nisaba_sync::authority::REVIEW_ITEMS_KEY)
+            .and_then(|value| match value.get_deep_value() {
+                loro::LoroValue::String(s) => Some(s.to_string()),
+                _ => None,
+            })
     }
 
     /// The peer's current text content (the `text` container).

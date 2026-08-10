@@ -42,6 +42,85 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
 - Brute-force protection is enabled in the realm (`bruteForceProtected: true`).
 - **Future:** rotate demo credentials; enforce MFA for `reviewer` in trials.
 
+### Application authorization (two layers)
+
+Every `/projects/{id}/*` request passes two gates, both of which must allow it:
+
+1. **IdP role claim** (`auth.rs::permitted`): `author` for manage/project-level
+   actions, `author` **or** `reviewer` for nothing that mutates the baseline —
+   since 2026-08-09 document PATCH/DELETE require the `author` role. Baseline
+   writes are owner/author only; reviewers propose through the review layer.
+2. **Project membership role** (`auth.rs::project_acl`): document-path writes
+   are owner/author only; reads are open to every member; project-level writes
+   (members, references, exports, share links, project metadata) are
+   owner/author only. Non-members get 403.
+
+Consequences that are intentional:
+
+- A reviewer **cannot** delete or overwrite documents (previously possible via
+  the REST API, allowing silent destruction of author work).
+- A reviewer **can** read documents, history, audit, and the members list.
+- Share-link tokens are stored **hashed** (SHA-256); the plaintext token is
+  returned exactly once, at creation, and revocation works by hashing the
+  presented token.
+
+### The sync plane (WebSocket relay)
+
+The sync service enforces the same role boundary on the CRDT transport:
+
+- **Role intersection.** The role the sync relay grants is the *least
+  privileged* of the membership role and the bearer's IdP roles claim. A
+  `read-only` IdP user who redeems an `author` share link therefore stays
+  `read-only` on the sync plane — the same answer the REST plane gives — and
+  cannot push updates. (Previously the relay trusted the membership role alone,
+  so share-link redemption could escalate an IdP `read-only` user to `author`
+  capabilities over WebSocket.)
+- **Reviewer text gate.** A reviewer may push updates that change the `review`
+  container freely (suggestions, comments, accept/reject records), but an
+  update that changes the `text` container is only accepted when:
+  1. the room is empty — the update is the initial seed, and the resulting text
+     must match the app's authoritative document body
+     (`NISABA_SYNC_SEED_VERIFY_URL`; verification failures and verifier
+     outages deny the seed, fail-closed), or
+  2. the same update — or a recent update from the same peer (30 s window) —
+     also changed the `review` container, matching how the web client emits
+     suggestion records and the text they annotate as separate CRDT frames.
+  This blocks a custom client from silently replacing the document text (the
+  2026-08-09 QA finding "reviewer overwrites the baseline via WebSocket").
+  Residual limitation: a client that *also* forges review records (a fake
+  accept/suggestion item) can still change text through the transport gate;
+  fully closing that requires a semantic review validator inside the sync
+  service and is tracked in the roadmap.
+- The sync service decodes every CRDT update **before** persisting it to the
+  op log, so undecodable bytes are rejected at ingest (protocol error 4000,
+  not the misleading 4500 "internal error").
+
+### Client token storage
+
+The web client stores the OIDC access token in `localStorage` (shared across
+tabs) rather than `sessionStorage` (per-tab): the collaborative editor must let
+a user work in several tabs/windows of the same project without signing in
+again (found by the 2026-08-09 author-agent's two-tab sync test). The token is
+short-lived (5 minutes in local dev) and refreshed in the background; the OIDC
+PKCE pending state remains in `sessionStorage`. Trade-off: `localStorage`
+survives tab/window close on shared machines — sign out (which clears the
+token) before leaving a shared computer.
+
+### Input validation
+
+- NUL bytes and control characters are rejected (400) in project names,
+  document paths/titles, member subjects, and reference metadata; document
+  bodies reject NUL only (tabs/newlines are legitimate prose).
+- Document paths must be safe project-relative paths (no `/`-prefix, no `\`,
+  no `.`/`..` segments, no control characters, no surrounding whitespace).
+- Reference DOIs are unique per project (409 on duplicates); metadata fields
+  are length-capped so a single bad record cannot bloat every compile's
+  injected `refs.yml`.
+- Document paths are length-capped (1024 chars) like the other user-facing
+  text fields, so a runaway path cannot bloat compile/export include lists.
+- Fulltext uploads must actually look like PDFs (magic `%PDF-` header + `%%EOF`
+  trailer), not merely declare `application/pdf`.
+
 ---
 
 ## 3. Network model

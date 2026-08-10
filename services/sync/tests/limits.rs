@@ -24,6 +24,7 @@ async fn room_with(config: Config) -> Arc<DocRoom> {
             Arc::new(MemorySnapshotStore::default()),
             Arc::new(config),
             Arc::new(SystemClock),
+            Arc::new(nisaba_sync::DenyAllSeedVerifier),
         )
         .await
         .unwrap(),
@@ -69,17 +70,39 @@ async fn read_only_role_cannot_push_updates() {
 }
 
 #[tokio::test]
-async fn reviewer_can_push_updates() {
+async fn reviewer_can_push_review_layer_updates() {
     let room = room_with(Config::default()).await;
     let mut rev = SimPeer::new(8, Role::Reviewer);
     rev.connect(&room, &[]).await;
-    rev.insert(0, "suggestion");
+    // Suggestions live in the review container; the relay must accept them.
+    rev.set_review(r#"[{"id":"r1","kind":"suggestion","change":"insert","text":"hi"}]"#);
     rev.submit(&room).await;
     rev.drain();
-    assert_eq!(
-        room.authority().inner().get_text("text").to_string(),
-        "suggestion"
+    assert_eq!(room.authority().inner().get_text("text").to_string(), "");
+    assert!(
+        room.authority()
+            .inner()
+            .get_map("review")
+            .get("items")
+            .is_some()
     );
+}
+
+#[tokio::test]
+async fn reviewer_text_seed_denied_without_verifier() {
+    // No seed verifier configured (the deny-all default): a reviewer pushing
+    // text into an empty room is the QA-reported baseline-overwrite vector and
+    // must be rejected — the room stays empty until an author connects.
+    let room = room_with(Config::default()).await;
+    let mut rev = SimPeer::new(9, Role::Reviewer);
+    rev.connect(&room, &[]).await;
+    rev.insert(0, "REVIEWER OVERWROTE THE BASELINE");
+    let err = rev
+        .submit_result(&room)
+        .await
+        .expect_err("reviewer seed must be denied without a verifier");
+    assert!(matches!(err, SyncError::ReviewPolicy(_)), "{err:?}");
+    assert_eq!(room.authority().inner().get_text("text").to_string(), "");
 }
 
 #[tokio::test]

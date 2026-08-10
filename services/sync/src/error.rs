@@ -25,6 +25,10 @@ pub enum SyncError {
     /// The underlying Loro CRDT rejected an operation.
     #[error("loro error: {0}")]
     Loro(String),
+    /// A reviewer update violated the review-layer policy (e.g. an attempt to
+    /// overwrite the document text without a corresponding review record).
+    #[error("review policy: {0}")]
+    ReviewPolicy(String),
     /// A storage backend (op log, snapshot store) failed.
     #[error("storage error: {0}")]
     Storage(String),

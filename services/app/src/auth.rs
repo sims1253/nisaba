@@ -238,9 +238,13 @@ pub(crate) async fn project_acl(
     let is_document = request.uri().path().contains("/document");
     let can_write = match request.method() {
         &http::Method::GET | &http::Method::HEAD => true,
+        // Reviewers propose changes through the review layer, never by writing
+        // the baseline directly (PATCH/DELETE would let them bypass track
+        // changes and destroy author work). Document writes are owner/author
+        // only; the sync relay still lets reviewers push suggestions.
         _ if is_document => matches!(
             membership.role,
-            MembershipRole::Owner | MembershipRole::Author | MembershipRole::Reviewer
+            MembershipRole::Owner | MembershipRole::Author
         ),
         _ => matches!(
             membership.role,

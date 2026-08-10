@@ -218,6 +218,36 @@ impl Repository for PostgresRepository {
         sqlx::query("INSERT INTO project_memberships (project_id,subject,role,created_at) VALUES ($1,$2,$3,$4)").bind(v.project_id).bind(&v.subject).bind(role_name(&v.role)).bind(v.created_at).execute(&self.pool).await.map_err(db_error)?;
         Ok(v)
     }
+    async fn upsert_membership(
+        &self,
+        v: ProjectMembership,
+    ) -> Result<ProjectMembership, RepoError> {
+        sqlx::query(
+            "INSERT INTO project_memberships (project_id,subject,role,created_at) VALUES ($1,$2,$3,$4) \
+             ON CONFLICT (project_id, subject) DO UPDATE SET role = EXCLUDED.role",
+        )
+        .bind(v.project_id)
+        .bind(&v.subject)
+        .bind(role_name(&v.role))
+        .bind(v.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(v)
+    }
+    async fn delete_membership(&self, project_id: Uuid, subject: &str) -> Result<(), RepoError> {
+        let n = sqlx::query("DELETE FROM project_memberships WHERE project_id=$1 AND subject=$2")
+            .bind(project_id)
+            .bind(subject)
+            .execute(&self.pool)
+            .await
+            .map_err(db_error)?
+            .rows_affected();
+        if n == 0 {
+            return Err(RepoError::NotFound);
+        }
+        Ok(())
+    }
     async fn get_membership(
         &self,
         project_id: Uuid,
@@ -283,6 +313,15 @@ impl Repository for PostgresRepository {
     }
     async fn delete_project(&self, id: Uuid, audit: Option<AuditEvent>) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
+        // Record the audit event BEFORE deleting the row: audit_events.project_id
+        // references projects(id) ON DELETE CASCADE, so inserting after the DELETE
+        // violates the FK (23503), which db_error maps to NotFound, and the whole
+        // transaction rolls back — making every project deletion "fail" with a
+        // misleading 404 while the project survives. Inserting first, then
+        // deleting, keeps both changes atomic and lets the cascade clean up.
+        if let Some(event) = &audit {
+            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+        }
         let n = sqlx::query("DELETE FROM projects WHERE id=$1")
             .bind(id)
             .execute(&mut *tx)
@@ -291,9 +330,6 @@ impl Repository for PostgresRepository {
             .rows_affected();
         if n == 0 {
             return Err(RepoError::NotFound);
-        }
-        if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(())
@@ -342,11 +378,12 @@ impl Repository for PostgresRepository {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
         let n = sqlx::query("UPDATE documents SET project_id=$2,path=$3,title=$4,body=$5,data=$6,revision=$7,updated_at=$8 WHERE id=$1 AND revision=$9").bind(v.id).bind(v.project_id).bind(&v.path).bind(&v.title).bind(&v.body).bind(serde_json::to_value(&v.data).map_err(json_error)?).bind(i64::try_from(v.revision).map_err(|_|RepoError::Failure("revision overflow".into()))?).bind(v.updated_at).bind(i64::try_from(expected_revision).map_err(|_|RepoError::Failure("revision overflow".into()))?).execute(&mut *tx).await.map_err(db_error)?.rows_affected();
         if n == 0 {
-            let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM documents WHERE id=$1")
-                .bind(v.id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db_error)?;
+            let exists: Option<(i64,)> =
+                sqlx::query_as("SELECT 1::bigint FROM documents WHERE id=$1")
+                    .bind(v.id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_error)?;
             return Err(match exists {
                 Some(_) => RepoError::Conflict(format!(
                     "document revision conflict: expected {expected_revision}"

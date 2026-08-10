@@ -763,17 +763,39 @@ fn instrumentation(
     }
 }
 
+/// Convert a byte offset into `source` to a UTF-16 code-unit offset — the unit
+/// JavaScript string indices (and therefore the web editor) use. Byte offsets
+/// (Typst's unit) only equal code-unit offsets for pure-ASCII sources.
+fn byte_to_utf16(source: &str, byte_offset: usize) -> usize {
+    source[..byte_offset.min(source.len())]
+        .encode_utf16()
+        .count()
+}
+
 fn diagnostic(world: &dyn World, diag: &typst::diag::SourceDiagnostic) -> Diagnostic {
     let (path, start, end) = if let DiagSpanKind::Detached = diag.span.get() {
         (None, None, None)
     } else {
-        let path = diag
-            .span
-            .id()
-            .and_then(|id| world.source(id).ok())
+        let source = diag.span.id().and_then(|id| world.source(id).ok());
+        let path = source
+            .as_ref()
             .map(|source| source.id().vpath().get_with_slash().to_string());
         let range = world.range(diag.span);
-        (path, range.as_ref().map(|r| r.start), range.map(|r| r.end))
+        // `world.range` reports BYTE offsets (Typst's unit); the web editor
+        // consumes them as JavaScript string indices (UTF-16 code units), so a
+        // multi-byte character before the error shifted every jump (found by
+        // the 2026-08-09 author-agent: em-dashes in the source moved the
+        // "jump to error" location).
+        let to_utf16 = |offset: usize| {
+            source
+                .as_ref()
+                .map_or(offset, |s| byte_to_utf16(s.text(), offset))
+        };
+        (
+            path,
+            range.as_ref().map(|r| to_utf16(r.start)),
+            range.map(|r| to_utf16(r.end)),
+        )
     };
     Diagnostic {
         severity: match diag.severity {
@@ -807,7 +829,8 @@ fn source_span_map(
             .map(|(path, source)| SpanMapEntry {
                 path: path.clone(),
                 start: 0,
-                end: source.len(),
+                // Byte → UTF-16 code units (see byte_to_utf16).
+                end: byte_to_utf16(source, source.len()),
                 page: None,
             })
             .collect::<Vec<_>>();
@@ -836,11 +859,14 @@ fn source_span_map(
             let Some(range) = world.range(span) else {
                 return;
             };
-            if seen.insert((path.clone(), range.start, range.end)) {
+            // Byte → UTF-16 code units, the unit the web client's editor uses.
+            let start = byte_to_utf16(source.text(), range.start);
+            let end = byte_to_utf16(source.text(), range.end);
+            if seen.insert((path.clone(), start, end)) {
                 entries.push(SpanMapEntry {
                     path,
-                    start: range.start,
-                    end: range.end,
+                    start,
+                    end,
                     page: Some(page + 1),
                 });
             }
@@ -875,13 +901,19 @@ fn outline(sources: &HashMap<String, String>) -> Vec<OutlineEntry> {
     let mut result = Vec::new();
     for (path, source) in sources {
         let root = typst::syntax::parse(source);
-        collect_headings(&root, path, 0, &mut result);
+        collect_headings(&root, source, path, 0, &mut result);
     }
     result.sort_by(|a, b| a.path.cmp(&b.path).then(a.start.cmp(&b.start)));
     result
 }
 
-fn collect_headings(node: &SyntaxNode, path: &str, offset: usize, result: &mut Vec<OutlineEntry>) {
+fn collect_headings(
+    node: &SyntaxNode,
+    source: &str,
+    path: &str,
+    offset: usize,
+    result: &mut Vec<OutlineEntry>,
+) {
     if node.kind() == SyntaxKind::Heading {
         let text = node.full_text().trim().to_owned();
         let level = text
@@ -893,12 +925,13 @@ fn collect_headings(node: &SyntaxNode, path: &str, offset: usize, result: &mut V
             level,
             title,
             path: path.to_owned(),
-            start: offset,
+            // Byte → UTF-16 code units (the web client's index unit).
+            start: byte_to_utf16(source, offset),
         });
     }
     let mut child_offset = offset;
     for child in node.children() {
-        collect_headings(child, path, child_offset, result);
+        collect_headings(child, source, path, child_offset, result);
         child_offset += child.len();
     }
 }
@@ -1150,6 +1183,47 @@ mod tests {
             pair[0].path <= pair[1].path
                 && (pair[0].path != pair[1].path || pair[0].start < pair[1].start)
         }));
+    }
+
+    #[test]
+    fn diagnostics_and_span_map_use_utf16_offsets_for_non_ascii() {
+        // Regression (2026-08-09 author-agent): Typst reports byte offsets, but
+        // the web editor indexes by UTF-16 code units; a multi-byte character
+        // before an error used to shift the reported position left.
+        // "—" is 3 UTF-8 bytes but 1 UTF-16 unit.
+        let source = "= Intro\nAn em dash — then an error:\n#unknown-fn(";
+        let request = request(source);
+        let mut worker = Worker::new(&request).expect("worker");
+        let response = worker.compile(&request, false).expect("compile");
+        let diag = response
+            .diagnostics
+            .iter()
+            .find(|d| d.start.is_some() && d.end.is_some())
+            .expect("diagnostic present");
+        let start = diag.start.expect("start");
+        let end = diag.end.expect("end");
+        // The error sits after two multi-byte characters ("—" ×1 here); the
+        // byte offset would exceed the UTF-16 offset by 2. Verify the reported
+        // range still lands inside the source when used as a string index.
+        assert!(start < end, "{start} < {end}");
+        assert!(
+            end <= source.chars().count(),
+            "{end} > {}",
+            source.chars().count()
+        );
+        // And specifically: Typst reports the unclosed delimiter at the final
+        // "(" — byte offset 49, UTF-16 offset 47 (the em dash costs 2 extra
+        // bytes). A byte-offset consumer would jump 2 chars too far right.
+        let paren_byte = source.len() - 1;
+        let paren_utf16 = source[..paren_byte].encode_utf16().count();
+        assert_eq!(
+            start, paren_utf16,
+            "diag start must be the UTF-16 offset of the delimiter"
+        );
+        // span_map entries must also use UTF-16 offsets.
+        for entry in &response.span_map {
+            assert!(entry.end <= source.chars().count());
+        }
     }
 
     #[test]

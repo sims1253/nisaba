@@ -8,11 +8,25 @@ use nisaba_app::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize structured logging (RUST_LOG controls verbosity). Without a
+    // subscriber the app service emitted no logs at all, so request failures
+    // and 500s were invisible to operators (docs/operations.md §3 promises
+    // tracing in every Rust service).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     let issuer =
         std::env::var("NISABA_OIDC_ISSUER").unwrap_or_else(|_| "https://issuer.invalid".into());
     let audience = std::env::var("NISABA_OIDC_AUDIENCE").unwrap_or_else(|_| "nisaba".into());
+    // An *empty* variable is treated the same as an unset one: the safe
+    // deny-all default (no signing keys -> every token rejected). Parsing an
+    // empty string as a JWKS document would otherwise abort startup.
     let jwks = std::env::var("NISABA_OIDC_JWKS_JSON")
         .ok()
+        .filter(|raw| !raw.trim().is_empty())
         .map(|raw| serde_json::from_str::<JwkSet>(&raw))
         .transpose()?;
     let jwks = jwks.map_or_else(

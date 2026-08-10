@@ -26,6 +26,7 @@ async fn open(
                 ..Config::default()
             }),
             Arc::new(SystemClock),
+            Arc::new(nisaba_sync::DenyAllSeedVerifier),
         )
         .await
         .unwrap(),

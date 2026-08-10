@@ -47,18 +47,26 @@ if [ -d "${SRC}/minio" ]; then
     echo "[restore] restoring MinIO buckets..."
     obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q minio)" 2>/dev/null | awk '{print $1}')"
     obj_net="${obj_net:-nisaba_obj-net}"
-    docker run --rm -i --network "$obj_net" \
+    # Same --entrypoint fix as backup.sh (mc image ENTRYPOINT is `mc`).
+    if ! docker run --rm -i --network "$obj_net" --entrypoint /bin/sh \
         -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
         -v "${SRC}/minio:/in:ro" \
-        minio/mc:RELEASE.2024-10-02T08-27-28Z sh -c '
+        minio/mc:RELEASE.2024-10-02T08-27-28Z -c '
             mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+            failed=0
             for b in '"${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}"' '"${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}"'; do
                 if [ -d "/in/${b}" ]; then
-                    mc mirror --overwrite --watch=false "/in/${b}" "local/${b}" 2>/dev/null \
-                        || echo "[restore] WARN: restore of ${b} had errors"
+                    if ! mc mirror --overwrite --watch=false "/in/${b}" "local/${b}"; then
+                        echo "[restore] ERROR: restore of ${b} failed" >&2
+                        failed=1
+                    fi
                 fi
             done
-        ' || echo "[restore] WARN: minio restore step failed."
+            exit $failed
+        '; then
+        echo "[restore] ERROR: MinIO restore step failed." >&2
+        exit 1
+    fi
 else
     echo "[restore] no MinIO snapshot at ${SRC}/minio; skipping objects."
 fi

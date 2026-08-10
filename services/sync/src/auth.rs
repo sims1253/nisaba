@@ -65,6 +65,35 @@ impl Role {
     pub fn can_push_updates(self) -> bool {
         self.capabilities().contains(CapabilitySet::PUSH_UPDATES)
     }
+
+    /// Rank used to combine roles: `author` (2) > `reviewer` (1) > `read-only` (0).
+    #[must_use]
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Author => 2,
+            Self::Reviewer => 1,
+            Self::ReadOnly => 0,
+        }
+    }
+
+    /// The least privileged of two roles. Used to clamp the role a document
+    /// authorizer grants (membership/share-link derived) with the bearer's `IdP`
+    /// roles claim: a `read-only` `IdP` user who redeems an `author` share link
+    /// must not gain author capabilities on the sync plane.
+    #[must_use]
+    pub fn least_privileged(self, other: Self) -> Self {
+        if self.rank() <= other.rank() {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// The highest role in a set of `IdP` roles (empty set → `None`).
+    #[must_use]
+    pub fn max_role(roles: &HashSet<Self>) -> Option<Self> {
+        roles.iter().copied().max_by_key(|role| role.rank())
+    }
 }
 
 impl std::fmt::Display for Role {

@@ -37,9 +37,10 @@ secret is ever shipped to the browser** and none is configured in `.env`.
 
 The **app service verifies tokens by signature, not by client secret.** It reads
 the signing keys **inline** from `NISABA_OIDC_JWKS_JSON` at startup (it does not
-fetch a discovery URL today). With the variable empty the app rejects every
-token — the safe deny-all default. To accept tokens in local dev, populate it
-with the realm JWKS:
+fetch a discovery URL today). An empty or unset variable is the safe deny-all
+default: the app **boots normally and rejects every token** (an empty value is
+treated exactly like an unset one — it must not be parsed as a JWKS document).
+To accept tokens in local dev, populate it with the realm JWKS:
 
 ```bash
 curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs

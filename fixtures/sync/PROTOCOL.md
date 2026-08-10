@@ -38,9 +38,9 @@ test harness, or a third-party peer) must speak. The implementation of record is
 
 | Code | Meaning                                   |
 |-----:|-------------------------------------------|
-| 4000 | protocol error (bad frame / wrong order)  |
+| 4000 | protocol error (bad frame / wrong order / undecodable CRDT update)  |
 | 4001 | bad document id / peer id                 |
-| 4003 | forbidden (role lacks the capability)     |
+| 4003 | forbidden (role lacks the capability, or a reviewer update violates the review policy) |
 | 4029 | limit exceeded (peer cap)                 |
 | 4130 | payload too large                         |
 | 4500 | internal error                            |

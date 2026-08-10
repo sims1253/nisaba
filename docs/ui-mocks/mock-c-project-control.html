@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock C — Project Control · Nisaba</title>
+<!--
+  MOCK C — "PROJECT CONTROL"
+  Concept: the lifecycle is the interface. A pipeline strip under the header
+  shows where the project stands (write → review → build → checkpoint →
+  export); the right side stacks the artefact over a tabbed instrument dock
+  (review queue as a dense triage table with bulk select, diagnostics,
+  history). The navigator carries the checkpoint timeline. Dense, tabular,
+  squared: an ops console for a long-lived writing project.
+-->
+<style>
+  :root{
+    --ink:#15181f; --paper:#ffffff; --pane:#f4f5f7; --rule:#dcdfe5; --rule2:#c9cdd6;
+    --muted:#667085; --blue:#2743c7; --blue-soft:#eef1fc;
+    --green:#1d7a4f; --red:#c03525; --amber:#a15c07;
+    --sans:ui-sans-serif,system-ui,"Segoe UI",sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);display:flex;flex-direction:column;overflow:hidden}
+  button{font:inherit;background:none;border:0;cursor:pointer;color:inherit}
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ---------- header ---------- */
+  .hd{flex:0 0 auto;border-bottom:1px solid var(--rule2)}
+  .hd .r1{height:44px;display:flex;align-items:center;gap:16px;padding:0 16px}
+  .logo{font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:.1em}
+  .logo i{font-style:normal;color:var(--blue)}
+  .proj{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .proj b{color:var(--ink)}
+  .hd .r1 .sp{margin-left:auto;display:flex;align-items:center;gap:14px}
+  .members{display:flex;align-items:center}
+  .mm{display:flex;align-items:center;margin-left:-5px;position:relative}
+  .mm .av{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:#fff;font-family:var(--mono);font-size:8.5px;border:1.5px solid #fff}
+  .mm .rl{position:absolute;bottom:-3px;right:-3px;font-family:var(--mono);font-size:7px;font-weight:700;
+          background:var(--pane);border:1px solid var(--rule2);color:var(--muted);padding:0 2px;line-height:1.3}
+  .tbtn{font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:var(--muted);border:1px solid var(--rule2);padding:5px 11px}
+  .tbtn:hover{color:var(--ink);border-color:#9aa2b1}
+  .tbtn.solid{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* ---------- pipeline strip ---------- */
+  .pipe{display:flex;align-items:stretch;border-top:1px solid var(--rule);background:var(--pane);
+        font-family:var(--mono);font-size:9.5px;letter-spacing:.06em}
+  .step{display:flex;align-items:center;gap:8px;padding:7px 14px 7px 16px;color:var(--muted);position:relative;white-space:nowrap}
+  .step + .step::before{content:"›";color:var(--rule2);margin-right:14px;font-size:12px}
+  .step .k{font-weight:700;color:#3c4354}
+  .step.on{background:#fff;box-shadow:inset 0 2px 0 var(--blue);color:var(--ink)}
+  .step .st-ok{color:var(--green);font-weight:700}
+  .step .st-warn{color:var(--amber);font-weight:700}
+  .step .cnt{display:inline-grid;place-items:center;min-width:15px;height:15px;background:var(--amber);color:#fff;font-size:8.5px;font-weight:700;padding:0 3px}
+  .pipe .fill{flex:1}
+  .pipe .env{display:flex;align-items:center;padding:0 14px;color:#98a0ae;font-size:9px;letter-spacing:.1em}
+
+  /* ---------- grid ---------- */
+  .grid{flex:1;display:grid;grid-template-columns:236px minmax(0,1fr) minmax(0,1.05fr);min-height:0}
+
+  /* navigator */
+  .nav{border-right:1px solid var(--rule2);background:var(--pane);overflow:auto;padding-bottom:16px}
+  .nav h3{font-family:var(--mono);font-size:9px;letter-spacing:.18em;color:var(--muted);font-weight:700;
+          padding:13px 14px 6px;display:flex;justify-content:space-between}
+  .nav h3 button{color:var(--blue);font-size:9px;letter-spacing:.05em}
+  .tree{list-style:none;font-family:var(--mono);font-size:11px}
+  .tree li{padding:3.5px 14px;cursor:pointer;color:#39404d;display:flex;gap:6px;white-space:nowrap}
+  .tree li:hover{background:#e9ebf0}
+  .tree li.on{background:var(--blue-soft);box-shadow:inset 2px 0 0 var(--blue);color:var(--ink);font-weight:600}
+  .tree .dim{color:#9aa2b1}
+  .tree .ct{margin-left:auto;color:#9aa2b1;font-size:9.5px}
+  .ck{list-style:none;border-top:1px solid var(--rule);margin-top:4px}
+  .ck li{display:grid;grid-template-columns:44px 1fr auto;gap:8px;padding:6px 14px;font-family:var(--mono);font-size:10px;
+         color:#39404d;cursor:pointer;border-bottom:1px solid var(--rule);align-items:baseline}
+  .ck li:hover{background:#e9ebf0}
+  .ck .id{font-weight:700}
+  .ck .id.cur{color:var(--green)}
+  .ck .d{color:var(--muted);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ck .a{color:var(--blue);font-size:9px;opacity:0}
+  .ck li:hover .a{opacity:1}
+
+  /* editor */
+  .ed{display:flex;flex-direction:column;min-width:0;background:var(--paper)}
+  .edbar{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:8px 16px;border-bottom:1px solid var(--rule);
+         font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .edbar b{color:var(--ink)}
+  .edbar .seg{display:flex;border:1px solid var(--rule2);margin-left:auto}
+  .edbar .seg button{padding:4px 10px;font-size:9px;letter-spacing:.07em;color:var(--muted);border-right:1px solid var(--rule2)}
+  .edbar .seg button:last-child{border-right:0}
+  .edbar .seg button.on{background:var(--ink);color:#fff;font-weight:700}
+  .scroll{flex:1;overflow:auto}
+  .measure{max-width:640px;margin:0 auto;padding:26px 24px 120px}
+  .ln{font-family:var(--mono);font-size:12.5px;line-height:1.85;white-space:pre-wrap;color:#333944;position:relative}
+  .ln.hd1{font-size:16px;font-weight:700;color:var(--ink);padding-top:12px}
+  .ln.hd2{font-size:13.5px;font-weight:700;color:var(--ink);padding-top:8px}
+  .cm{font-style:italic;color:#9aa2b1}
+  .cite{color:var(--blue);border-bottom:1px solid #c6cfef;cursor:pointer}
+  .ins{background:#e4f2e9;border-bottom:1.5px solid var(--green)}
+  .del{color:var(--red);text-decoration:line-through;background:#fae9e5}
+  .cmt{background:#f8efd9;border-bottom:1.5px solid var(--amber)}
+  .edfoot{flex:0 0 auto;display:flex;gap:16px;padding:6px 16px;border-top:1px solid var(--rule);
+          font-family:var(--mono);font-size:9.5px;color:var(--muted);background:var(--pane)}
+  .edfoot .ok{color:var(--green)}
+
+  /* right stack: artefact over instrument dock */
+  .stack{border-left:1px solid var(--rule2);display:grid;grid-template-rows:minmax(0,1.35fr) minmax(0,1fr);min-width:0;min-height:0}
+  .pv{background:#e9ebef;display:flex;flex-direction:column;min-height:0;border-bottom:1px solid var(--rule2)}
+  .pv .bar{flex:0 0 auto;display:flex;gap:12px;align-items:center;padding:7px 14px;border-bottom:1px solid var(--rule);
+           font-family:var(--mono);font-size:9.5px;color:var(--muted);background:var(--pane)}
+  .pv .bar b{color:var(--ink)}
+  .pv .bar .z{margin-left:auto;display:flex;gap:8px}
+  .pv .pages{flex:1;overflow:auto;padding:16px 20px;display:flex;gap:16px;align-items:flex-start;justify-content:center}
+  .sheet{width:47%;max-width:330px;min-height:430px;background:#fff;box-shadow:0 1px 2px #aeb4c0,0 6px 16px #aeb4c055;padding:34px 36px;flex:0 0 auto}
+  .sheet h1{font:400 13.5px/1.3 Georgia,serif;margin:16px 0 6px}
+  .sheet h2{font:700 9.5px Georgia,serif;margin:12px 0 4px}
+  .sheet p{font:7.3px/1.55 Georgia,serif;text-align:justify;margin-bottom:4px;color:#2a2f3a}
+  .sheet table{border-collapse:collapse;width:100%;font:6.4px Georgia,serif;margin:8px 0}
+  .sheet th{border-top:1px solid #3c4354;border-bottom:1px solid #98a0ae;text-align:left;padding:2px 4px}
+  .sheet td{border-bottom:1px solid #dfe2e8;padding:2px 4px}
+  .run{display:flex;justify-content:space-between;font-family:var(--mono);font-size:6px;letter-spacing:.12em;color:#98a0ae;border-bottom:1px solid #e6e8ee;padding-bottom:5px}
+
+  /* instrument dock */
+  .inst{display:flex;flex-direction:column;min-height:0;background:var(--paper)}
+  .inst .tabs{flex:0 0 auto;display:flex;border-bottom:1px solid var(--rule2);background:var(--pane);font-family:var(--mono);font-size:9.5px;letter-spacing:.08em}
+  .inst .tabs button{padding:8px 14px;color:var(--muted);border-right:1px solid var(--rule)}
+  .inst .tabs button.on{background:#fff;color:var(--ink);font-weight:700;box-shadow:inset 0 -2px 0 var(--blue)}
+  .inst .tabs .n{display:inline-grid;place-items:center;min-width:14px;height:14px;background:var(--rule2);color:#fff;font-size:8px;margin-left:5px;padding:0 3px}
+  .inst .tabs button.on .n{background:var(--blue)}
+  .inst .tabs .n.amber{background:var(--amber)}
+  .filters{flex:0 0 auto;display:flex;gap:6px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:9px;color:var(--muted)}
+  .filters .f{border:1px solid var(--rule2);padding:2px 8px;cursor:pointer}
+  .filters .f.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .filters .sel{margin-left:auto}
+  .queue{flex:1;overflow:auto}
+  table.q{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+  table.q th{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;color:var(--muted);text-align:left;
+             padding:5px 10px;border-bottom:1px solid var(--rule2);background:var(--pane);position:sticky;top:0}
+  table.q td{padding:7px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+  table.q tr:hover td{background:#f6f7fa}
+  table.q tr.sel td{background:var(--blue-soft)}
+  .tg{font-family:var(--mono);font-weight:700;font-size:11px}
+  .tg.i{color:var(--green)} .tg.d{color:var(--red)} .tg.c{color:var(--amber)}
+  .q .au{font-family:var(--mono);font-size:9.5px;color:#39404d;white-space:nowrap}
+  .q .au span{color:var(--muted)}
+  .q .sn{font-style:italic;color:#39404d;line-height:1.4}
+  .q .sn .loc{font-family:var(--mono);font-style:normal;font-size:9px;color:var(--muted);display:block;margin-top:2px}
+  .q .sn .lost{color:var(--amber);font-family:var(--mono);font-style:normal;font-size:8.5px}
+  .q .age{font-family:var(--mono);font-size:9px;color:var(--muted);white-space:nowrap}
+  .q .act{white-space:nowrap;text-align:right}
+  .q .act button{font-family:var(--mono);font-size:8.5px;letter-spacing:.06em;border:1px solid var(--rule2);padding:2.5px 8px;color:var(--muted);background:#fff}
+  .q .act button.pri{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700}
+  .q .act button:hover{border-color:#8b93a5;color:var(--ink)}
+  .q input[type=checkbox]{accent-color:var(--blue)}
+  .bulk{flex:0 0 auto;display:flex;gap:10px;align-items:center;padding:7px 12px;border-top:1px solid var(--rule2);
+        background:var(--pane);font-family:var(--mono);font-size:9px;color:var(--muted)}
+  .bulk button{letter-spacing:.06em;color:var(--muted);border:1px solid var(--rule2);padding:4px 10px;background:#fff}
+  .bulk button:hover{color:var(--ink)}
+  .bulk button.pri{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* status line */
+  .status{flex:0 0 auto;height:26px;display:flex;align-items:center;gap:0;border-top:1px solid var(--rule2);
+          background:var(--pane);font-family:var(--mono);font-size:9.5px;color:var(--muted)}
+  .status .c{padding:0 13px;border-right:1px solid var(--rule);height:100%;display:flex;align-items:center;gap:6px}
+  .status .dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .status .r{margin-left:auto;display:flex;height:100%}
+  .status .r .c{border-right:0;border-left:1px solid var(--rule)}
+  .status .ok{color:var(--green);font-weight:700}
+</style>
+</head>
+<body>
+
+<header class="hd">
+  <div class="r1">
+    <span class="logo">NISABA<i>_</i></span>
+    <span class="proj">field-lab / <b>interspecies-acoustics</b></span>
+    <div class="sp">
+      <span class="members" title="TW owner · SP author · CL reviewer · RD read-only">
+        <span class="mm"><span class="av" style="background:#7a5a8c">TW</span><span class="rl">OW</span></span>
+        <span class="mm"><span class="av" style="background:#4d7a5e">SP</span><span class="rl">AU</span></span>
+        <span class="mm"><span class="av" style="background:#8c6a3f">CL</span><span class="rl">RV</span></span>
+        <span class="mm"><span class="av" style="background:#5a6a8c">RD</span><span class="rl">RO</span></span>
+      </span>
+      <button class="tbtn">SHARE</button>
+      <button class="tbtn solid">EXPORT ⇩</button>
+    </div>
+  </div>
+  <div class="pipe">
+    <span class="step on"><span class="k">WRITE</span><span>main.typ · rev 128 · 3 online</span></span>
+    <span class="step"><span class="k">REVIEW</span><span class="cnt">3</span><span class="st-warn">open</span></span>
+    <span class="step"><span class="k">BUILD</span><span class="st-ok">#41 ✓</span><span>1.82 s · 12 pp</span></span>
+    <span class="step"><span class="k">CHECKPOINT</span><span>c128 · 12:04</span></span>
+    <span class="step"><span class="k">EXPORT</span><span>last 3 d ago</span></span>
+    <span class="fill"></span>
+    <span class="env">SELF-HOSTED · FIELD-LAB.LOCAL</span>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- navigator + checkpoint timeline -->
+  <nav class="nav">
+    <h3>FILES <button>+ NEW</button></h3>
+    <ul class="tree">
+      <li class="on">◆ main.typ<span class="ct">entry</span></li>
+      <li><span class="dim">▾ chapters/</span></li>
+      <li>&nbsp;&nbsp;introduction.typ</li>
+      <li>&nbsp;&nbsp;methods.typ</li>
+      <li>&nbsp;&nbsp;results.typ<span class="ct">rev 96</span></li>
+      <li>&nbsp;&nbsp;appendix.typ</li>
+      <li><span class="dim">▸ assets/</span><span class="ct">3</span></li>
+    </ul>
+    <h3>CHECKPOINTS <button>MARK ⌘S</button></h3>
+    <ul class="ck">
+      <li><span class="id cur">c128</span><span class="d">results table fixed — tw</span><span class="a">DIFF·RESTORE</span></li>
+      <li><span class="id">c127</span><span class="d">pre-review snapshot — sys</span><span class="a">DIFF·RESTORE</span></li>
+      <li><span class="id">c126</span><span class="d">methods rewrite — sp</span><span class="a">DIFF·RESTORE</span></li>
+      <li><span class="id">c125</span><span class="d">refs: +2 full-texts — cl</span><span class="a">DIFF·RESTORE</span></li>
+    </ul>
+    <h3>REFERENCES <button>OPEN</button></h3>
+    <ul class="tree">
+      <li>⁂ 8 entries<span class="ct">8 pdf</span></li>
+      <li>bibliography.ris<span class="ct">auto</span></li>
+    </ul>
+  </nav>
+
+  <!-- editor -->
+  <section class="ed">
+    <div class="edbar">
+      <span><b>main.typ</b> · rev 128 / baseline r120</span>
+      <span class="seg"><button class="on">PROPOSED</button><button>BASELINE</button><button>REDLINE</button><button>PUBLIC</button></span>
+    </div>
+    <div class="scroll">
+      <div class="measure">
+        <div class="ln hd1"><span class="cm">=</span> Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Abstract</div>
+        <div class="ln">We document seventeen months of field observations of honey badgers (Mellivora capensis) attending subterranean fairy raves in the Welsh countryside. Using enchanted monitoring crystals and glitter-spectroscopy, we characterize attendance patterns, acoustic entrainment, and interspecies social dynamics. <span class="ins">Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.</span></div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Introduction</div>
+        <div class="ln">The honey badger has long been regarded as a solitary species. Recent anecdotal reports, however, describe badgers congregating at fairy social gatherings <span class="cite">#cite(&lt;twinkleburst-2024&gt;)</span>, raising questions about the ecological drivers of this behaviour. <span class="del">Some researchers dispute this entirely.</span></div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln">Field sites were selected across Cwm Derwen and Tywyn Hollow. <span class="cmt">Monitoring stations recorded continuously for 510 days.</span> Acoustic analysis used cross-correlation of vocalization envelopes with the dominant bass frequency.</div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln hd2"><span class="cm">==</span> Results</div>
+        <div class="ln">Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked to the fairy audio system.</div>
+      </div>
+    </div>
+    <div class="edfoot"><span class="ok">● synced</span><span>ln 12, col 47</span><span>4,812 words</span><span>track changes: on</span></div>
+  </section>
+
+  <!-- artefact over instruments -->
+  <div class="stack">
+    <section class="pv">
+      <div class="bar"><span>p <b>1–2 / 12</b></span><span>build <b>#41</b> · c128</span><span class="z"><button>−</button><b>fit</b><button>+</button></span></div>
+      <div class="pages">
+        <div class="sheet">
+          <div class="run"><span>HONEY BADGERS AT FAIRY RAVES</span><span>2026</span></div>
+          <h1>Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</h1>
+          <h2>Abstract</h2>
+          <p>We document seventeen months of field observations of honey badgers (<i>Mellivora capensis</i>) attending subterranean fairy raves in the Welsh countryside…</p>
+          <h2>1&nbsp;&nbsp;Introduction</h2>
+          <p>The honey badger has long been regarded as a solitary species. Recent anecdotal reports describe badgers congregating at fairy social gatherings [1]…</p>
+          <h2>2&nbsp;&nbsp;Results</h2>
+          <p>Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked…</p>
+          <table>
+            <tr><th>Site</th><th>BPM</th><th>Freq.</th><th>Coh.</th></tr>
+            <tr><td>Site 1</td><td>142</td><td>48 Hz</td><td>0.91</td></tr>
+            <tr><td>Site 2</td><td>138</td><td>45 Hz</td><td>0.88</td></tr>
+          </table>
+        </div>
+        <div class="sheet">
+          <div class="run"><span>TWINKLEBURST ET AL.</span><span>2</span></div>
+          <h2>2.1&nbsp;&nbsp;Acoustic analysis</h2>
+          <p>Acoustic recordings revealed an unexpected finding: honey badgers at rave sites produced vocalizations in the 40–60 Hz range that were phase-locked to the dominant bass frequency…</p>
+          <p>The sustained 140+ BPM exposure documented by Twinkleburst [7] may explain the elevated heart rates observed in attending badgers (mean: 142 BPM vs. baseline 78 BPM)…</p>
+          <h2>3&nbsp;&nbsp;Discussion</h2>
+          <p>Several hypotheses may explain this unprecedented interspecies interaction: acoustic attraction, thermoregulatory benefit, fairy aura interaction, glitter as a tracking mechanism…</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="inst">
+      <div class="tabs">
+        <button class="on">REVIEW<span class="n">3</span></button>
+        <button>DIAGNOSTICS<span class="n amber">1</span></button>
+        <button>HISTORY</button>
+        <button>ARTIFACTS</button>
+      </div>
+      <div class="filters">
+        <span class="f on">ALL 3</span><span class="f">SUGGESTIONS 2</span><span class="f">COMMENTS 1</span><span class="f">MINE</span>
+        <span class="sel">☑ 1 selected</span>
+      </div>
+      <div class="queue">
+        <table class="q">
+          <tr><th style="width:22px"><input type="checkbox"></th><th style="width:30px">TYPE</th><th style="width:110px">AUTHOR</th><th>EXCERPT</th><th style="width:56px">AGE</th><th style="width:130px"></th></tr>
+          <tr class="sel">
+            <td><input type="checkbox" checked></td><td class="tg i">+IN</td>
+            <td class="au">twinkleburst<br><span>author</span></td>
+            <td class="sn">“Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.”<span class="loc">main.typ:8 · abstract</span></td>
+            <td class="age num">12 min</td>
+            <td class="act"><button class="pri">ACCEPT</button> <button>REJECT</button></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox"></td><td class="tg c">✦CM</td>
+            <td class="au">sparkletoes<br><span>reviewer</span></td>
+            <td class="sn">Can we cite the crystal calibration report here? Reviewers will ask.<span class="loc">main.typ:12 · introduction</span></td>
+            <td class="age num">1 h</td>
+            <td class="act"><button class="pri">RESOLVE</button> <button>REPLY</button></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox"></td><td class="tg d">−DL</td>
+            <td class="au">clawson<br><span>reviewer</span></td>
+            <td class="sn">“…and therefore fairies are real.” <span class="lost">⚠ anchor lost — reject restores</span><span class="loc">main.typ:10 · introduction</span></td>
+            <td class="age num">3 h</td>
+            <td class="act"><button class="pri">ACCEPT</button> <button>REJECT</button></td>
+          </tr>
+        </table>
+      </div>
+      <div class="bulk"><span>1 selected</span><button class="pri">ACCEPT SHOWN</button><button>REJECT SHOWN</button><span style="margin-left:auto">sort: oldest ▾</span></div>
+    </section>
+  </div>
+</div>
+
+<footer class="status">
+  <span class="c"><span class="dot"></span>sync ok · ws 12ms</span>
+  <span class="c">3 peers online</span>
+  <span class="c">autosave on</span>
+  <span class="r"><span class="c">artifact 9f2c…e1 · 12 pp · 412 KB</span><span class="c ok">✓ no errors</span></span>
+</footer>
+
+</body>
+</html>
