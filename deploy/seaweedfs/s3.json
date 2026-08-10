@@ -1,0 +1,28 @@
+{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": ["Read"]
+    },
+    {
+      "name": "nisaba-app",
+      "credentials": [
+        {
+          "accessKey": "nisaba-app",
+          "secretKey": "change-me-s3-secret"
+        }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "nisaba-admin",
+      "credentials": [
+        {
+          "accessKey": "nisaba-admin",
+          "secretKey": "change-me-admin-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

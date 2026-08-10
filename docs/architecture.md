@@ -28,7 +28,7 @@ The following table is validated by CI against the Cargo workspace members
 | `@nisaba/web`      | TypeScript  | CodeMirror 6 editor, paginated preview            | impl. |
 | `@nisaba/tools`    | TypeScript  | DOCX→Typst pipeline, visual-diff, PDF compliance  | impl. |
 | `postgres`         | —           | Metadata (projects, users, references)            | **live (infra)** |
-| `minio`            | —           | S3-compatible reference full-text blobs           | **live (infra)** |
+| `seaweedfs`        | —           | S3-compatible reference full-text blobs           | **live (infra)** |
 | `keycloak`         | Java        | OIDC identity provider                            | **live (infra, dev-only)** |
 
 `nisaba-compile` **must** be Rust: the Typst compiler is a callback `World` and
@@ -73,10 +73,10 @@ tools   (@nisaba/tools) — template pipeline, visual-diff, PDF tooling
         └───────┬────────┘ └───┬────┘ └────┬───┘
         db-net  │          db+obj│          │ sync-data volume
                 │                │          │
-        ┌───────▼──────┐   ┌─────▼──────────▼────┐
-        │  postgres    │   │ minio (full-text)   │
-        │ nisaba + kc  │   │ + local sync store │
-        └──────────────┘   └─────────────────────┘
+        ┌───────▼──────┐   ┌─────▼──────────▼──────┐
+        │  postgres    │   │ seaweedfs (full-text) │
+        │ nisaba + kc  │   │ + local sync store    │
+        └──────────────┘   └───────────────────────┘
                 segmented networks and named volumes
 ```
 
@@ -103,7 +103,7 @@ policy where egress restriction is required.
 4. **Compile (compile).** `app` sends the **projection** of the document to `compile` as plain Typst sources. `compile` knows nothing
    about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, span
    map, and (opt-in) page frames. Warm state is keyed by `project_id`.
-5. **Store reference files (minio).** Uploaded full-text PDFs land in
+5. **Store reference files (seaweedfs).** Uploaded full-text PDFs land in
    `nisaba-blobs`. Object keys are opaque ids — **never citation numbers**. Compile/export artifacts are still returned directly;
    content-addressed artifact storage is roadmap work.
 
@@ -208,14 +208,14 @@ contract used by the Docker `HEALTHCHECK` directives. `app` and `sync` also serv
 |------------|--------------------------------------------------------------|---------------|
 | Postgres `nisaba`   | projects, documents, references, audit | `nisaba_app`  |
 | Postgres `keycloak` | Keycloak realm, users, sessions                           | `keycloak`    |
-| MinIO `nisaba-blobs` | uploaded reference full-text PDFs                       | `nisaba-app` (scoped) |
+| SeaweedFS `nisaba-blobs` | uploaded reference full-text PDFs                   | `nisaba-app` (scoped) |
 | Named volume `sync-data` | Loro op log and snapshots                           | `nisaba-sync` |
-| MinIO `nisaba-oplog` | reserved by local bootstrap; no service uses it today    | none |
+| SeaweedFS `nisaba-oplog` | reserved by local bootstrap; no service uses it today | none |
 
 - `app` always uses `PostgresRepository` and `S3BlobStore` in the service binary.
   In-memory adapters are available only to unit tests.
-- Postgres and MinIO use **separate, least-privilege roles**.
-- MinIO buckets are **versioned** for recoverability.
+- Postgres and SeaweedFS use **separate, least-privilege roles**.
+- SeaweedFS buckets are **versioned** for recoverability.
 - Citation numbers are **never stored**; they are derived at build time.
 
 ---

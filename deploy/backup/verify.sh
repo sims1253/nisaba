@@ -7,7 +7,7 @@
 # Structural checks only (no containers, no network, no data mutation):
 #   * Postgres : nisaba.sql.gz exists, is a valid gzip, and its SQL carries
 #                PostgreSQL dump markers.
-#   * MinIO    : the nisaba-* bucket directories are present in the snapshot.
+#   * SeaweedFS: the nisaba-* bucket directories are present in the snapshot.
 #   * sync fs  : sync.tar.gz exists, is a valid gzip, and lists oplog/snapshots.
 #
 # This complements (does not replace) a real restore drill: restoring into an
@@ -64,23 +64,23 @@ else
     bad "missing postgres dump: ${DUMP}"
 fi
 
-# ---- MinIO ----
-MINIO_DIR="${SRC}/minio"
+# ---- SeaweedFS ----
+SEAWEEDFS_DIR="${SRC}/seaweedfs"
 blobs_found=0
-if [ -d "$MINIO_DIR" ]; then
+if [ -d "$SEAWEEDFS_DIR" ]; then
     for b in "${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}" "${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}"; do
-        if [ -d "${MINIO_DIR}/${b}" ]; then
-            ok "minio bucket snapshot present: ${b}"
+        if [ -d "${SEAWEEDFS_DIR}/${b}" ]; then
+            ok "seaweedfs bucket snapshot present: ${b}"
             blobs_found=1
         else
-            echo "  note  minio bucket not in snapshot: ${b}" >&2
+            echo "  note  seaweedfs bucket not in snapshot: ${b}" >&2
         fi
     done
     if [ "$blobs_found" -ne 1 ]; then
-        bad "minio snapshot has no nisaba-* bucket dirs"
+        bad "seaweedfs snapshot has no nisaba-* bucket dirs"
     fi
 else
-    bad "missing minio snapshot: ${MINIO_DIR}"
+    bad "missing seaweedfs snapshot: ${SEAWEEDFS_DIR}"
 fi
 
 # ---- sync filesystem ----

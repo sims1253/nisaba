@@ -16,14 +16,14 @@ backup/restore, and the production deltas. Pairs with
 
 ```bash
 cp .env.example .env          # then edit any change-me-* secrets
-just up                        # Postgres + MinIO + Keycloak (+ minio-init)
+just up                        # Postgres + SeaweedFS + Keycloak (+ seaweedfs-init)
 
 # verify
 just compose-validate          # validate compose against .env.example (temp env)
 just smoke                     # bring up infra, probe health + realm, tear down
 docker compose ps
 open http://127.0.0.1:8090     # Keycloak admin (admin / <KEYCLOAK_ADMIN_PASSWORD>)
-open http://127.0.0.1:9101     # MinIO console (nisaba-minio / <MINIO_ROOT_PASSWORD>)
+open http://127.0.0.1:9100     # SeaweedFS S3 endpoint (<NISABA_S3_ADMIN_KEY>)
 
 # app tier (templates; builds the Rust/web images)
 just up-all                     # = docker compose --profile app up -d --build
@@ -47,7 +47,7 @@ Every HTTP service exposes **`GET /healthz` → `200 ok`** (the Compose
 | Service   | Probe                                              | notes |
 |-----------|----------------------------------------------------|-------|
 | postgres  | `pg_isready`                                       | live |
-| minio     | `GET /minio/health/live`                           | live |
+| seaweedfs | `GET /healthz` (port 8333, the S3 port)            | live |
 | keycloak  | `GET /health/ready` (mgmt :9000, container-internal) | live; the mgmt port is NOT published to the host (probe from inside the compose network, e.g. `docker compose exec keycloak curl ...`, or rely on the container healthcheck) |
 | app       | `GET /healthz` + `GET /health/ready` (port 8080)   | live + DB ready |
 | sync      | `GET /healthz` + `GET /health/ready` (port 8080)   | live + store ready |
@@ -111,12 +111,12 @@ Scripts: [`deploy/backup/backup.sh`](../deploy/backup/backup.sh),
 - **Postgres** `nisaba` database: logical dump (`pg_dump --clean --if-exists`,
   gzipped). Keycloak's DB is *not* in the dev backup (it is stateful identity;
   back it up separately in production).
-- **MinIO** `nisaba-*` buckets: `mc mirror` (versioned) to a local dir. The
-  mirror runs inside the `minio/mc` image via `--entrypoint /bin/sh` (the image
-  entrypoint is `mc` itself). **A failed mirror aborts the backup** — since
-  2026-08-09 a snapshot without object storage is reported as INCOMPLETE and
-  `backup.sh` exits non-zero instead of printing a warning and continuing, so a
-  silently-empty `minio/` directory can never be mistaken for a good backup.
+- **SeaweedFS** `nisaba-*` buckets: `aws s3 sync` (versioned) to a local dir. The
+  sync runs inside the `amazon/aws-cli` image via `--entrypoint /bin/sh`. **A
+  failed sync aborts the backup** — since 2026-08-09 a snapshot without object
+  storage is reported as INCOMPLETE and `backup.sh` exits non-zero instead of
+  printing a warning and continuing, so a silently-empty `seaweedfs/` directory
+  can never be mistaken for a good backup.
 - **sync filesystem** (`sync-data` volume): a `tar` of the op-log + snapshot
   store (`/data/oplog`, `/data/snapshots`). sync persists CRDT history here
   today; the S3 op-log bucket is the future integration surface.
@@ -136,13 +136,13 @@ just restore artifacts/backups/<timestamp>
 just verify-backup artifacts/backups/<timestamp>
 ```
 Asserts the snapshot is structurally sound (SQL dump is a valid PostgreSQL
-backup, MinIO bucket dirs exist, sync tar is present). A real restore drill
+backup, SeaweedFS bucket dirs exist, sync tar is present). A real restore drill
 restores into an **isolated** throwaway stack (`-p nisaba-restore-drill`) and
 checks row/object counts — schedule it as part of release acceptance.
 
 ### Production deltas
 - **Off-host:** stream `pg_dump` (or use WAL archiving / point-in-time recovery)
-  and MinIO bucket replication to object storage in a different failure domain.
+  and SeaweedFS bucket replication to object storage in a different failure domain.
 - **Tested restores:** schedule a restore drill into an isolated environment.
 - **Immutability:** write backups to a WORM/object-lock target so ransomware or
   a compromised app role cannot delete them.
@@ -190,7 +190,7 @@ mode is gradual and visible, not sudden.
 | Tail logs             | `just logs` / `just logs app`              |
 | psql (app role)       | `just psql`                                |
 | psql (admin)          | `just psql-admin`                          |
-| MinIO shell           | `just mc ls local/nisaba-blobs`            |
+| SeaweedFS shell       | `just s3 ls s3://nisaba-blobs`             |
 | Recreate infra only   | `just down && just up`                     |
 | Nuke all data         | `just down-volumes`                        |
 | Validate compose (your .env) | `just compose-check`                       |

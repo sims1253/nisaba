@@ -170,7 +170,7 @@ jobs:
             deploy/backup/backup.sh \
             deploy/backup/restore.sh \
             deploy/postgres/init/10-init-databases.sh \
-            deploy/minio/init-buckets.sh \
+            deploy/seaweedfs/init-buckets.sh \
             deploy/keycloak/healthcheck.sh
 
   smoke:

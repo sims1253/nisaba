@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Smoke-test the Nisaba INFRASTRUCTURE tier (Postgres + MinIO + Keycloak) end
+# Smoke-test the Nisaba INFRASTRUCTURE tier (Postgres + SeaweedFS + Keycloak) end
 # to end against a throwaway project + temp env, then tear everything down.
 #
 # What it checks:
 #   * `docker compose up -d` brings the three infra services to healthy.
 #   * Postgres answers `pg_isready` as the least-privilege role.
-#   * MinIO answers /minio/health/live on the host port.
+#   * SeaweedFS answers /healthz on the host port.
 #   * Keycloak serves the realm (issuer) on the host port.
 #
 # What it deliberately does NOT check:
@@ -66,9 +66,9 @@ wait_healthy() {
     return 1
 }
 
-echo "[smoke] waiting for health (postgres/minio/keycloak)"
+echo "[smoke] waiting for health (postgres/seaweedfs/keycloak)"
 wait_healthy postgres 60
-wait_healthy minio 60
+wait_healthy seaweedfs 60
 wait_healthy keycloak 90
 
 # Postgres role/db for the pg_isready probe (from the resolved env).
@@ -84,9 +84,9 @@ PG_DB="$(grep -E '^NISABA_DB_NAME=' "$TMP_ENV" | cut -d= -f2- || true)"; PG_DB="
 echo "[smoke] postgres pg_isready (as ${PG_USER}/${PG_DB})"
 "${COMPOSE[@]}" exec -T postgres pg_isready -U "$PG_USER" -d "$PG_DB" >/dev/null
 
-# MinIO: liveness probe (the minio image ships curl).
-echo "[smoke] minio /minio/health/live"
-"${COMPOSE[@]}" exec -T minio curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null
+# SeaweedFS: liveness probe (the image ships curl).
+echo "[smoke] seaweedfs /healthz"
+"${COMPOSE[@]}" exec -T seaweedfs curl -fsS http://127.0.0.1:8333/healthz >/dev/null
 
 # Keycloak: the mounted readiness script probes /health/ready, and we also
 # assert the realm was imported by hitting GET /realms/nisaba on the main port
