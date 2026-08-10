@@ -25,38 +25,17 @@ export interface SyncOptions {
   readonly documentId: string
   readonly token?: string
   /**
-   * The persisted document body, used to decide whether THIS client is the
-   * authoritative origin of the document text. The caller seeds the body into
-   * both CodeMirror (for immediate display) and the replica (so the
-   * loro-codemirror binding's init reconcile does not blank the editor) BEFORE
-   * connecting. That local seed has a fresh peer id, so two clients seeding the
-   * same body and both pushing would merge at the relay as concurrent inserts
-   * and duplicate the text (bug N1).
-   *
-   * The welcome handler resolves this to a single origin:
-   *   * relay EMPTY + seedBody present → this client is the origin: push the
-   *     locally-seeded body once (exported from the empty baseline).
-   *   * relay HAS content              → the relay is the origin: call
-   *     `onBeforeAdopt` (the caller clears CodeMirror, which the loro-codemirror
-   *     binding propagates to the replica so both are empty and IN SYNC), then
-   *     import the relay's snapshot. The binding's import handler reconciles
-   *     CodeMirror to the relay's text. Crucially the clear goes THROUGH
-   *     CodeMirror so the binding's CM≡replica invariant holds; clearing the
-   *     replica directly would desync them and the import diff would then
-   *     duplicate the text in the editor.
-   * `undefined` means "no seed to push" (e.g. an empty body or a reconnect).
+   * The persisted document body, used when the relay is empty: the replica is
+   * seeded post-WELCOME and pushed as the single authoritative origin. See
+   * connectSync's welcome handler.
    */
   readonly seedBody?: string
   /**
-   * Invoked once, synchronously, immediately before the relay's authoritative
-   * snapshot is imported, ONLY when the relay already had content (another
-   * client or a prior session seeded it). The caller MUST clear the editor's
-   * CodeMirror document here so the loro-codemirror binding propagates the clear
-   * to the replica, leaving both empty and in sync; the subsequent snapshot
-   * import then fills both without duplication. Not called when this client is
-   * the origin (relay empty) or when there is nothing to adopt.
+   * Invoked once, synchronously, immediately AFTER the welcome handler has given
+   * the replica its definitive content (imported from the relay or seeded as the
+   * origin). The caller attaches the CRDT binding here.
    */
-  readonly onBeforeAdopt?: () => void
+  readonly onReady?: () => void
   readonly onStatus?: (status: SyncStatus, detail?: string) => void
 }
 
@@ -239,44 +218,25 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
             handshakeComplete = true
             stopWelcomeTimer()
             if (relayHadContent) {
-              // The relay already owns the authoritative body (it was seeded by an
-              // earlier client or a prior session). This client's locally-seeded
-              // replica has a DIFFERENT peer id, so importing the relay snapshot
-              // directly would merge two concurrent inserts at position 0 and
-              // DUPLICATE the body (bug N1). To avoid the merge, the local seed
-              // must be gone BEFORE the import — but it cannot be cleared on the
-              // replica alone: the loro-codemirror binding ignores local replica
-              // events, so a replica-only clear desyncs CodeMirror from the
-              // replica, and the import diff (computed against the cleared
-              // replica) would then be applied to the still-seeded editor and
-              // duplicate the text there. So the clear is driven THROUGH
-              // CodeMirror: onBeforeAdopt dispatches a CM clear, the binding
-              // propagates it to the replica, and BOTH are empty and in sync when
-              // the snapshot import runs. The import then fills the replica, and
-              // the binding's import handler reconciles CM to the same text. The
-              // resulting local clear+commit is below the post-import syncFrom
-              // baseline, so it is never exported back to the relay (it cannot
-              // delete the relay's content, which has a different op id anyway).
-              // Review items ride in the same snapshot's "review" container and
-              // are applied by the editor's subscription.
-              options.onBeforeAdopt?.()
+              // The relay owns the authoritative body. Import its snapshot into
+              // the (empty) replica — no local seed to conflict with.
               importRemote(doc, frame.catchup.bytes)
-              // Rebaseline to the post-import vector: nothing below this point is
-              // ever exported, so the cleared local seed cannot echo back.
               syncFrom = doc.oplogVersion()
               unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
+              options.onReady?.()
             } else if (options.seedBody !== undefined && options.seedBody.length > 0) {
-              // Brand-new document: the relay is empty, so THIS client's locally-
-              // seeded body is the single authoritative origin. Push it once from
-              // the empty baseline. Only one client ever takes this branch for a
-              // given document — every later connector sees relayHadContent=true
-              // and clears+imports instead.
+              // Brand-new document: the relay is empty. Seed the replica NOW and
+              // push it as the single authoritative origin.
+              doc.getText("text").updateByLine(options.seedBody)
+              doc.commit({ origin: "load" })
               sendUpdate(doc.export({ mode: "update", from: syncFrom }))
               syncFrom = doc.oplogVersion()
               unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
+              options.onReady?.()
             } else {
               // Empty relay, no seed: a genuinely new, empty document. Just stream.
               unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
+              options.onReady?.()
             }
           } else {
             // A reconnect welcome: the local replica still holds edits the user
@@ -289,11 +249,6 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
             sendUpdate(doc.export({ mode: "update", from: syncFrom }))
             if (relayHadContent) importRemote(doc, frame.catchup.bytes)
             syncFrom = doc.oplogVersion()
-            // The local-update subscription was torn down on disconnect;
-            // re-establish it so live edits resume streaming.
-            if (!unsubscribe) {
-              unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
-            }
           }
           status("connected")
           return

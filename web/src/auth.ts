@@ -62,8 +62,14 @@ export const AuthTokenService = Context.Service<AuthTokenService>("AuthTokenServ
 const storageKey = "nisaba.auth.token"
 const pendingKey = "nisaba.oidc.pending"
 
+// The access token lives in localStorage (NOT sessionStorage): sessionStorage
+// is per-tab, so a second tab/window of the collaborative editor signed the
+// user out (found by the 2026-08-09 author-agent's two-tab sync test). Tabs
+// share the token, the refresh timer, and the session. The token is
+// short-lived (5 minutes in dev) and refreshed in the background; the OIDC
+// PKCE pending state stays in sessionStorage (transient per-login data).
 function storage(): Storage | undefined {
-  try { return globalThis.sessionStorage } catch { return undefined }
+  try { return globalThis.localStorage } catch { return undefined }
 }
 
 export function readStoredAccessToken(): string | undefined {
@@ -235,19 +241,32 @@ export const OidcClientLive = Layer.effect(OidcClient, AuthTokenService.use((tok
  * unreadable (e.g. opaque tokens in some IdPs).
  */
 export function currentUserDisplayName(): string {
+  const payload = decodedTokenPayload()
+  if (!payload) return "anonymous"
+  const name = payload.preferred_username ?? payload.email ?? payload.sub
+  return typeof name === "string" ? name : "anonymous"
+}
+
+/**
+ * Decodes the JWT access token payload (base64url → JSON). The payload is NOT
+ * verified here: the app's backend verifies every request server-side, so
+ * client-side decoding is only for attribution and UI labels, never for trust.
+ * Returns undefined when there is no token or the payload is unreadable (e.g.
+ * opaque tokens in some IdPs).
+ */
+export function decodedTokenPayload(): Record<string, unknown> | undefined {
   const token = readStoredAccessToken()
-  if (!token) return "anonymous"
+  if (!token) return undefined
   try {
     // JWT payloads are base64url-encoded (using "-" and "_" instead of "+"
     // and "/", with no "=" padding). atob() only understands standard base64,
     // so a payload containing a "-" or "_" would throw and silently fall back
     // to "anonymous". Convert to standard base64 with padding first.
     const part = token.split(".")[1]
-    if (!part) return "anonymous"
+    if (!part) return undefined
     const b64 = part.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - part.length % 4) % 4)
-    const payload = JSON.parse(atob(b64))
-    return payload.preferred_username ?? payload.email ?? payload.sub ?? "anonymous"
-  } catch { return "anonymous" }
+    return JSON.parse(atob(b64)) as Record<string, unknown>
+  } catch { return undefined }
 }
 
 

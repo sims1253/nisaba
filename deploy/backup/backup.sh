@@ -41,16 +41,27 @@ if docker compose ps minio 2>/dev/null | grep -q "minio"; then
     echo "[backup] mirroring MinIO buckets..."
     obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q minio)" 2>/dev/null | awk '{print $1}')"
     obj_net="${obj_net:-nisaba_obj-net}"
-    docker run --rm -i --network "$obj_net" \
+    # The mc image's ENTRYPOINT is `mc`, so `sh -c` must be reached via
+    # `--entrypoint /bin/sh`; without it, `sh` is parsed as an mc subcommand
+    # ("sh is not a recognized command") and the mirror silently never runs,
+    # leaving every snapshot without object storage.
+    if ! docker run --rm -i --network "$obj_net" --entrypoint /bin/sh \
         -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
         -v "${DEST}/minio:/out:rw" \
-        minio/mc:RELEASE.2024-10-02T08-27-28Z sh -c '
+        minio/mc:RELEASE.2024-10-02T08-27-28Z -c '
             mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+            failed=0
             for b in '"${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}"' '"${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}"'; do
-                mc mirror --overwrite --watch=false "local/${b}" "/out/${b}" 2>/dev/null \
-                    || echo "[backup] WARN: mirror of ${b} had errors"
+                if ! mc mirror --overwrite --watch=false "local/${b}" "/out/${b}"; then
+                    echo "[backup] ERROR: mirror of ${b} failed" >&2
+                    failed=1
+                fi
             done
-        ' || echo "[backup] WARN: minio mirror step failed."
+            exit $failed
+        '; then
+        echo "[backup] ERROR: MinIO mirror step failed; snapshot is INCOMPLETE (no object storage)." >&2
+        exit 1
+    fi
 else
     echo "[backup] minio container not running; skipping object mirror."
 fi

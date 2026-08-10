@@ -184,7 +184,14 @@ async function errorMessage(response: Response): Promise<string> {
   try {
     const body = await response.text()
     if (!body) return fallback
-    return Schema.decodeUnknownSync(ErrorBody)(JSON.parse(body)).error.message
+    const decoded = Schema.decodeUnknownSync(ErrorBody)(JSON.parse(body))
+    // The server 403 message is the user-guide's documented "You don't have
+    // permission to do that"; the client appends a hint so the status bar is
+    // actionable (a role change is the usual fix).
+    if (response.status === 403 && decoded.error.code === "forbidden") {
+      return "You don't have permission to do that (your role may not allow it)"
+    }
+    return decoded.error.message
   } catch {
     return fallback
   }
@@ -236,6 +243,10 @@ export const addMember = (projectId: string, subject: string, role: MembershipRo
       role: (["owner", "author", "reviewer", "read-only"] as const).includes(m.role as MembershipRole) ? (m.role as MembershipRole) : "read-only"
     }))
   )
+
+/** Removes a member (owner/author only; the owner row itself cannot be removed). */
+export const removeMember = (projectId: string, subject: string): Effect.Effect<void, ApiError> =>
+  request(path("projects", projectId, "members", subject), undefined, { method: "DELETE" })
 
 export const listDocuments = (projectId: string): Effect.Effect<readonly NisabaDocument[], ApiError> =>
   request(path("projects", projectId, "documents"), decoder(Schema.Array(NisabaDocument)))

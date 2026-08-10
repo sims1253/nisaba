@@ -14,9 +14,11 @@ test.describe("Authentication", () => {
   test("sign-in through Keycloak stores a token with expiry", async ({ page }) => {
     await signIn(page, USERS.author)
 
-    // Verify the token is stored in sessionStorage with an expiresAt field
+    // Verify the token is stored in localStorage (shared across tabs so a
+    // second tab of the collaborative editor stays signed in) with an
+    // expiresAt field.
     const tokenData = await page.evaluate(() => {
-      const raw = sessionStorage.getItem("nisaba.auth.token")
+      const raw = localStorage.getItem("nisaba.auth.token")
       return raw ? JSON.parse(raw) : null
     })
 
@@ -37,9 +39,9 @@ test.describe("Authentication", () => {
 
     await page.getByRole("button", { name: "Sign out" }).click()
 
-    // Token should be gone from sessionStorage
+    // Token should be gone from localStorage
     const tokenData = await page.evaluate(() => {
-      const raw = sessionStorage.getItem("nisaba.auth.token")
+      const raw = localStorage.getItem("nisaba.auth.token")
       return raw ? JSON.parse(raw) : null
     })
     expect(tokenData).toBeNull()

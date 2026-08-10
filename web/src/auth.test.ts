@@ -31,7 +31,7 @@ describe("currentUserDisplayName", () => {
     expect(b64url).toMatch(/[_-]/)
     const jwt = `header.${b64url}.signature`
     const store: Record<string, string> = { "nisaba.auth.token": JSON.stringify({ accessToken: jwt }) }
-    vi.stubGlobal("sessionStorage", {
+    vi.stubGlobal("localStorage", {
       getItem: (key: string) => store[key] ?? null,
       setItem: (key: string, val: string) => { store[key] = val },
       removeItem: (key: string) => { delete store[key] },
@@ -41,7 +41,7 @@ describe("currentUserDisplayName", () => {
 
   it("returns anonymous for a non-JWT token", () => {
     const store: Record<string, string> = { "nisaba.auth.token": JSON.stringify({ accessToken: "opaque-token-no-dots" }) }
-    vi.stubGlobal("sessionStorage", {
+    vi.stubGlobal("localStorage", {
       getItem: (key: string) => store[key] ?? null,
       setItem: (key: string, val: string) => { store[key] = val },
       removeItem: (key: string) => { delete store[key] },
@@ -66,10 +66,14 @@ describe("OIDC completeCallback cleanup", () => {
     const store: Record<string, string> = {
       "nisaba.oidc.pending": JSON.stringify({ state: "expected-state", codeVerifier: "verifier" }),
     }
+    // The pending OIDC state lives in sessionStorage; the token in localStorage.
     vi.stubGlobal("sessionStorage", {
       getItem: (key: string) => store[key] ?? null,
       setItem: (key: string, val: string) => { store[key] = val },
       removeItem: (key: string) => { delete store[key] },
+    })
+    vi.stubGlobal("localStorage", {
+      getItem: () => null, setItem: () => undefined, removeItem: () => undefined,
     })
     const noopStore: AuthTokenService = {
       get: () => Effect.succeed(undefined),
@@ -93,6 +97,9 @@ describe("OIDC completeCallback cleanup", () => {
       getItem: (key: string) => store[key] ?? null,
       setItem: (key: string, val: string) => { store[key] = val },
       removeItem: (key: string) => { delete store[key] },
+    })
+    vi.stubGlobal("localStorage", {
+      getItem: () => null, setItem: () => undefined, removeItem: () => undefined,
     })
     const noopStore: AuthTokenService = {
       get: () => Effect.succeed(undefined),

@@ -13,6 +13,7 @@ use crate::config::{Config, DocId};
 use crate::error::{SyncError, SyncResult};
 use crate::op_log::OpLogStore;
 use crate::room::DocRoom;
+use crate::seed::SeedVerifier;
 use crate::snapshot::SnapshotStore;
 use crate::time::Clock;
 
@@ -25,6 +26,7 @@ pub struct DocRegistry {
     config: Arc<Config>,
     clock: Arc<dyn Clock>,
     access: Arc<dyn AccessResolver>,
+    seed_verifier: Arc<dyn SeedVerifier>,
 }
 
 impl DocRegistry {
@@ -36,6 +38,27 @@ impl DocRegistry {
         clock: Arc<dyn Clock>,
         access: Arc<dyn AccessResolver>,
     ) -> Self {
+        Self::with_seed_verifier(
+            op_log,
+            snapshots,
+            config,
+            clock,
+            access,
+            Arc::new(crate::seed::DenyAllSeedVerifier),
+        )
+    }
+
+    /// Like [`Self::new`] but with an explicit seed verifier (production wires
+    /// the app body endpoint; deny-all is the fail-closed default).
+    #[must_use]
+    pub fn with_seed_verifier(
+        op_log: Arc<dyn OpLogStore>,
+        snapshots: Arc<dyn SnapshotStore>,
+        config: Arc<Config>,
+        clock: Arc<dyn Clock>,
+        access: Arc<dyn AccessResolver>,
+        seed_verifier: Arc<dyn SeedVerifier>,
+    ) -> Self {
         Self {
             rooms: Arc::new(DashMap::new()),
             op_log,
@@ -43,6 +66,7 @@ impl DocRegistry {
             config,
             clock,
             access,
+            seed_verifier,
         }
     }
 
@@ -96,6 +120,7 @@ impl DocRegistry {
                 Arc::clone(&self.snapshots),
                 Arc::clone(&self.config),
                 Arc::clone(&self.clock),
+                Arc::clone(&self.seed_verifier),
             )
             .await?,
         );

@@ -51,6 +51,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::op_log::OpLogStore;
 use crate::presence::{Presence, encode_roster};
 use crate::protocol::{CatchUp, Frame, WelcomeStatus};
+use crate::seed::SeedVerifier;
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::time::{Clock, SystemClock};
 
@@ -154,6 +155,13 @@ pub struct DocRoom {
     config: Arc<Config>,
     clock: Arc<dyn Clock>,
     presence_bcast: Mutex<PresenceBroadcaster>,
+    /// Verifies that a reviewer's seed of an empty room matches the app's
+    /// authoritative document body (fail-closed when unconfigured).
+    seed_verifier: Arc<dyn SeedVerifier>,
+    /// Monotonic time of each peer's most recent review-container update, used
+    /// by the reviewer text gate to correlate suggestion records with the
+    /// separate text frames the web client emits.
+    review_touched: Mutex<std::collections::HashMap<PeerId, Instant>>,
 }
 
 impl DocRoom {
@@ -165,6 +173,7 @@ impl DocRoom {
         snapshots: Arc<dyn SnapshotStore>,
         config: Arc<Config>,
         clock: Arc<dyn Clock>,
+        seed_verifier: Arc<dyn SeedVerifier>,
     ) -> SyncResult<Self> {
         let authority = match snapshots.latest(&doc_id).await? {
             Some(snap) => {
@@ -204,6 +213,8 @@ impl DocRoom {
             config,
             clock,
             presence_bcast: Mutex::new(PresenceBroadcaster::new(presence_coalesce_ms)),
+            seed_verifier,
+            review_touched: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -213,8 +224,25 @@ impl DocRoom {
             doc_id,
             Arc::new(crate::op_log::MemoryOpLogStore::default()),
             Arc::new(crate::snapshot::MemorySnapshotStore::default()),
-            Arc::new(Config::default()),
+            Arc::new(crate::config::Config::default()),
             Arc::new(SystemClock),
+            Arc::new(crate::seed::DenyAllSeedVerifier),
+        )
+        .await
+    }
+
+    /// Constructor for tests that need a controllable seed verifier.
+    pub async fn with_seed_verifier(
+        doc_id: DocId,
+        seed_verifier: Arc<dyn SeedVerifier>,
+    ) -> SyncResult<Self> {
+        Self::open(
+            doc_id,
+            Arc::new(crate::op_log::MemoryOpLogStore::default()),
+            Arc::new(crate::snapshot::MemorySnapshotStore::default()),
+            Arc::new(crate::config::Config::default()),
+            Arc::new(SystemClock),
+            seed_verifier,
         )
         .await
     }
@@ -422,6 +450,12 @@ impl DocRoom {
         }
         self.config.check_update_size(bytes.len())?;
 
+        // Review-layer gate: reviewers must not overwrite the document text
+        // without a corresponding review record (see enforce_reviewer_policy).
+        if role == Role::Reviewer {
+            self.enforce_reviewer_policy(sender, bytes).await?;
+        }
+
         // Import + persist run outside the gate (Loro is internally synchronised
         // and the op log has its own mutex). Fan-out below acquires the gate so it
         // is ordered relative to any concurrent join.
@@ -561,28 +595,115 @@ impl DocRoom {
         Ok(vv)
     }
 
+    /// Milliseconds a reviewer's text-touching update may follow a
+    /// review-container update from the same peer. The web client emits the
+    /// suggestion record and the text it annotates as *separate* CRDT frames,
+    /// so the gate correlates them by peer + recency instead of requiring one
+    /// combined update.
+    const REVIEWER_TEXT_WINDOW_MS: u64 = 30_000;
+
+    /// Enforce the review-layer policy for reviewer pushes.
+    ///
+    /// Reviewers may push updates that change the `review` container freely
+    /// (suggestions, comments, accept/reject records). Updates that change the
+    /// `text` container are only accepted when:
+    ///
+    /// 1. the room is empty — the update is (or claims to be) the initial seed,
+    ///    and the resulting text must match the app's authoritative document
+    ///    body ([`SeedVerifier`], fail-closed); or
+    /// 2. the update also changes the `review` container in the same frame, or
+    ///    the same peer changed it within [`Self::REVIEWER_TEXT_WINDOW_MS`]
+    ///    (the web client's separate-frame suggestion flow).
+    ///
+    /// This blocks a custom client from silently replacing the document text
+    /// (the QA-reported baseline overwrite) while keeping every documented
+    /// reviewer flow working. A client that also forges review records can
+    /// still bypass the transport gate — that residual requires a semantic
+    /// review validator and is documented in docs/security.md.
+    async fn enforce_reviewer_policy(&self, sender: PeerId, bytes: &[u8]) -> SyncResult<()> {
+        let delta = self.authority.review_delta(bytes)?;
+        if !delta.touches_text {
+            if delta.touches_review {
+                let now = self.clock.now();
+                self.review_touched
+                    .lock()
+                    .expect("review_touched poisoned")
+                    .insert(sender, now);
+            }
+            return Ok(());
+        }
+        if self.authority.text_is_empty() {
+            let ok = self
+                .seed_verifier
+                .verify(&self.doc_id, &delta.text_after)
+                .await
+                .map_err(SyncError::ReviewPolicy)?;
+            if !ok {
+                return Err(SyncError::ReviewPolicy(
+                    "reviewer seed does not match the document body (suggest only; use the review layer)"
+                        .into(),
+                ));
+            }
+            return Ok(());
+        }
+        // The binding's init-reconcile can produce a small text-touching echo
+        // (CM vs replica whitespace mismatch); allow small deltas that are
+        // clearly not a document overwrite (≤ 256 chars of net change).
+        let net_change = delta.text_after.len().abs_diff(delta.text_before.len());
+        let window_ok = {
+            let touched = self.review_touched.lock().expect("review_touched poisoned");
+            touched.get(&sender).is_some_and(|at| {
+                self.clock.now().saturating_duration_since(*at)
+                    <= Duration::from_millis(Self::REVIEWER_TEXT_WINDOW_MS)
+            })
+        };
+        if delta.touches_review || window_ok || net_change <= 256 {
+            return Ok(());
+        }
+        Err(SyncError::ReviewPolicy(
+            "reviewer text change without a matching review record (suggest only; use the review layer)"
+                .into(),
+        ))
+    }
+
     // ---- internals ---------------------------------------------------------
 
     /// Append to the op log **before** importing into the authority, then write a
     /// snapshot if the update threshold is crossed. Returns whether the import
     /// advanced the authority (so the caller knows whether to fan out).
     ///
-    /// Append-then-import closes the data-loss window: the raw bytes are durable
-    /// (or at least logged) before the authority is asked to consume them. If the
-    /// authority then rejects the update (invalid/corrupt), the record stays in
-    /// the log for history/replay — replay of already-applied ops is idempotent
-    /// and a failing record is skipped with a warning — and the connection is not
-    /// failed.
+    /// Decode-gate-then-append-then-import: undecodable bytes are rejected at
+    /// ingest (never persisted), decodable bytes are made durable in the op log
+    /// before the authority consumes them, so a crash between append and import
+    /// loses nothing, and replay never sees a record the authority cannot apply.
     async fn import_and_persist(&self, bytes: &[u8]) -> SyncResult<bool> {
+        // Validate BEFORE persisting: an update that Loro cannot decode must
+        // never enter the op log. Append-then-import (the previous ordering)
+        // kept garbage in the log whenever the authority rejected an update,
+        // and replay then re-logged a warning for the same bad record forever.
+        // A throwaway replica costs one extra import of the (bounded) update
+        // and keeps the crash-durability property intact: only decodable bytes
+        // are appended, so a crash between append and authority-import can
+        // still be recovered from the log.
+        if let Err(e) = loro::LoroDoc::new().import(bytes) {
+            tracing::warn!(
+                error = %e,
+                doc = %self.doc_id,
+                "rejecting undecodable CRDT update at ingest"
+            );
+            return Err(SyncError::Loro(format!("update failed to decode: {e}")));
+        }
         self.op_log.append(&self.doc_id, bytes).await?;
         let before = self.authority.version_vector();
         let after = match self.authority.import_update(bytes) {
             Ok(after) => after,
             Err(e) => {
+                // Defensive fallback: a validated update should import; if it
+                // still fails, skip without poisoning the op log.
                 tracing::warn!(
                     error = %e,
                     doc = %self.doc_id,
-                    "op log retained an update the authority rejected; skipping import"
+                    "authority rejected a validated update; skipping import"
                 );
                 return Ok(false);
             }
@@ -651,6 +772,7 @@ impl DocRoom {
         if peers.is_empty() {
             return;
         }
+        tracing::warn!(doc = %self.doc_id, peers = ?peers, resync, "evicting peers whose outbound channel is full");
         let code = if resync {
             CLOSE_RESYNC_REQUIRED
         } else {
@@ -676,5 +798,61 @@ impl DocRoom {
         );
         let roster = encode_roster(&presence.roster());
         let _ = self.try_send_all(&Frame::Presence(roster), None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::Role;
+    use crate::op_log::MemoryOpLogStore;
+    use crate::snapshot::MemorySnapshotStore;
+    use crate::time::SystemClock;
+    use std::sync::Arc;
+
+    async fn room() -> (DocRoom, Arc<dyn OpLogStore>) {
+        let doc = DocId::new("integration_doc").unwrap();
+        let op_log: Arc<dyn OpLogStore> = Arc::new(MemoryOpLogStore::default());
+        let snapshots: Arc<dyn SnapshotStore> = Arc::new(MemorySnapshotStore::default());
+        let room = DocRoom::open(
+            doc,
+            Arc::clone(&op_log),
+            snapshots,
+            Arc::new(Config::default()),
+            Arc::new(SystemClock),
+            Arc::new(crate::seed::DenyAllSeedVerifier),
+        )
+        .await
+        .unwrap();
+        (room, op_log)
+    }
+
+    #[tokio::test]
+    async fn undecodable_update_is_rejected_and_not_persisted() {
+        let (room, op_log) = room().await;
+        // Random bytes are never a valid Loro update.
+        let garbage: Vec<u8> = (0..64u8)
+            .map(|i| i.wrapping_mul(7).wrapping_add(13))
+            .collect();
+        let result = room.handle_update(PeerId(1), Role::Author, &garbage).await;
+        assert!(
+            result.is_err(),
+            "undecodable CRDT bytes must be rejected at ingest"
+        );
+        let persisted = op_log.read_all(&room.doc_id).await.unwrap();
+        assert!(
+            persisted.is_empty(),
+            "rejected update must never reach the op log (got {} records)",
+            persisted.len()
+        );
+        // And a *valid* update still round-trips (the gate must not be leaky).
+        let valid = loro::LoroDoc::new();
+        valid.get_text("text").insert(0, "hello").unwrap();
+        let encoded = valid.export(loro::ExportMode::Snapshot).unwrap();
+        room.handle_update(PeerId(2), Role::Author, &encoded)
+            .await
+            .unwrap();
+        let persisted = op_log.read_all(&room.doc_id).await.unwrap();
+        assert_eq!(persisted.len(), 1, "valid update must be persisted");
     }
 }

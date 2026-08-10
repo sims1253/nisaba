@@ -25,7 +25,7 @@ const document = {
 describe("app service contract", () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
-    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => undefined, removeItem: () => undefined })
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined, removeItem: () => undefined })
   })
 
   it("lists flat projects", async () => {
@@ -102,7 +102,7 @@ describe("app service contract", () => {
   })
 
   it("compiles in document mode by default and attaches the bearer token", async () => {
-    vi.stubGlobal("sessionStorage", {
+    vi.stubGlobal("localStorage", {
       getItem: () => JSON.stringify({ accessToken: "token-1" }), setItem: () => undefined, removeItem: () => undefined
     })
     vi.stubGlobal("fetch", vi.fn(async () => ok({

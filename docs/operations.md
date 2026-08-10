@@ -48,7 +48,7 @@ Every HTTP service exposes **`GET /healthz` → `200 ok`** (the Compose
 |-----------|----------------------------------------------------|-------|
 | postgres  | `pg_isready`                                       | live |
 | minio     | `GET /minio/health/live`                           | live |
-| keycloak  | `GET /health/ready` (mgmt :9000)                   | live |
+| keycloak  | `GET /health/ready` (mgmt :9000, container-internal) | live; the mgmt port is NOT published to the host (probe from inside the compose network, e.g. `docker compose exec keycloak curl ...`, or rely on the container healthcheck) |
 | app       | `GET /healthz` + `GET /health/ready` (port 8080)   | live + DB ready |
 | sync      | `GET /healthz` + `GET /health/ready` (port 8080)   | live + store ready |
 | compile   | `GET /healthz` (port 8080)                         | live |
@@ -111,7 +111,12 @@ Scripts: [`deploy/backup/backup.sh`](../deploy/backup/backup.sh),
 - **Postgres** `nisaba` database: logical dump (`pg_dump --clean --if-exists`,
   gzipped). Keycloak's DB is *not* in the dev backup (it is stateful identity;
   back it up separately in production).
-- **MinIO** `nisaba-*` buckets: `mc mirror` (versioned) to a local dir.
+- **MinIO** `nisaba-*` buckets: `mc mirror` (versioned) to a local dir. The
+  mirror runs inside the `minio/mc` image via `--entrypoint /bin/sh` (the image
+  entrypoint is `mc` itself). **A failed mirror aborts the backup** — since
+  2026-08-09 a snapshot without object storage is reported as INCOMPLETE and
+  `backup.sh` exits non-zero instead of printing a warning and continuing, so a
+  silently-empty `minio/` directory can never be mistaken for a good backup.
 - **sync filesystem** (`sync-data` volume): a `tar` of the op-log + snapshot
   store (`/data/oplog`, `/data/snapshots`). sync persists CRDT history here
   today; the S3 op-log bucket is the future integration surface.

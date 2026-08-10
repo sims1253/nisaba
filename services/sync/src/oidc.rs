@@ -689,7 +689,15 @@ impl AccessResolver for OidcAccessResolver {
             self.tokens.insert(token, &id, exp);
             id
         };
-        self.documents.authorize(&identity, doc, token).await
+        let membership_role = self.documents.authorize(&identity, doc, token).await?;
+        // Clamp the membership-derived role with the IdP roles claim verified
+        // from the JWT. A share link can grant membership at "author", but a
+        // read-only IdP user must never gain author capabilities on the sync
+        // plane (the REST plane correctly 403s them; this keeps both planes
+        // consistent). Missing roles in the token deny access (fail-closed).
+        let idp_role = Role::max_role(&identity.roles)
+            .ok_or_else(|| AuthError::Unauthenticated("token carries no roles claim".into()))?;
+        Ok(Role::least_privileged(membership_role, idp_role))
     }
 }
 

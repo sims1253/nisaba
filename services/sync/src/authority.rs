@@ -21,6 +21,32 @@ use loro::{ExportMode, LoroDoc, VersionVector};
 use crate::error::SyncResult;
 use crate::protocol::CatchUp;
 
+/// The document's canonical text container (the editor baseline + inline
+/// suggestion marks). The web client binds this key (web/src/main.ts), and the
+/// review layer rides in the `review` map container.
+pub const TEXT_CONTAINER: &str = "text";
+/// The container holding the serialized review-item list under the `items` key.
+pub const REVIEW_CONTAINER: &str = "review";
+pub const REVIEW_ITEMS_KEY: &str = "items";
+
+/// What one inbound update changes in the authority, judged by forking the
+/// authority, applying the update to the fork, and comparing the `text` and
+/// `review` containers before/after.
+pub struct ReviewDelta {
+    /// The update changes the document text container.
+    pub touches_text: bool,
+    /// The update changes the review container (suggestion/comment state).
+    pub touches_review: bool,
+    /// Text before the update.
+    pub text_before: String,
+    /// Text after the update (fork).
+    pub text_after: String,
+    /// Serialized review `items` value before the update (None when absent).
+    pub review_before: Option<String>,
+    /// Serialized review `items` value after the update (None when absent).
+    pub review_after: Option<String>,
+}
+
 /// Wraps an authoritative [`LoroDoc`] for one document.
 ///
 /// Cloning is cheap: the inner doc lives behind an [`Arc`].
@@ -65,6 +91,34 @@ impl AuthorityDoc {
         Ok(self.doc.oplog_vv())
     }
 
+    /// Whether the authority's text container is empty (a brand-new room that
+    /// no peer has seeded yet).
+    #[must_use]
+    pub fn text_is_empty(&self) -> bool {
+        self.doc.get_text(TEXT_CONTAINER).to_string().is_empty()
+    }
+
+    /// Fork the authority, apply `bytes` to the fork, and report which of the
+    /// `text` / `review` containers the update changes, plus the before/after
+    /// values. Errors when `bytes` are not a decodable Loro update (the caller
+    /// surfaces that as a protocol error).
+    pub fn review_delta(&self, bytes: &[u8]) -> SyncResult<ReviewDelta> {
+        let text_before = self.doc.get_text(TEXT_CONTAINER).to_string();
+        let review_before = review_items(&self.doc);
+        let fork = self.doc.fork();
+        fork.import(bytes)?;
+        let text_after = fork.get_text(TEXT_CONTAINER).to_string();
+        let review_after = review_items(&fork);
+        Ok(ReviewDelta {
+            touches_text: text_before != text_after,
+            touches_review: review_before != review_after,
+            text_before,
+            text_after,
+            review_before,
+            review_after,
+        })
+    }
+
     /// The authority's current version vector.
     #[must_use]
     pub fn version_vector(&self) -> VersionVector {
@@ -103,6 +157,17 @@ impl AuthorityDoc {
     pub fn export_snapshot(&self) -> SyncResult<Vec<u8>> {
         Ok(self.doc.export(ExportMode::Snapshot)?)
     }
+}
+
+/// Read the serialized review-item list stored under `items` in the `review`
+/// map container, if any.
+fn review_items(doc: &LoroDoc) -> Option<String> {
+    doc.get_map(REVIEW_CONTAINER)
+        .get(REVIEW_ITEMS_KEY)
+        .and_then(|value| match value.get_deep_value() {
+            loro::LoroValue::String(s) => Some(s.to_string()),
+            _ => None,
+        })
 }
 
 impl Default for AuthorityDoc {

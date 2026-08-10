@@ -158,18 +158,41 @@ presence channel.
 The browser-facing CRUD API lives under `/api/*`; the `web` nginx strips the
 `/api` prefix and forwards to `app` (`/api/projects` → `/projects`). The
 exception is the exact `/api/compile` route, which nginx forwards verbatim.
-Routes:
+Routes (the machine-readable truth is `GET /openapi.json` on the app service):
 
-- Projects / documents (CRUD).
-- Reference library (project-scoped; provenance + full-text).
-- Export orchestration → drives `compile` and the RIS/attachment validator. `app` calls `compile` over `svc-net` at `compile:8080`,
-  authorising each call with the shared `NISABA_COMPILE_TOKEN`.
-- Auth: validates the OIDC bearer token; enforces roles `author`, `reviewer`,
-  `read-only`.
-- Internal sync authorization: `POST /internal/sync/authorize`.
-- Share links: `POST /share/{token}/redeem`.
-- Audit log: `GET /projects/{id}/audit`.
-- Completeness: `GET /projects/{id}/completeness`.
+- `GET|POST /projects`, `GET|PATCH|DELETE /projects/{project_id}`
+- `GET|POST /projects/{project_id}/members`,
+  `DELETE /projects/{project_id}/members/{subject}` (member removal; the owner
+  row cannot be removed), `GET /projects/{project_id}/membership` (own role)
+- `GET|POST /projects/{project_id}/documents`,
+  `GET|PATCH|DELETE /projects/{project_id}/documents/{document_id}`
+- `GET /projects/{project_id}/documents/{document_id}/history`,
+  `GET .../history/{revision_id}`
+- `GET|POST /projects/{project_id}/references`,
+  `GET|PATCH|DELETE /projects/{project_id}/references/{reference_id}`
+- `GET|PUT|DELETE .../references/{reference_id}/fulltext`,
+  `GET /projects/{project_id}/fulltexts`
+- `POST /projects/{project_id}/exports` — portable archive (see below)
+- `POST /projects/{project_id}/share-links`,
+  `DELETE /projects/{project_id}/share-links/{token}` (revocation),
+  `POST /share/{token}/redeem`
+- `GET /projects/{project_id}/audit`
+- `POST /api/compile` (proxied verbatim by nginx; also reachable on the app
+  port), `GET /healthz`, `GET /health/ready`, `GET /openapi.json`
+- Internal (machine-token only, never proxied): `POST /internal/sync/authorize`,
+  `POST /internal/document/{document_id}/materialize`
+
+Reference payloads are structured JSON (`metadata` with `title`, `authors`,
+`year`, `doi`, `pmid`, `journal`, and a mandatory `extra` object) — the API does
+not parse RIS text. Project-scoped DOIs must be unique (409 on duplicates).
+
+Export layout: the archive contains the compiled PDF, the projected document
+sources (paths flattened with `/` → `_`), and per-document RIS bibliographies +
+full-text PDFs under `references-<n>/`. The generated master `main.typ`
+includes every document by its full project-relative path, so documents in
+subdirectories export and compile correctly. Exports require every cited
+reference to have an uploaded full-text PDF (409 otherwise) and are restricted
+to owners/authors (reviewers may compile but not export).
 
 ### 4.4 Health — `GET /healthz` (all HTTP services)
 
@@ -200,10 +223,10 @@ contract used by the Docker `HEALTHCHECK` directives. `app` and `sync` also serv
 ## 6. Authentication & OIDC flow
 
 ```
-browser ──(1) GET /api/whoami (no token)──▶ app : 401 { issuer, clientId }
-browser ──(2) redirect ────────────────────▶ keycloak /realms/nisaba (login)
-browser ◀──(3) authorization code ────────── keycloak
-browser ──(4) code → app (or direct token exchange) ─▶ tokens (access/refresh/id)
+browser ──(1) SPA loads, discovers unauthenticated state ─▶ app (401 on first API call)
+browser ──(2) redirect ──────────────────────────────────▶ keycloak /realms/nisaba (login)
+browser ◀──(3) authorization code ──────────────────────── keycloak
+browser ──(4) code → app (or direct token exchange) ─────▶ tokens (access/refresh/id)
 browser ──(5) GET /api/... Authorization: Bearer <access> ─▶ app (validates, routes by role)
 ```
 
@@ -212,7 +235,33 @@ browser ──(5) GET /api/... Authorization: Bearer <access> ─▶ app (valida
   `reviewer` / `read-only`.
 - Roles are mapped into the access token as a **top-level `roles`** claim.
 - Today the app validates tokens against a JWKS read inline from
-  `NISABA_OIDC_JWKS_JSON` at startup.
+  `NISABA_OIDC_JWKS_JSON` at startup. An **empty** value is the safe deny-all
+  default (the app boots and rejects every token); populate it with the realm
+  JWKS to accept tokens.
+- Access tokens are short-lived (Keycloak's 5-minute default in the dev realm);
+  the SPA stores `expiresAt` and refreshes proactively. API clients must handle
+  silent 401s by refreshing.
+
+### 6.1 Role model
+
+Capabilities come from the **IdP role claim** (`author` / `reviewer` /
+`read-only`) AND the **project membership role** (`owner` / `author` /
+`reviewer` / `read-only`); both must permit an action. In practice:
+
+| Action | owner | author | reviewer | read-only |
+|--------|:-----:|:------:|:--------:|:---------:|
+| Read documents / history / audit / members | ✓ | ✓ | ✓ | ✓ |
+| Edit baseline (PATCH body) | ✓ | ✓ | — (suggest only) | — |
+| Create / rename / delete documents | ✓ | ✓ | — | — |
+| Accept / reject / comment (review layer) | ✓ | ✓ | ✓ | — |
+| Compile / see diagnostics | ✓ | ✓ | ✓ | — |
+| Manage members / share links / export / delete project | ✓ | ✓ | — | — |
+
+Reviewers are locked into suggesting mode: their edits become tracked
+suggestions in the review layer (synced over the CRDT relay) and are **never
+written into the baseline** until an owner/author accepts them. The REST API
+rejects reviewer baseline writes with 403; the web UI hides the create/delete
+controls for reviewers.
 
 ---
 

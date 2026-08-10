@@ -84,6 +84,13 @@ pub trait Repository: Send + Sync {
         &self,
         value: ProjectMembership,
     ) -> Result<ProjectMembership, RepoError>;
+    /// Insert the membership or update its role when it already exists
+    /// (share-link redeem uses this to grant the link's role on upgrade).
+    async fn upsert_membership(
+        &self,
+        value: ProjectMembership,
+    ) -> Result<ProjectMembership, RepoError>;
+    async fn delete_membership(&self, project_id: Uuid, subject: &str) -> Result<(), RepoError>;
     async fn get_membership(
         &self,
         project_id: Uuid,
@@ -241,6 +248,29 @@ impl Repository for MemoryRepository {
         }
         data.memberships.insert(key, value.clone());
         Ok(value)
+    }
+    async fn upsert_membership(
+        &self,
+        value: ProjectMembership,
+    ) -> Result<ProjectMembership, RepoError> {
+        let mut data = self.data.write().await;
+        if !data.projects.contains_key(&value.project_id) {
+            return Err(RepoError::NotFound);
+        }
+        data.memberships
+            .insert((value.project_id, value.subject.clone()), value.clone());
+        Ok(value)
+    }
+    async fn delete_membership(&self, project_id: Uuid, subject: &str) -> Result<(), RepoError> {
+        let mut data = self.data.write().await;
+        if data
+            .memberships
+            .remove(&(project_id, subject.to_owned()))
+            .is_none()
+        {
+            return Err(RepoError::NotFound);
+        }
+        Ok(())
     }
     async fn get_membership(
         &self,
@@ -788,6 +818,31 @@ async fn authorize_sync_document(
     Ok(Json(SyncAuthorizeResponse { role }))
 }
 
+/// Internal (service-token) endpoint: the authoritative body of a document.
+/// Used by the sync service's seed verifier to check that a reviewer's seed of
+/// an empty room matches what the app stores — otherwise a reviewer could plant
+/// arbitrary text as the room state before any author connects.
+async fn document_body(
+    State(s): State<AppState>,
+    Path(document_id): Path<String>,
+    h: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let value = h
+        .get("authorization")
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    let token = value
+        .to_str()
+        .ok()
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    if !constant_time_token_matches(s.sync_authz_token.as_ref(), token) {
+        return Err(AppError::Forbidden);
+    }
+    let doc = s.repo.get_document_by_id(id(&document_id)?).await?;
+    Ok(Json(json!({ "body": doc.body })))
+}
+
 async fn materialize_document_body(
     State(s): State<AppState>,
     Path(document_id): Path<String>,
@@ -829,6 +884,10 @@ pub fn router(state: AppState) -> Router {
             "/projects/{project_id}/members",
             get(list_members).post(add_member),
         )
+        .route(
+            "/projects/{project_id}/members/{subject}",
+            delete(remove_member),
+        )
         .route("/projects/{project_id}/membership", get(get_my_membership))
         .route("/healthz", get(healthz))
         .route("/health/ready", get(health_ready))
@@ -837,6 +896,7 @@ pub fn router(state: AppState) -> Router {
             "/internal/document/{document_id}/materialize",
             post(materialize_document_body),
         )
+        .route("/internal/document/{document_id}/body", get(document_body))
         .route("/api/compile", post(api_compile))
         .route(
             "/projects/{project_id}/documents",
@@ -898,6 +958,7 @@ async fn create_project(
     if r.name.trim().is_empty() {
         return Err(AppError::BadRequest("name is required".into()));
     }
+    validate_text(&r.name, "name", 1024)?;
     let now = Utc::now();
     let id = Uuid::new_v4();
     let value = Project {
@@ -957,6 +1018,7 @@ async fn patch_project(
         if name.trim().is_empty() {
             return Err(AppError::BadRequest("name is required".into()));
         }
+        validate_text(&name, "name", 1024)?;
         v.name = name;
     }
     v.updated_at = Utc::now();
@@ -972,18 +1034,61 @@ async fn delete_project(
     let p = permitted(&s, &h, Permission::Manage).await?;
     let project = project_for(&s, &pid).await?;
     project_access(&s, &h, project.id, Permission::Manage).await?;
+    // Remove fulltext blobs from object storage before the DB rows cascade:
+    // reference_entries/fulltexts rows are deleted by the FK cascade, but the
+    // S3 objects they point at would otherwise be orphaned.
+    let references = s.repo.list_references(project.id).await?;
+    for reference in &references {
+        if s.blobs.delete(reference.id).await.is_err() {
+            tracing::warn!(project_id = %project.id, reference_id = %reference.id, "failed to delete fulltext blob during project deletion");
+        }
+    }
     let event = build_audit(&p, project.id, "deleted", "project", project.id, json!({}));
     s.repo.delete_project(project.id, Some(event)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 fn valid_document_path(path: &str) -> bool {
+    // Cap the length like the other user-facing text fields (project names,
+    // titles): paths feed compile/export include statements and URLs, so an
+    // unbounded path would bloat exports. 1024 matches the project-name cap.
     !path.is_empty()
+        && path == path.trim()
         && !path.starts_with('/')
         && !path.contains('\\')
+        && path.chars().count() <= 1024
+        && !path.chars().any(char::is_control)
         && path
             .split('/')
             .all(|segment| !segment.is_empty() && !matches!(segment, "." | ".."))
+}
+
+/// Rejects strings Postgres cannot store (NUL) or that are not reasonable
+/// user input (other control characters), plus runaway length. Used for names,
+/// paths, titles, and metadata fields.
+fn validate_text(value: &str, field: &str, max_len: usize) -> Result<(), AppError> {
+    if value.chars().any(char::is_control) {
+        return Err(AppError::BadRequest(format!(
+            "{field} contains control characters"
+        )));
+    }
+    if value.chars().count() > max_len {
+        return Err(AppError::BadRequest(format!(
+            "{field} exceeds the maximum length of {max_len} characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Document bodies are free-form text: tabs/newlines are legitimate, only NUL
+/// is unstorable by Postgres.
+fn validate_body(value: &str) -> Result<(), AppError> {
+    if value.contains('\0') {
+        return Err(AppError::BadRequest(
+            "document body contains NUL bytes".into(),
+        ));
+    }
+    Ok(())
 }
 
 // --- Document handlers ---
@@ -1008,11 +1113,13 @@ async fn create_document(
 ) -> Result<(StatusCode, Json<Document>), AppError> {
     let p = permitted(&s, &h, Permission::Manage).await?;
     let project = project_for(&s, &pid).await?;
-    if !valid_document_path(r.path.trim()) {
+    if !valid_document_path(&r.path) {
         return Err(AppError::BadRequest(
             "path must be a safe project-relative path".into(),
         ));
     }
+    validate_text(&r.title, "title", 2048)?;
+    validate_body(&r.body)?;
     let id = Uuid::new_v4();
     let event = build_audit(
         &p,
@@ -1063,7 +1170,9 @@ async fn patch_document(
     Path((pid, did)): Path<(String, String)>,
     Json(r): Json<DocumentPatch>,
 ) -> Result<Json<Document>, AppError> {
-    let p = permitted(&s, &h, Permission::Document).await?;
+    // Baseline writes are author/owner only; reviewers propose through the
+    // review layer instead (see auth.rs project_acl).
+    let p = permitted(&s, &h, Permission::Manage).await?;
     let mut v = document_for_project(&s, &pid, &did).await?;
     if let Some(expected) = r.expected_revision
         && expected != v.revision
@@ -1074,7 +1183,7 @@ async fn patch_document(
         )));
     }
     if let Some(x) = r.path {
-        if !valid_document_path(x.trim()) {
+        if !valid_document_path(&x) {
             return Err(AppError::BadRequest(
                 "path must be a safe project-relative path".into(),
             ));
@@ -1082,9 +1191,11 @@ async fn patch_document(
         v.path = x;
     }
     if let Some(x) = r.body {
+        validate_body(&x)?;
         v.body = x;
     }
     if let Some(x) = r.title {
+        validate_text(&x, "title", 2048)?;
         v.title = x;
     }
     if let Some(x) = r.data {
@@ -1136,7 +1247,9 @@ async fn delete_document(
     h: HeaderMap,
     Path((pid, did)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let p = permitted(&s, &h, Permission::Document).await?;
+    // Deleting a document destroys author work: owner/author only (a reviewer
+    // must never be able to delete what they were invited to review).
+    let p = permitted(&s, &h, Permission::Manage).await?;
     let v = document_for_project(&s, &pid, &did).await?;
     let event = build_audit(&p, id(&pid)?, "deleted", "document", v.id, json!({}));
     s.repo.delete_document(v.id, Some(event)).await?;
@@ -1151,7 +1264,9 @@ async fn list_members(
     Path(project_raw): Path<String>,
 ) -> Result<Json<Vec<ProjectMembership>>, AppError> {
     let project = project_for(&state, &project_raw).await?;
-    project_access(&state, &headers, project.id, Permission::Manage).await?;
+    // Any project member may see who else is collaborating (the share panel
+    // renders this list); only owner/author may modify it.
+    project_access(&state, &headers, project.id, Permission::Read).await?;
     Ok(Json(state.repo.list_memberships(project.id).await?))
 }
 async fn get_my_membership(
@@ -1179,6 +1294,7 @@ async fn add_member(
     if request.subject.trim().is_empty() {
         return Err(AppError::BadRequest("subject is required".into()));
     }
+    validate_text(&request.subject, "subject", 256)?;
     if matches!(request.role, MembershipRole::Owner) {
         return Err(AppError::BadRequest(
             "owner access is assigned to the creator".into(),
@@ -1195,6 +1311,36 @@ async fn add_member(
         .await?;
     Ok((StatusCode::CREATED, Json(membership)))
 }
+async fn remove_member(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_raw, subject)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let project = project_for(&state, &project_raw).await?;
+    let principal = project_access(&state, &headers, project.id, Permission::Manage).await?;
+    let membership = state
+        .repo
+        .get_membership(project.id, &subject)
+        .await
+        .map_err(|_| AppError::NotFound)?;
+    if membership.role == MembershipRole::Owner {
+        return Err(AppError::BadRequest(
+            "owner access is assigned to the creator and cannot be removed".into(),
+        ));
+    }
+    state.repo.delete_membership(project.id, &subject).await?;
+    audit(
+        &state,
+        &principal,
+        project.id,
+        "removed",
+        "membership",
+        project.id,
+        json!({"subject": subject}),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
 // --- Reference handlers ---
 
@@ -1210,6 +1356,33 @@ async fn reference_for_project(
     }
     Ok(reference)
 }
+/// Sanity limits for reference metadata. Keeps one bad record from bloating
+/// the auto-generated refs.yml that is injected into every compile of the
+/// project (a 200 KB title previously propagated into every build).
+fn validate_reference_metadata(m: &ReferenceMetadata) -> Result<(), AppError> {
+    validate_text(&m.title, "title", 2048)?;
+    if m.authors.len() > 64 {
+        return Err(AppError::BadRequest("too many authors (max 64)".into()));
+    }
+    for author in &m.authors {
+        validate_text(author, "author", 512)?;
+    }
+    for (key, value) in &m.extra {
+        validate_text(key, "extra key", 256)?;
+        validate_text(value, "extra value", 4096)?;
+    }
+    if let Some(doi) = &m.doi {
+        validate_text(doi, "doi", 512)?;
+    }
+    if let Some(pmid) = &m.pmid {
+        validate_text(pmid, "pmid", 128)?;
+    }
+    if let Some(journal) = &m.journal {
+        validate_text(journal, "journal", 1024)?;
+    }
+    Ok(())
+}
+
 async fn create_reference(
     State(s): State<AppState>,
     h: HeaderMap,
@@ -1218,6 +1391,7 @@ async fn create_reference(
 ) -> Result<(StatusCode, Json<ReferenceEntry>), AppError> {
     let p = permitted(&s, &h, Permission::Manage).await?;
     let project = project_for(&s, &pid).await?;
+    validate_reference_metadata(&r.metadata)?;
     let now = Utc::now();
     let id = Uuid::new_v4();
     let event = build_audit(&p, project.id, "created", "reference", id, json!({}));
@@ -1262,8 +1436,34 @@ async fn patch_reference(
 ) -> Result<Json<ReferenceEntry>, AppError> {
     let p = permitted(&s, &h, Permission::Manage).await?;
     let mut v = reference_for_project(&s, &pid, &rid).await?;
-    if let Some(x) = r.metadata {
-        v.metadata = x;
+    if let Some(patch) = r.metadata {
+        // PATCH semantics: merge only the supplied fields into the stored
+        // metadata (a partial body previously failed with a 422 because
+        // ReferenceMetadata required every field).
+        let mut merged = v.metadata.clone();
+        if let Some(title) = patch.title {
+            merged.title = title;
+        }
+        if let Some(authors) = patch.authors {
+            merged.authors = authors;
+        }
+        if let Some(year) = patch.year {
+            merged.year = year;
+        }
+        if let Some(doi) = patch.doi {
+            merged.doi = doi;
+        }
+        if let Some(pmid) = patch.pmid {
+            merged.pmid = pmid;
+        }
+        if let Some(journal) = patch.journal {
+            merged.journal = journal;
+        }
+        if let Some(extra) = patch.extra {
+            merged.extra = extra;
+        }
+        validate_reference_metadata(&merged)?;
+        v.metadata = merged;
     }
     if r.provenance.is_some() {
         v.provenance = r.provenance;
@@ -1334,6 +1534,20 @@ async fn put_fulltext(
     if r.content_type != "application/pdf" || contents.is_empty() {
         return Err(AppError::BadRequest(
             "fulltext contents must be a non-empty PDF".into(),
+        ));
+    }
+    // Validate the payload actually looks like a PDF (magic header + EOF
+    // trailer) instead of trusting the declared content type: a 1-byte file
+    // declared as application/pdf previously sailed through and later produced
+    // a corrupt PDF inside the export archive.
+    let looks_like_pdf = contents.len() > 4
+        && &contents[..5] == b"%PDF-"
+        && contents[contents.len().saturating_sub(1024)..]
+            .windows(5)
+            .any(|window| window == b"%%EOF");
+    if !looks_like_pdf {
+        return Err(AppError::BadRequest(
+            "fulltext contents are not a valid PDF (missing %PDF- header or %%EOF trailer)".into(),
         ));
     }
     s.blobs
@@ -1604,8 +1818,11 @@ async fn api_compile(
     headers: HeaderMap,
     Json(mut request): Json<CompileRequest>,
 ) -> Result<Json<CompileResponse>, AppError> {
-    let principal =
-        project_access(&state, &headers, request.project_id, Permission::Document).await?;
+    // Compiling is a read-only operation (the compile service never mutates the
+    // project). The docs' roles table promises "Read and compile" for every
+    // role, so any authenticated project member may compile — including
+    // read-only users, who were previously denied here.
+    let principal = project_access(&state, &headers, request.project_id, Permission::Read).await?;
     if request.sources.is_empty() || !request.sources.contains_key(&request.entry) {
         return Err(AppError::BadRequest("sources must contain entry".into()));
     }
@@ -1776,6 +1993,24 @@ async fn export_project(
 ) -> Result<Json<ExportResponse>, AppError> {
     let principal = permitted(&s, &h, Permission::Document).await?;
     let project = project_for(&s, &pid).await?;
+    // The export archive is a full project snapshot: the generated master
+    // includes every document, so `entry` only selects which document the
+    // request was made from. Silently ignoring a bogus entry (previously any
+    // value returned 200) made the field a lie — reject unknown entries so
+    // clients get a 400 instead of a wrong-but-successful export.
+    let document_paths: Vec<String> = s
+        .repo
+        .list_documents(project.id)
+        .await?
+        .into_iter()
+        .map(|document| document.path)
+        .collect();
+    if !document_paths.contains(&r.entry) {
+        return Err(AppError::BadRequest(format!(
+            "entry must be a document path in this project: {}",
+            r.entry
+        )));
+    }
     let references = s.repo.list_references(project.id).await?;
     let docs = gather_documents(s.repo.as_ref(), &project, &references).await?;
     let (bibliographies, missing) =
@@ -1792,23 +2027,17 @@ async fn export_project(
         sources.insert(doc.path.clone(), doc.body.clone());
         doc_yaml.insert(doc.path.clone(), doc.yaml.clone());
     }
-    let entry_dir = docs
-        .first()
-        .map_or("", |d| d.path.rsplit_once('/').map_or("", |(dir, _)| dir));
-    let master_path = if entry_dir.is_empty() {
-        "main.typ".to_owned()
-    } else {
-        format!("{entry_dir}/main.typ")
-    };
+    // The generated master lives at the project root and includes each
+    // document by its full project-relative path, so documents in nested
+    // directories resolve correctly (a bare basename like "ch2.typ" would only
+    // work for docs at the root). The user's own main.typ, if any, is skipped
+    // from the includes to avoid self-inclusion (its body is replaced by the
+    // generated master, which is the existing export contract).
+    let master_path = "main.typ".to_owned();
     let master_source = docs
         .iter()
-        .map(|doc| {
-            let name: &str = doc
-                .path
-                .rsplit_once('/')
-                .map_or(doc.path.as_str(), |(_, file)| file);
-            format!("#include \"{name}\"")
-        })
+        .filter(|doc| doc.path != master_path)
+        .map(|doc| format!("#include \"{}\"", doc.path))
         .collect::<Vec<_>>()
         .join("\n");
     sources.insert(master_path.clone(), master_source);
@@ -1828,6 +2057,10 @@ async fn export_project(
         .map(|d| (d.path.clone(), d.body.clone()))
         .collect();
     let date = Utc::now().format("%Y-%m-%d").to_string();
+    // The download is the portable ARCHIVE, not the compiled PDF; naming it
+    // after the PDF filename misled every client (the archive contains all
+    // documents + per-document RIS + the PDF). Use a stable, descriptive name.
+    let zip_filename = format!("{}-export-{}.zip", project.name, date);
     let archive_input = ProjectArchiveInput {
         date,
         name: project.name.clone(),
@@ -1850,14 +2083,14 @@ async fn export_project(
         "exported",
         "export",
         project.id,
-        json!({"zip_filename": export.pdf_filename}),
+        json!({"zip_filename": zip_filename}),
     )
     .await?;
     Ok(Json(ExportResponse {
         compile,
         references: references_export,
         zip_base64: Some(base64::engine::general_purpose::STANDARD.encode(zip)),
-        zip_filename: Some(export.pdf_filename),
+        zip_filename: Some(zip_filename),
     }))
 }
 
@@ -1907,13 +2140,31 @@ async fn delete_share_link(
 ) -> Result<StatusCode, AppError> {
     permitted(&s, &h, Permission::Manage).await?;
     let project = project_for(&s, &pid).await?;
-    let links = s.repo.list_share_links(project.id).await?;
-    if !links.iter().any(|l| l.token == token) {
+    // Only the token hash is persisted (migration 0004), so revocation has to
+    // resolve by hashing the raw token — comparing against the listed rows is
+    // always false because stored rows never carry the plaintext token.
+    let link = s
+        .repo
+        .resolve_share_link(&token)
+        .await
+        .map_err(|_| AppError::NotFound)?;
+    if link.project_id != project.id {
         return Err(AppError::NotFound);
     }
     s.repo.delete_share_link(&token).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+/// Ordering used to decide whether a share link upgrades an existing
+/// membership: owner > author > reviewer > read-only.
+fn membership_role_rank(role: &MembershipRole) -> u8 {
+    match role {
+        MembershipRole::Owner => 3,
+        MembershipRole::Author => 2,
+        MembershipRole::Reviewer => 1,
+        MembershipRole::ReadOnly => 0,
+    }
+}
+
 async fn redeem_share_link(
     State(s): State<AppState>,
     h: HeaderMap,
@@ -1936,22 +2187,40 @@ async fn redeem_share_link(
         .repo
         .get_membership(link.project_id, &principal.subject)
         .await;
-    if existing.is_err() {
-        s.repo
-            .create_membership(ProjectMembership {
-                project_id: link.project_id,
-                subject: principal.subject.clone(),
-                role,
-                created_at: Utc::now(),
-            })
-            .await?;
+    match existing {
+        Err(_) => {
+            s.repo
+                .create_membership(ProjectMembership {
+                    project_id: link.project_id,
+                    subject: principal.subject.clone(),
+                    role,
+                    created_at: Utc::now(),
+                })
+                .await?;
+        }
+        Ok(existing) if membership_role_rank(&existing.role) < membership_role_rank(&role) => {
+            // A link grants access at its chosen role: redeeming it upgrades an
+            // existing lower membership. A higher existing role is never
+            // downgraded (a link is a grant, not a restriction).
+            s.repo
+                .upsert_membership(ProjectMembership {
+                    project_id: link.project_id,
+                    subject: principal.subject.clone(),
+                    role,
+                    created_at: existing.created_at,
+                })
+                .await?;
+        }
+        Ok(_) => {}
     }
     Ok(Json(json!({"project_id": link.project_id})))
 }
 
 #[must_use]
 pub fn openapi_document() -> Value {
-    json!({"openapi":"3.1.0","info":{"title":"Nisaba app service","version":"0.1.0"},"security":[{"bearerAuth":[]}],"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer","bearerFormat":"JWT"}}},"paths":{"/projects":{"get":{"operationId":"listProjects"},"post":{"operationId":"createProject"}},"/projects/{project_id}":{"get":{"operationId":"getProject"},"patch":{"operationId":"updateProject"},"delete":{"operationId":"deleteProject"}},"/projects/{project_id}/documents":{"get":{"operationId":"listDocuments"},"post":{"operationId":"createDocument"}},"/projects/{project_id}/documents/{document_id}":{"get":{"operationId":"getDocument"},"patch":{"operationId":"updateDocument"},"delete":{"operationId":"deleteDocument"}},"/projects/{project_id}/references":{"get":{"operationId":"listReferences"},"post":{"operationId":"createReference"}},"/projects/{project_id}/references/{reference_id}/fulltext":{"get":{"operationId":"getFulltext"},"put":{"operationId":"putFulltext"},"delete":{"operationId":"deleteFulltext"}},"/projects/{project_id}/exports":{"post":{"operationId":"exportProject"}}}})
+    // The OpenAPI document is data, not code: it lives in openapi.json
+    // (embedded at compile time) so it stays machine-validatable and diffable.
+    serde_json::from_str(include_str!("openapi.json")).expect("openapi.json must be valid JSON")
 }
 async fn openapi() -> Json<Value> {
     Json(openapi_document())

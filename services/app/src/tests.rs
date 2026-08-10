@@ -392,3 +392,265 @@ fn openapi_describes_flat_document_routes_only() {
     assert!(text.contains("/projects/{project_id}/documents"));
     assert!(text.contains("/projects/{project_id}/documents/{document_id}"));
 }
+
+#[tokio::test]
+async fn reviewer_cannot_write_or_delete_documents() {
+    let app = router(state());
+    let (project, document) = create_project_and_document(app.clone()).await;
+    let add = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/members", project.id),
+        "alice",
+        "author",
+        Some(json!({"subject": "bob", "role": "reviewer"})),
+    )
+    .await;
+    assert_eq!(add.status(), StatusCode::CREATED);
+    // Reviewer (membership + IdP role) must be blocked from baseline writes:
+    // PATCH/DELETE document, and create document.
+    let cases: Vec<(String, String, Option<Value>)> = vec![
+        (
+            "PATCH".into(),
+            format!("/projects/{}/documents/{}", project.id, document.id),
+            Some(json!({"body": "sneaky overwrite"})),
+        ),
+        (
+            "DELETE".into(),
+            format!("/projects/{}/documents/{}", project.id, document.id),
+            None,
+        ),
+        (
+            "POST".into(),
+            format!("/projects/{}/documents", project.id),
+            Some(json!({"path": "new.typ", "title": "New"})),
+        ),
+    ];
+    for (method, path, body) in cases {
+        let response = request(app.clone(), &method, &path, "bob", "reviewer", body).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {path} should be forbidden for a reviewer"
+        );
+    }
+    // The author can still edit.
+    let edit = request(
+        app.clone(),
+        "PATCH",
+        &format!("/projects/{}/documents/{}", project.id, document.id),
+        "alice",
+        "author",
+        Some(json!({"body": "= Author edit"})),
+    )
+    .await;
+    assert_eq!(edit.status(), StatusCode::OK);
+    // And the reviewer can still READ the document (review workflow needs it).
+    let read = request(
+        app,
+        "GET",
+        &format!("/projects/{}/documents/{}", project.id, document.id),
+        "bob",
+        "reviewer",
+        None,
+    )
+    .await;
+    assert_eq!(read.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn nul_and_control_characters_are_rejected() {
+    let app = router(state());
+    let (project, _) = create_project_and_document(app.clone()).await;
+    // NUL byte in project name
+    let nul_name = request(
+        app.clone(),
+        "POST",
+        "/projects",
+        "alice",
+        "author",
+        Some(json!({"name": "bad\u{0}name"})),
+    )
+    .await;
+    assert_eq!(nul_name.status(), StatusCode::BAD_REQUEST);
+    // Control character (tab) in document path
+    let tab_path = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/documents", project.id),
+        "alice",
+        "author",
+        Some(json!({"path": "a\tb.typ", "title": "bad"})),
+    )
+    .await;
+    assert_eq!(tab_path.status(), StatusCode::BAD_REQUEST);
+    // Trailing whitespace in path
+    let trail = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/documents", project.id),
+        "alice",
+        "author",
+        Some(json!({"path": "trail.typ ", "title": "bad"})),
+    )
+    .await;
+    assert_eq!(trail.status(), StatusCode::BAD_REQUEST);
+    // NUL in document body
+    let nul_body = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/documents", project.id),
+        "alice",
+        "author",
+        Some(json!({"path": "ok.typ", "title": "ok", "body": "a\u{0}b"})),
+    )
+    .await;
+    assert_eq!(nul_body.status(), StatusCode::BAD_REQUEST);
+    // Oversized project name
+    let huge = request(
+        app,
+        "POST",
+        "/projects",
+        "alice",
+        "author",
+        Some(json!({"name": "x".repeat(2000)})),
+    )
+    .await;
+    assert_eq!(huge.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn owner_can_remove_members_but_not_the_owner_row() {
+    let app = router(state());
+    let (project, _) = create_project_and_document(app.clone()).await;
+    let add = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/members", project.id),
+        "alice",
+        "author",
+        Some(json!({"subject": "reader", "role": "read-only"})),
+    )
+    .await;
+    assert_eq!(add.status(), StatusCode::CREATED);
+    let remove = request(
+        app.clone(),
+        "DELETE",
+        &format!("/projects/{}/members/reader", project.id),
+        "alice",
+        "author",
+        None,
+    )
+    .await;
+    assert_eq!(remove.status(), StatusCode::NO_CONTENT);
+    let members: Vec<ProjectMembership> = response_body(
+        request(
+            app.clone(),
+            "GET",
+            &format!("/projects/{}/members", project.id),
+            "alice",
+            "author",
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert!(!members.iter().any(|m| m.subject == "reader"));
+    // Owner row cannot be removed.
+    let owner_remove = request(
+        app,
+        "DELETE",
+        &format!("/projects/{}/members/alice", project.id),
+        "alice",
+        "author",
+        None,
+    )
+    .await;
+    assert_eq!(owner_remove.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn any_member_can_list_members() {
+    let app = router(state());
+    let (project, _) = create_project_and_document(app.clone()).await;
+    let add = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/members", project.id),
+        "alice",
+        "author",
+        Some(json!({"subject": "bob", "role": "reviewer"})),
+    )
+    .await;
+    assert_eq!(add.status(), StatusCode::CREATED);
+    let response = request(
+        app,
+        "GET",
+        &format!("/projects/{}/members", project.id),
+        "bob",
+        "reviewer",
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn share_link_revocation_actually_revokes() {
+    let app = router(state());
+    let (project, _) = create_project_and_document(app.clone()).await;
+    let created: ShareLink = response_body(
+        request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/share-links", project.id),
+            "alice",
+            "author",
+            Some(json!({"role": "read-only"})),
+        )
+        .await,
+    )
+    .await;
+    assert!(!created.token.is_empty());
+    let revoke = request(
+        app.clone(),
+        "DELETE",
+        &format!("/projects/{}/share-links/{}", project.id, created.token),
+        "alice",
+        "author",
+        None,
+    )
+    .await;
+    assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+    // Redeeming the revoked token must now fail.
+    let redeem = request(
+        app.clone(),
+        "POST",
+        &format!("/share/{}/redeem", created.token),
+        "bob",
+        "reviewer",
+        None,
+    )
+    .await;
+    assert_eq!(redeem.status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn openapi_describes_all_public_routes() {
+    let text = openapi_document().to_string().to_lowercase();
+    for path in [
+        "/projects/{project_id}/documents",
+        "/projects/{project_id}/documents/{document_id}",
+        "/projects/{project_id}/members/{subject}",
+        "/projects/{project_id}/membership",
+        "/projects/{project_id}/share-links",
+        "/share/{token}/redeem",
+        "/projects/{project_id}/audit",
+        "/projects/{project_id}/documents/{document_id}/history",
+        "/api/compile",
+        "/healthz",
+        "/health/ready",
+    ] {
+        assert!(text.contains(path), "openapi must document {path}");
+    }
+}

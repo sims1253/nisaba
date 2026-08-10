@@ -13,7 +13,8 @@ Folders are derived from those paths, so Nisaba does not impose a content-specif
 
 ## Capabilities
 
-- collaborative Typst editing with reconnect, presence, and review marks
+- collaborative Typst editing with reconnect, protocol-level presence/awareness
+  (roster + heartbeat), and review marks
 - flat project/document APIs plus references, sharing, history, and portable export
 - in-process Typst compilation and PDF preview
 - PostgreSQL persistence, S3-compatible blob storage, and OIDC authentication
@@ -67,6 +68,7 @@ Typst; [`docs/testing.md`](docs/testing.md) lists the suites and prerequisites.
 
 ## Documentation
 
+- [User guide](docs/user-guide.md)
 - [Domain vocabulary](CONTEXT.md)
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)

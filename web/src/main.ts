@@ -23,7 +23,7 @@ import { connectSync, isImportingRemote, type SyncStatus } from "./sync"
 import { VirtualPdfViewer } from "./pdf-viewer"
 import * as api from "./api"
 import type { CompileView, Fulltext, MarkInput, MembershipRole, NisabaDocument, Project, Reference } from "./api"
-import { AuthTokenLive, OidcClient, OidcClientLive, onAuthFailure, readStoredAccessToken, currentUserDisplayName, isOidcCallback, oidcConfigFromEnv, scheduleTokenRefresh } from "./auth"
+import { AuthTokenLive, OidcClient, OidcClientLive, onAuthFailure, readStoredAccessToken, currentUserDisplayName, decodedTokenPayload, isOidcCallback, oidcConfigFromEnv, scheduleTokenRefresh } from "./auth"
 import { emptyReviewState, reviewReducer, type ReviewItem, type ReviewState } from "./review"
 import { createCursorAt, resolveCursor } from "./cursor"
 import "./styles.css"
@@ -95,7 +95,23 @@ const state: Workspace = {
 const loroCompartment = new Compartment()
 /** Controls whether the editor accepts input (disabled for read-only roles). */
 const editableComp = new Compartment()
-let activeLoro = new LoroDoc()
+/** A fresh replica with a UNIQUE CRDT peer id. */
+function newReplica(): LoroDoc {
+  const doc = new LoroDoc()
+  // CRDT peers MUST have distinct ids: every client previously used Loro's
+  // default peer id, so a second collaborator's ops collided with the first
+  // client's and the relay silently dropped them — reviewer suggestions never
+  // reached the relay once another session had the document open (2026-08-09
+  // collaboration finding, reproduced e2e).
+  const buf = new Uint32Array(2)
+  crypto.getRandomValues(buf)
+  const hi = buf[0] ?? 0
+  const lo = buf[1] ?? 0
+  doc.setPeerId((BigInt(hi) << 32n) | BigInt(lo))
+  return doc
+}
+
+let activeLoro = newReplica()
 
 /**
  * Resolves the Loro text container the editor is bound to.
@@ -232,7 +248,7 @@ root.innerHTML = `
           <button id="share-button" class="toolbar-button" type="button" title="Invite collaborators" hidden>Share</button>
           <button id="export-button" class="toolbar-button" type="button">Export</button>
           <button id="toolbar-suggesting" class="toolbar-button" type="button" aria-pressed="false" title="Toggle track changes" disabled>Track changes: off</button>
-          <button id="review-button" class="toolbar-button" type="button" aria-pressed="false">Review</button>
+          <button id="review-button" class="toolbar-button" type="button" aria-pressed="false">Review<span class="review-badge" hidden></span></button>
           <button id="compile-button" class="primary-button" type="button">Compile <span>⌘↵</span></button>
         </div>
       </div>
@@ -1196,7 +1212,7 @@ function openDocument(entry: OutlineEntry): void {
       // origin to avoid CRDT duplication (bug N1): the first client to reach an
       // empty relay pushes its seed; later clients CLEAR their local seed and adopt
       // the relay's snapshot.
-      const replica = new LoroDoc()
+      const replica = newReplica()
       activeLoro = replica
       // Subscribe BEFORE seeding/connecting so the listener catches the relay's
       // welcome snapshot (which arrives inside connectSync's importRemote and may
@@ -1217,31 +1233,17 @@ function openDocument(entry: OutlineEntry): void {
 }
 
 function loadIntoEditor(body: string): void {
-  // Seed BOTH the Loro replica and the CodeMirror doc with the persisted body.
-  // The replica seed is required so the loro-codemirror binding's init reconcile
-  // (run on a microtask after the compartment reconfigure below) sees the editor
-  // and replica already agree and does NOT blank the editor while waiting for the
-  // relay's welcome snapshot. The CM seed gives the user immediate content even
-  // for documents that were never synced through the CRDT (API-created/edited).
+  // Seed ONLY the CodeMirror doc with the persisted body for immediate display.
+  // The Loro replica is NOT seeded here — it stays empty until connectSync's
+  // WELCOME handler either imports the relay's snapshot or seeds it as the
+  // origin. This prevents the 2026-08-09 collaboration bug where a locally-
+  // seeded private text container made delta exports arrive as "pending" ops
+  // at the relay (the container's creation was below the syncFrom baseline).
   //
-  // Seeding the replica locally could duplicate the body when two clients each
-  // seed independently and both push — bug N1. That is resolved in connectSync's
-  // welcome handler, NOT here: the first client to reach an empty relay pushes
-  // its seed as the single authoritative origin, and any later client CLEARS its
-  // local seed (an op-id-scoped delete that does not touch the relay's copy) and
-  // adopts the relay's snapshot. So seeding here is safe — the dedup happens on
-  // connect. See sync.ts `connectSync` for the full N1 rationale.
-  const text = activeLoro.getText("text")
-  // updateByLine uses a line-based diff (documented for >50K-char bodies) instead
-  // of constructing one giant insert op — dramatically faster for large documents.
-  text.updateByLine(body)
-  activeLoro.commit({ origin: "load" })
-  // Replace the editor text and rebind the Loro extensions to the fresh replica
-  // in one transaction. The undo manager excludes the "load" origin so the
-  // seed is not undoable as a giant "delete everything" step. The
-  // isLoadingDocument flag marks this dispatch as a non-user edit so neither the
-  // save listener (no "Unsaved changes" flash on load) nor the review tracker
-  // (seed not recorded as a giant suggestion) treats it as typing.
+  // The CRDT binding (LoroExtensions) is also NOT attached here — it is
+  // attached in the onReady callback after the WELCOME, when the replica has
+  // its definitive content. The editor is a plain CodeMirror instance until
+  // then; this is fine because the WELCOME arrives in milliseconds.
   isLoadingDocument = true
   try {
     editor.dispatch({
@@ -1249,9 +1251,6 @@ function loadIntoEditor(body: string): void {
       effects: [
         setReviewItems.of(state.review.items),
         setDiagnostics.of([]),
-        loroCompartment.reconfigure(
-          LoroExtensions(activeLoro, undefined, new UndoManager(activeLoro, { excludeOriginPrefixes: ["load"] }), getTextFromDoc)
-        )
       ]
     })
   } finally {
@@ -1272,22 +1271,34 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
   syncConnection = connectSync(replica, {
     documentId: document.id,
     token,
-    // The persisted body is the seed: connectSync pushes it once if the relay is
-    // empty (this client becomes the origin), otherwise adopts the relay's
-    // snapshot. See sync.ts for the N1 dedup rationale.
     seedBody: document.body,
-    // Called immediately before the relay's authoritative snapshot is imported,
-    // only when the relay already had content. Clear CodeMirror so the
-    // loro-codemirror binding propagates the clear to the replica, leaving both
-    // empty and in sync; the subsequent import then fills both without
-    // duplication. Guarded by isLoadingDocument so this clear (a synthetic
-    // dispatch, not user typing) does not trigger autosave or review tracking.
-    // The import that follows runs under isImportingRemote(), which separately
-    // suppresses those listeners for the relay text.
-    onBeforeAdopt: () => {
+    // Called after the WELCOME handler has given the replica its definitive
+    // content (either imported from the relay or seeded as the origin). The
+    // CRDT binding is attached HERE so the replica never carries a stale local
+    // seed whose container creation would sit below the export baseline (the
+    // 2026-08-09 "pending ops" collaboration bug). At this point CM and the
+    // replica already agree (both have the same body), so the binding's init
+    // reconcile is a no-op (no editor blank).
+    onReady: () => {
+      // Attach the CRDT binding AND sync CM to the replica's text in one guarded
+      // transaction. Without the explicit CM sync, the binding's init-reconcile
+      // (a microtask) would detect a mismatch (CM has the REST body, the replica
+      // has the relay-imported body — they can differ by whitespace) and dispatch
+      // a CM replacement. That replacement flows through the binding into the
+      // replica as a text-touching local update, which the relay's reviewer gate
+      // rejects (4003). By syncing CM here (under isLoadingDocument so no
+      // listener fires), the init-reconcile sees CM == replica and is a no-op.
       isLoadingDocument = true
       try {
-        editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: "" } })
+        const replicaText = getTextFromDoc(activeLoro).toString()
+        editor.dispatch({
+          changes: { from: 0, to: editor.state.doc.length, insert: replicaText },
+          effects: [
+            loroCompartment.reconfigure(
+              LoroExtensions(activeLoro, undefined, new UndoManager(activeLoro, { excludeOriginPrefixes: ["load"] }), getTextFromDoc)
+            )
+          ]
+        })
       } finally {
         isLoadingDocument = false
       }
@@ -1366,6 +1377,13 @@ function captureSaveContext(): SaveContext | undefined {
 function scheduleSave(): void {
   const context = captureSaveContext()
   if (!context) return
+  // Reviewers/read-only viewers have no baseline to persist (the server 403s
+  // their PATCH); their edits are synced through the review layer instead, so
+  // the "Unsaved changes" autosave dance would only produce a stuck error.
+  if (state.role !== undefined && state.role !== "owner" && state.role !== "author") {
+    if (state.role === "reviewer") status("Suggestion tracked")
+    return
+  }
   if (saveTimer !== undefined) clearTimeout(saveTimer)
   pendingSave = context
   saveTimer = setTimeout(saveNow, 1200)
@@ -1408,6 +1426,16 @@ function flushPendingSave(): void {
 
 /** Performs the PATCH for a specific save context and handles the 409 recovery. */
 function runSave(projectId: string, context: SaveContext): void {
+  // Reviewers and read-only viewers have no baseline to save: the server
+  // rejects their PATCH (403), which used to leave the status bar permanently
+  // stuck on the permission error after every suggestion. Their edits live in
+  // the shared review layer (synced via the relay), not in the app database.
+  if (state.role !== undefined && state.role !== "owner" && state.role !== "author") {
+    if (context.body !== state.document?.body) {
+      status(state.role === "reviewer" ? "Suggestion tracked (synced via review)" : "View-only")
+    }
+    return
+  }
   if (context.body === state.document?.body && state.selected?.document.id === context.documentId) { status("Saved"); return }
   status("Saving…")
   // Mark the request as in-flight so the beforeunload guard can warn about an
@@ -1752,18 +1780,28 @@ const editor = new EditorView({
           // The review tracker still runs for remote changes so peer edits remap
           // existing accept/reject anchors; it classifies remote edits itself.
           const remote = isImportingRemote()
-          if (!isLoadingDocument && !remote) {
-            scheduleSave()
-            // Live error checking: after the typing pause, recompile in the
-            // background for fresh diagnostic underlines (no PDF update). Same
-            // remote/load exclusions as save — peer imports and the load seed are
-            // not user typing, so they must not trigger a diagnostics build.
-            scheduleDiagnosticsCompile()
+          if (!isLoadingDocument) {
+            // A suggesting-mode edit is a PROPOSAL: it is persisted through the
+            // Loro review map (persistReview) and must never be written into the
+            // baseline body — that would silently apply the suggestion, and for
+            // reviewers the server correctly rejects baseline PATCHes. Only
+            // non-suggestion edits (including accept/reject resolutions, which
+            // apply a suggestion to the text) are flushed to the baseline.
+            const recordedSuggestion = updateReviewItems(update)
+            if (!remote && !recordedSuggestion) {
+              scheduleSave()
+              // Live error checking: after the typing pause, recompile in the
+              // background for fresh diagnostic underlines (no PDF update). Same
+              // remote/load exclusions as save — peer imports and the load seed
+              // are not user typing, so they must not trigger a diagnostics build.
+              scheduleDiagnosticsCompile()
+            } else if (!remote && recordedSuggestion) {
+              status("Suggestion tracked")
+            }
           }
-          if (!isLoadingDocument) updateReviewItems(update)
         }
       }),
-      loroCompartment.of(LoroExtensions(activeLoro, undefined, undefined, getTextFromDoc))
+      loroCompartment.of([])
     ]
   }),
   parent: root.querySelector("#editor") ?? undefined
@@ -1801,7 +1839,10 @@ let reviewSyncUnsubscribe: (() => void) | undefined
  * suggestion actually recorded, or a non-remote apply) trigger a persist, never a
  * pure position remap, to avoid per-keystroke CRDT writes.
  */
-function updateReviewItems(update: ViewUpdate): void {
+function updateReviewItems(update: ViewUpdate): boolean {
+  // Returns true when this transaction recorded one or more new suggestions (a
+  // suggesting-mode edit that must be persisted through the Loro review map and
+  // must NOT be written into the baseline body via the REST PATCH).
   // The relay wraps every `doc.import()` in `isImportingRemote()`. Loro fires its
   // subscriptions synchronously inside that call, and the loro-codemirror listener
   // dispatches to CodeMirror synchronously too, so the flag is set for exactly the
@@ -1878,6 +1919,7 @@ function updateReviewItems(update: ViewUpdate): void {
   renderReviewBanner()
   renderReviewSidebar()
   if (recordedNew) persistReview()
+  return recordedNew
 }
 
 // ---------------------------------------------------------------------------
@@ -1889,10 +1931,13 @@ function updateReviewItems(update: ViewUpdate): void {
  * single JSON string, so they survive reload and sync to every collaborator through
  * the existing WebSocket relay (the same path the text CRDT uses — no new endpoints).
  *
- * The whole item list is one value keyed "items". Loro's last-writer-wins map semantics
- * are fine here because each peer always writes the FULL, merged set (positions already
- * remapped against the same shared text), so concurrent writes converge to whichever
- * landed last — and the next local edit re-persists the authoritative current state.
+ * The whole item list is one value keyed "items". Loro maps are last-writer-wins per
+ * key, so a peer that writes a STALE or EMPTY list (e.g. a fresh session whose
+ * catch-up has not arrived yet, or a reload racing the WELCOME) would clobber the
+ * shared items — the 2026-08-09 collaboration finding: reviewer suggestions lost,
+ * snapshots showed the review container reset to []. The write therefore MERGES the
+ * current map value with the local list (union by id, local wins per id) instead of
+ * replacing it.
  *
  * The map.set() is a no-op when the value is unchanged (Loro dedups it), so calling
  * this after every review mutation is cheap. It is guarded so it does NOT run while:
@@ -1904,7 +1949,7 @@ function updateReviewItems(update: ViewUpdate): void {
 function persistReview(): void {
   if (applyingRemoteReview || isLoadingDocument || isImportingRemote()) return
   const doc = activeLoro
-  const json = JSON.stringify(state.review.items)
+  const json = JSON.stringify(mergeReviewItems(readReviewItemsFromMap(doc), state.review.items))
   try {
     const map = doc.getMap(REVIEW_CONTAINER)
     if (map.get("items") !== json) {
@@ -1915,16 +1960,43 @@ function persistReview(): void {
 }
 
 /**
+ * Union of two review item lists by id, with `local` winning for duplicate ids
+ * (the local session is authoritative for items it created or just acted on).
+ * Prevents a stale/empty session from clobbering shared review state.
+ */
+function mergeReviewItems(remote: readonly ReviewItem[], local: readonly ReviewItem[]): ReviewItem[] {
+  const byId = new Map<string, ReviewItem>()
+  for (const item of remote) byId.set(item.id, item)
+  for (const item of local) byId.set(item.id, item) // local wins
+  return [...byId.values()]
+}
+
+/** Reads the persisted review items JSON from the active replica's review map. */
+function readReviewItemsFromMap(doc: LoroDoc): ReviewItem[] {
+  try {
+    const value = doc.getMap(REVIEW_CONTAINER).get("items")
+    if (value === undefined) return []
+    const parsed = JSON.parse(String(value))
+    return Array.isArray(parsed) ? (parsed as ReviewItem[]) : []
+  } catch { return [] }
+}
+
+/**
  * Replaces local review items from a JSON payload read off the Loro map, guarding
  * against the write feedback loop with applyingRemoteReview and the save/retrack
  * guards with the existing flags. Called for both initial load (a prior session's
  * snapshot) and live remote updates.
+ *
+ * The remote list is MERGED with the current local list (local wins per id): a
+ * suggestion the user typed before this catch-up arrived must not be dropped
+ * from the UI (it is already persisted in the map via persistReview's merge).
  */
 function applyRemoteReview(items: readonly ReviewItem[]): void {
   applyingRemoteReview = true
   try {
-    state.review = { ...state.review, items, capability: "available" }
-    editor.dispatch({ effects: setReviewItems.of(items) })
+    const merged = mergeReviewItems(items, state.review.items)
+    state.review = { ...state.review, items: merged, capability: "available" }
+    editor.dispatch({ effects: setReviewItems.of(merged) })
     renderReviewBanner()
     renderReviewSidebar()
   } finally {
@@ -2291,12 +2363,24 @@ function openShare(): void {
      </div>
      <div id="share-links" class="reference-results"><p class="panel-note">No shareable links yet.</p></div>`
   )
+  const canManageMembers = state.role === "owner" || state.role === "author"
   const renderMembers = (members: readonly api.Membership[]) => {
     const host = el<HTMLElement>("#share-members")
     if (!host) return
     host.innerHTML = members.length === 0
       ? `<p class="panel-note">No members yet.</p>`
-      : members.map((m) => `<article class="reference-item"><strong>${escapeHtml(m.subject)}</strong><span>${escapeHtml(m.role)}</span></article>`).join("")
+      : members.map((m) => `<article class="reference-item"><strong>${escapeHtml(m.subject)}</strong><span>${escapeHtml(m.role)}</span>${canManageMembers && m.role !== "owner" ? `<button type="button" class="toolbar-button" data-remove-member="${escapeHtml(m.subject)}">Remove</button>` : ""}</article>`).join("")
+    for (const button of host.querySelectorAll<HTMLButtonElement>("[data-remove-member]")) {
+      button.addEventListener("click", () => {
+        const subject = button.dataset.removeMember ?? ""
+        run(api.removeMember(project.id, subject), () => {
+          status(`Removed ${subject} from the project`)
+          run(api.listMembers(project.id), renderMembers)
+        }, (error: unknown) => {
+          status(error instanceof Error ? error.message : "Couldn't remove member")
+        })
+      })
+    }
   }
   run(api.listMembers(project.id), renderMembers, () => { const h = el("#share-members"); if (h) h.innerHTML = `<p class="panel-note">Couldn't load members (you may not have permission).</p>` })
   // The panel host (#workspace-panel) already wraps content in a <form
@@ -2571,6 +2655,22 @@ function renderReviewBanner(): void {
   const open = state.review.items.filter((item) => item.status === "open").length
   banner.hidden = open === 0 && !state.review.suggesting
   setText("#review-summary", open === 0 ? "No open review items" : `${open} open review item${open === 1 ? "" : "s"}`)
+  // The toolbar Review button carries the same live count as the banner so the
+  // review affordance is discoverable without opening the pane (H: badge).
+  const reviewButton = el<HTMLElement>("#review-button")
+  if (reviewButton) {
+    const badge = reviewButton.querySelector<HTMLElement>(".review-badge")
+    if (open > 0) {
+      reviewButton.setAttribute("aria-pressed", "true")
+      if (badge) {
+        badge.textContent = String(open)
+        badge.hidden = false
+      }
+    } else if (badge) {
+      reviewButton.setAttribute("aria-pressed", "false")
+      badge.hidden = true
+    }
+  }
   setText("#suggesting-button", `Track changes: ${state.review.suggesting ? "on" : "off"}`)
   // The banner's suggesting toggle must be disabled for reviewers too, not just
   // the toolbar toggle below: a reviewer is locked into suggesting mode (H1), but
@@ -2607,9 +2707,15 @@ function renderReviewBanner(): void {
  *   so the Export button is hidden up-front rather than failing on click.
  */
 function applyRoleGates(): void {
-  const canManage = state.role === undefined || state.role === "owner" || state.role === "author"
-  const canWrite = canManage || state.role === "reviewer"
-  const readOnly = state.role === "read-only"
+  // Outside a project the membership role is unknown; gate the project list
+  // (＋, row deletes) on the IdP roles claim from the token instead — the same
+  // source the server authorizes. Inside a project, the membership role wins.
+  const tokenRoles = decodedTokenPayload()?.roles
+  const globalCanManage = Array.isArray(tokenRoles) && tokenRoles.includes("author")
+  const canManage = state.role === undefined
+    ? globalCanManage
+    : state.role === "owner" || state.role === "author"
+  const readOnly = state.role === undefined ? !globalCanManage && !(Array.isArray(tokenRoles) && tokenRoles.includes("reviewer")) : state.role === "read-only"
   const exportButton = el<HTMLElement>("#export-button")
   if (exportButton) exportButton.hidden = !canManage
   // Share/Invite is available to owners and authors (the roles the server allows
@@ -2626,18 +2732,37 @@ function applyRoleGates(): void {
   // also rejects these (403), but the UI should not expose the controls at all.
   if (editor) editor.dispatch({ effects: editableComp.reconfigure(EditorView.editable.of(!readOnly)) })
 
-  const deleteProjectBtns = document.querySelectorAll<HTMLButtonElement>(".delete-project-btn")
-  deleteProjectBtns.forEach((btn) => { btn.hidden = readOnly; btn.disabled = readOnly })
-  const addDocBtn = el<HTMLButtonElement>("#add-document-btn")
-  if (addDocBtn) { addDocBtn.hidden = readOnly; addDocBtn.disabled = readOnly }
-  const deleteDocBtns = document.querySelectorAll<HTMLButtonElement>(".delete-document-btn")
-  deleteDocBtns.forEach((btn) => { btn.hidden = readOnly; btn.disabled = readOnly })
+  // Create/delete/rename are owner/author actions server-side (reviewers are
+  // blocked from baseline writes and deletions), so the controls are hidden for
+  // reviewers too instead of surfacing a confusing 403 after the fact.
+  // NOTE: the selectors here must match the real DOM ids/classes rendered by
+  // renderProjectList/renderOutline (regression: they used to target
+  // non-existent ids, leaving the destructive controls visible to every role —
+  // the e2e permissions spec now asserts the real selectors).
+  const deleteProjectBtns = document.querySelectorAll<HTMLButtonElement>("[data-delete-project]")
+  deleteProjectBtns.forEach((btn) => { btn.hidden = !canManage; btn.disabled = !canManage })
+  const addDocBtn = el<HTMLButtonElement>("#add-document")
+  if (addDocBtn) { addDocBtn.hidden = !canManage; addDocBtn.disabled = !canManage }
+  const addDocEmptyBtn = el<HTMLButtonElement>("#add-document-empty")
+  if (addDocEmptyBtn) { addDocEmptyBtn.hidden = !canManage; addDocEmptyBtn.disabled = !canManage }
+  const addDemoBtn = el<HTMLButtonElement>("#add-demo")
+  if (addDemoBtn) { addDemoBtn.hidden = !canManage; addDemoBtn.disabled = !canManage }
+  const deleteDocBtns = document.querySelectorAll<HTMLButtonElement>("[data-delete-document]")
+  deleteDocBtns.forEach((btn) => { btn.hidden = !canManage; btn.disabled = !canManage })
+  // Project creation is an owner/author action (the server 403s reviewers and
+  // read-only users); hide the ＋ button and the empty-state CTA for them.
+  const newProjectBtn = el<HTMLButtonElement>("#new-project")
+  if (newProjectBtn) { newProjectBtn.hidden = !canManage; newProjectBtn.disabled = !canManage }
+  const emptyStateBtn = el<HTMLButtonElement>("#empty-create-project")
+  if (emptyStateBtn) { emptyStateBtn.hidden = !canManage; emptyStateBtn.disabled = !canManage }
+  // Compiling is read-only and every role may do it (docs roles table); the
+  // button was previously disabled for read-only users.
   const compileBtn = el<HTMLButtonElement>("#compile-button")
-  if (compileBtn) compileBtn.disabled = readOnly
+  if (compileBtn) compileBtn.disabled = false
   const bannerToggle = el<HTMLInputElement>("#review-banner-toggle")
   if (bannerToggle) bannerToggle.disabled = readOnly || state.role === "reviewer"
-  const addRefBtn = el<HTMLButtonElement>("#add-reference-btn")
-  if (addRefBtn) { addRefBtn.hidden = !canWrite; addRefBtn.disabled = !canWrite }
+  const addRefBtn = el<HTMLButtonElement>("#add-reference")
+  if (addRefBtn) { addRefBtn.hidden = !canManage; addRefBtn.disabled = !canManage }
 
   if (state.role === "reviewer" && !state.review.suggesting) {
     // Force suggesting on once, on role resolution; renderReviewBanner keeps the
@@ -2724,7 +2849,9 @@ function openReviewPopover(id: string, anchor: HTMLElement): void {
     : item.kind === "comment"
       ? `<p class="review-popover-body">${escapeHtml(item.body)}</p>`
       : ""
-  const kindLabel = item.kind === "comment" ? "Comment" : `Suggestion · ${item.change}`
+  // The kind chip already shows the change word ("insert"/"delete"); repeating
+  // it in the label glued the two together ("insertSuggestion · insert…").
+  const kindLabel = item.kind === "comment" ? "Comment" : "Suggestion"
   const change = item.kind === "suggestion"
     ? `<span class="review-popover-kind review-popover-kind-${item.change}">${escapeHtml(item.change)}</span>`
     : `<span class="review-popover-kind review-popover-kind-comment">comment</span>`
@@ -2743,7 +2870,7 @@ function openReviewPopover(id: string, anchor: HTMLElement): void {
     : `<button class="primary-button" type="button" data-popover-accept="${escapeHtml(item.id)}">Accept</button> <button class="toolbar-button" type="button" data-popover-reject="${escapeHtml(item.id)}">Reject</button>`
   popover.innerHTML = `
     <div class="review-popover-head">
-      <div class="review-popover-meta">${change}<strong>${escapeHtml(kindLabel)}</strong><span class="review-popover-author">${escapeHtml(item.author)} · ${escapeHtml(timeAgo(item.createdAt))}</span></div>
+      <div class="review-popover-meta">${change} <strong>${escapeHtml(kindLabel)}</strong><span class="review-popover-author">${escapeHtml(item.author)} · ${escapeHtml(timeAgo(item.createdAt))}</span></div>
       ${avatar}
       <button class="review-popover-close" type="button" aria-label="Close thread">×</button>
     </div>
@@ -2955,8 +3082,20 @@ function renderReviewSidebar(): void {
   // Clicking the card body (not its buttons) scrolls the editor to the item's
   // anchor and opens the inline popover, matching the dialog row behaviour.
   for (const card of host.querySelectorAll<HTMLElement>(".review-card")) {
+    // Cards jump to the editor anchor on click; make them keyboard-reachable
+    // (a11y: they were mouse-only).
+    card.tabIndex = 0
+    card.setAttribute("role", "button")
     card.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("button")) return
+      const id = card.dataset.reviewId
+      const item = state.review.items.find((it) => it.id === id)
+      if (item) revealReviewItem(item)
+    })
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return
+      if ((event.target as HTMLElement).closest("button")) return
+      event.preventDefault()
       const id = card.dataset.reviewId
       const item = state.review.items.find((it) => it.id === id)
       if (item) revealReviewItem(item)
@@ -3593,6 +3732,7 @@ void completeSignIn().then(() => {
   run(api.listProjects(), (projects) => {
     state.projects = projects
     renderProjects()
+    applyRoleGates()
     status(projects.length === 0 ? "No projects yet" : "Ready")
     // Share-link redemption: if the URL has a ?share=token parameter, redeem it
     // (adds the caller as a project member), then open that project and strip

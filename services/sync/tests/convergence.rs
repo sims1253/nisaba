@@ -13,7 +13,9 @@ use nisaba_sync::Role;
 async fn three_peers_converge() {
     let room = common::room("conv").await;
     let mut a = SimPeer::new(1, Role::Author);
-    let mut b = SimPeer::new(2, Role::Reviewer);
+    // Reviewers cannot push raw text updates (the review-policy gate rejects
+    // them — see review_policy.rs); convergence editing is an author activity.
+    let mut b = SimPeer::new(2, Role::Author);
     let mut c = SimPeer::new(3, Role::Author);
     a.connect(&room, &[]).await;
     b.connect(&room, &[]).await;
