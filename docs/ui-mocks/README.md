@@ -1,5 +1,11 @@
 # UI mocks — three design directions for the Nisaba workspace
 
+> **Outcome:** the shipped interface is a synthesis of all three, documented in
+> [`../ui-design.md`](../ui-design.md) — mock A's navigator, status strip, and
+> material; mock B's one-dock-at-a-time model, keyboard triage, and build log;
+> mock C's dense review queue and role-tagged members. These files stay as the
+> source material the synthesis argues from.
+
 Three static, self-contained HTML mocks of the editor workspace. Open any of them
 in a browser; no build, no network, no fonts to fetch (system font stacks only,
 matching the app's offline constraint).

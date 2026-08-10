@@ -1,17 +1,817 @@
-/* No external font @import: the UI must work offline and without third-party
-   requests; the stacks below fall back to system fonts when DM Sans/Mono are
-   not installed. */
-:root{font-family:'DM Sans',ui-sans-serif,system-ui,sans-serif;color:#18242d;background:#f4f6f5;font-synthesis:none;--ink:#18242d;--muted:#5f6f76;--line:#dce3e1;--blue:#2766a5;--blue-soft:#e8f1fa;--green:#23805d;--paper:#fffdfa}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.topbar :focus-visible{outline-color:#7fc4a8}body{margin:0}.topbar{height:58px;background:#172832;color:#eaf2f0;display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid #33444c}.brand,.top-actions,.toolbar-actions,.panel-heading,.pane-toolbar,.editor-footer,.preview-toolbar,.dialog-heading,.dialog-actions{display:flex;align-items:center}.brand{gap:10px;font-weight:600;font-size:15px}.mark{width:25px;height:25px;display:grid;place-items:center;border-radius:6px;background:#73b69c;color:#122c28;font-weight:700}.crumb{font-family:'DM Mono',monospace;color:#98aab0;font-size:11px;margin-left:8px;font-weight:400}.top-actions{gap:18px}.save-status{color:#a6beb4;font-size:12px}.icon-button,.quiet-button,.close-button{border:0;background:transparent;color:inherit;cursor:pointer}.icon-button{font-family:'DM Mono',monospace;color:#aec0c4;font-size:12px}.avatar{background:#d8a26e;border:0;border-radius:50%;color:#35251a;font-size:11px;font-weight:700;height:28px;width:28px}.workspace{height:calc(100vh - 58px);display:grid;grid-template-columns:235px 4px minmax(420px,1fr) 4px minmax(470px,1fr)}.outline{background:#f8faf9;border-right:1px solid var(--line);padding:23px 15px;position:relative}.panel-heading{justify-content:space-between;margin:0 7px 24px}.panel-heading h2{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:#556164;margin:0}.quiet-button{color:#5f6c6c;letter-spacing:2px}.quiet-button:hover{color:#274b55;background:#eef2f1;border-radius:4px}.doc-label{display:flex;align-items:center;gap:8px;padding:10px 10px;margin-bottom:10px;font-weight:600;font-size:13px;color:#31444a}.file-icon{color:#5a8dad}.lock{margin-left:auto;color:#a1adae}.outline-item{width:100%;display:flex;gap:9px;text-align:left;border:0;border-left:2px solid transparent;background:transparent;padding:9px 7px 9px 10px;color:#66767b;font-size:12px;cursor:pointer;transition:background .12s ease,color .12s ease}.outline-item.active{background:#eaf2f5;border-left-color:#4f87a2;color:#1f4355;font-weight:600}.outline-item:hover:not(.active){background:#eef2f1}.outline-number{font-family:'DM Mono',monospace;font-size:10px;color:#5e6d6f;min-width:38px}.outline-footer{position:absolute;bottom:25px;left:23px;right:23px;border-top:1px solid var(--line);padding-top:13px;color:#5e6a6a;font-size:10px;display:flex;gap:8px;align-items:center}.build-dot,.green-dot{display:inline-block;width:6px;height:6px;background:#62ac88;border-radius:50%}.editor-pane,.preview-pane{min-width:0;background:#fff}.editor-pane{border-right:1px solid var(--line);display:flex;flex-direction:column}.pane-toolbar{min-height:54px;justify-content:space-between;padding:6px 18px;border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap;gap:4px}.mode-label,.build-label{margin-left:10px;background:#f0f4f3;color:#5f6c70;border-radius:4px;font-size:10px;padding:4px 7px}.toolbar-actions{gap:8px;flex-wrap:wrap;justify-content:flex-end}.toolbar-button,.primary-button,.secondary-button{font:inherit;border-radius:5px;padding:7px 11px;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,filter .15s ease}
-.review-badge{display:inline-block;min-width:16px;margin-left:6px;padding:0 5px;border-radius:9px;background:#c62828;color:#fff;font-size:11px;line-height:16px;text-align:center;vertical-align:middle}.toolbar-button,.secondary-button{background:#fff;border:1px solid var(--line);color:#50646a;font-size:12px}.toolbar-button:hover,.secondary-button:hover{background:#f4f8f7;border-color:#bcc7c5}.primary-button{border:1px solid #2766a5;background:#2766a5;color:white;font-weight:600;font-size:12px}.primary-button:hover{background:#215890;border-color:#215890}.primary-button span{opacity:.65;font-family:'DM Mono',monospace;font-size:10px;margin-left:9px}.review-banner{height:35px;background:#fdf7ec;border-bottom:1px solid #f0e5ce;color:#856039;font-size:11px;display:flex;align-items:center;gap:8px;padding:0 18px}.review-banner strong{color:#77572b}.review-banner button{margin-left:auto;border:0;background:transparent;color:#8a5a22;font-size:11px;text-decoration:underline}.review-icon{background:#cf9c4d;color:white;border-radius:50%;font-size:9px;width:15px;height:15px;text-align:center}.editor-host{flex:1;overflow:auto}.cm-editor{height:100%;font-size:14px}.cm-scroller{font-family:'DM Mono',monospace!important;line-height:1.8;padding:27px 18px}.cm-gutters{background:#fff;border:0;color:#88969a}.cm-activeLineGutter,.cm-activeLine{background:#f7faf9}.cm-content{caret-color:#2766a5}.typst-heading{font-weight:600;color:#315b71}.typst-list-line{padding-left:14px;text-indent:-10px}
-.typst-list-marker{display:inline-block;width:16px;color:#5e6d6f;font-weight:600}.typst-list-marker-unordered{color:#6b7c7e}
-.typst-list-marker-ordered{font-family:'DM Mono',monospace;font-size:.85em;color:#3f6b80;font-weight:700}.construct-chip{font-family:'DM Sans',sans-serif;border:0;border-radius:4px;padding:3px 7px;margin:0 2px;cursor:pointer;font-size:11px;vertical-align:middle;background:#edf3f4;color:#407487;transition:filter .15s ease}.construct-citation{background:#e9f1fa;color:#37699d}.construct-figure,.construct-table{background:#f5ece0;color:#7a5a32}.construct-template{background:#edf5e9;color:#3e6b49}.construct-citation:hover,.construct-figure:hover,.construct-table:hover,.construct-template:hover{filter:brightness(.95)}.review-suggestion{background:#dff2e8;border-bottom:2px solid #70b18e;cursor:pointer;border-radius:2px}.review-suggestion:hover{background:#c9ead9}.review-comment{background:#fff0bf;border-bottom:2px solid #d7aa42;cursor:pointer;border-radius:2px}.review-comment:hover{background:#ffe89e}.review-comment-anchor{font:inherit;color:#946818;background:transparent;border:1px solid transparent;border-radius:50%;cursor:pointer;font-size:9px;line-height:1;padding:2px 3px;margin:0 1px;vertical-align:baseline}.review-comment-anchor:hover{background:#fff0bf;border-color:#d7aa42;color:#9a6b1f}.editor-footer{justify-content:space-between;padding:10px 18px;border-top:1px solid var(--line);font-size:10px;color:#627070}.editor-footer .green-dot{margin-right:6px}.preview-pane{background:#eef2f1;display:flex;flex-direction:column;position:relative}.preview-toolbar{min-height:38px;border-bottom:1px solid var(--line);padding:0 12px;gap:10px;background:#f8faf9}.view-tab{border:0;background:transparent;height:38px;color:#5a6a6e;font-size:11px;cursor:pointer;transition:color .15s ease,background .15s ease}.view-tab:hover{background:#eef2f1;color:#2d5d70}.view-tab.active{color:#2d5d70;border-bottom:2px solid #4c8ba1;font-weight:600}.page-count{margin-left:auto;font-size:11px;color:#5f6c70}
-.pdf-zoom-controls{display:flex;align-items:center;gap:2px;margin-left:auto}
-.pdf-zoom-controls[hidden]{display:none}
-.zoom-button{border:1px solid var(--line);background:#fff;color:#50646a;border-radius:4px;width:26px;height:26px;display:grid;place-items:center;cursor:pointer;font-size:14px;line-height:1;padding:0}
-.zoom-button:hover{background:#eef2f1;border-color:#bcc7c5}
-.zoom-button:disabled{opacity:.4;cursor:not-allowed}
-.zoom-level{font:11px 'DM Mono',monospace;min-width:44px;text-align:center;color:#5f6c70;user-select:none}
-.pdf-search-highlight{position:absolute;z-index:5;background:rgba(255,210,40,.35);border:2px solid rgba(255,180,0,.7);border-radius:2px;pointer-events:none;transition:opacity 1.5s ease-out;animation:pdf-highlight-pulse 1s ease-out 2}
+/* ===========================================================================
+   Nisaba workspace stylesheet
+   ---------------------------------------------------------------------------
+   The design system is documented in docs/ui-design.md. In short:
+
+     * paper for content (the text column, the rendered sheet), calm neutral for
+       chrome, squared edges, hairline rules, no gradients;
+     * ONE accent (--accent) reserved for the primary action, selection, and
+       focus — never used to mean anything;
+     * green / amber / red reserved for meaning only (insert / comment+warning /
+       delete+error), never decoration;
+     * mono, uppercase, tracked-out micro-labels for metadata; sans for UI;
+       serif inside the rendered page, because that is a document, not a UI.
+
+   No @import and no web fonts: the app must work offline and must not make
+   third-party requests. The stacks fall back to system fonts.
+   =========================================================================== */
+
+:root {
+  /* --- surfaces -------------------------------------------------------- */
+  --paper: #fdfcf9;          /* the document itself */
+  --chrome: #f2f3f0;         /* apparatus: bars, navigator, docks */
+  --chrome-raised: #f8f8f6;  /* rows/cards sitting on chrome */
+  --shell: #e9eae6;          /* ground behind the rendered page */
+  --overlay: #ffffff;        /* popovers, dialogs, palette */
+
+  /* --- ink ------------------------------------------------------------- */
+  --ink: #1b1e1c;
+  --ink-soft: #3d443e;
+  --muted: #6a706a;
+  --faint: #8d938c;
+
+  /* --- rules ----------------------------------------------------------- */
+  --rule: #e2e3dd;
+  --rule-strong: #c8cac2;
+
+  /* --- the one accent -------------------------------------------------- */
+  --accent: #23508a;
+  --accent-strong: #1b3f6e;
+  --accent-soft: #e8eef6;
+  --accent-line: #b9cbe1;
+
+  /* --- semantic (meaning only) ----------------------------------------- */
+  --insert: #2e7d4f;
+  --insert-soft: #e4efe8;
+  --comment: #9a6f18;
+  --comment-soft: #f7edd4;
+  --delete: #a63a2e;
+  --delete-soft: #f8e7e3;
+
+  /* --- type ------------------------------------------------------------ */
+  --sans: "DM Sans", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: "DM Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --serif: "Source Serif 4", Charter, Georgia, "Times New Roman", serif;
+
+  /* --- metrics --------------------------------------------------------- */
+  --appbar-h: 46px;
+  --statusbar-h: 30px;
+  --radius: 3px;
+
+  font-family: var(--sans);
+  font-synthesis: none;
+  color: var(--ink);
+  background: var(--chrome);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box }
+
+html, body { height: 100% }
+
+body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+  display: grid;
+  /* appbar · body · drawer · statusbar. The body row is the only flexible one;
+     the drawer and status bar rows collapse when their contents are hidden. */
+  grid-template-rows: var(--appbar-h) minmax(0, 1fr) auto auto;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 1px;
+}
+
+button { font: inherit; color: inherit }
+
+kbd {
+  font: 500 9.5px/1 var(--mono);
+  letter-spacing: .04em;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  padding: 2px 4px;
+  color: var(--muted);
+  background: var(--chrome-raised);
+  white-space: nowrap;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.skip-link {
+  position: absolute; left: 8px; top: -60px; z-index: 200;
+  background: var(--overlay); color: var(--accent);
+  border: 1px solid var(--accent); padding: 8px 12px; border-radius: var(--radius);
+  transition: top .12s ease;
+}
+.skip-link:focus { top: 8px }
+
+/* A mono micro-label: section heads, column heads, metadata keys. */
+.micro {
+  font: 600 9.5px/1.4 var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.num { font-variant-numeric: tabular-nums }
+
+/* ===========================================================================
+   Buttons
+   =========================================================================== */
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 12px;
+  border: 1px solid var(--rule-strong);
+  background: var(--chrome-raised);
+  color: var(--ink-soft);
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.btn:hover { background: #fff; border-color: #a9ada3; color: var(--ink) }
+.btn:disabled { opacity: .45; cursor: not-allowed }
+.btn:disabled:hover { background: var(--chrome-raised); border-color: var(--rule-strong) }
+
+.btn-primary {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+.btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff }
+.btn-primary kbd { border-color: #ffffff59; background: transparent; color: #ffffffb3 }
+
+.btn-quiet {
+  border-color: transparent; background: transparent; color: var(--muted);
+}
+.btn-quiet:hover { background: #0000000d; border-color: transparent; color: var(--ink) }
+
+.btn-danger:hover { border-color: var(--delete); color: var(--delete); background: var(--delete-soft) }
+
+.btn-icon {
+  border: 0; background: transparent; color: var(--faint);
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border-radius: var(--radius); cursor: pointer; font-size: 15px; line-height: 1; padding: 0;
+}
+.btn-icon:hover { background: #00000010; color: var(--ink) }
+
+.btn-small { font-size: 11px; padding: 3px 8px }
+
+/* `hidden` must beat the display set by the classes above — role gates rely on
+   it (regression 2026-08-09: role-gated controls stayed visible). */
+[hidden] { display: none !important }
+
+/* ===========================================================================
+   App bar
+   =========================================================================== */
+
+.appbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 12px 0 10px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--rule-strong);
+  min-width: 0;
+}
+
+.brand {
+  display: flex; align-items: center; gap: 8px;
+  border: 0; background: transparent; cursor: pointer;
+  font-weight: 600; font-size: 13.5px; letter-spacing: .02em; color: var(--ink);
+  padding: 4px 6px; border-radius: var(--radius);
+}
+.brand:hover { background: #00000008 }
+.brand .mark {
+  width: 21px; height: 21px; display: grid; place-items: center;
+  background: var(--accent); color: #fff; border-radius: 2px;
+  font: 700 12px/1 var(--mono);
+}
+
+/* Breadcrumb: project › file › §section. Every segment is a jump target. */
+.crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden }
+.crumbs button, .crumbs span {
+  font: 11.5px/1 var(--mono);
+  color: var(--muted); background: none; border: 0; padding: 4px 5px;
+  border-radius: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26ch;
+}
+.crumbs button { cursor: pointer }
+.crumbs button:hover { color: var(--accent); background: var(--accent-soft) }
+.crumbs .sep { color: var(--rule-strong); padding: 0; flex: 0 0 auto }
+.crumbs .current { color: var(--ink); font-weight: 500 }
+
+/* The palette entry point doubles as the app's search box. */
+.palette-hint {
+  margin: 0 auto; display: flex; align-items: center; gap: 8px;
+  width: min(420px, 34vw);
+  border: 1px solid var(--rule-strong); background: var(--chrome-raised);
+  color: var(--faint); font-size: 12px; text-align: left;
+  padding: 5px 8px; border-radius: var(--radius); cursor: pointer;
+}
+.palette-hint:hover { background: #fff; border-color: #a9ada3 }
+.palette-hint .lead { color: var(--accent); font-family: var(--mono); font-weight: 700 }
+.palette-hint kbd { margin-left: auto }
+
+/* Project-scope actions. Grouped together and separated from the document- and
+   pane-scope controls, which live on their own regions' bars. */
+.appbar-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto }
+.appbar-tools .btn { font-size: 12px; padding: 5px 8px }
+.appbar-tools .btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent-strong) }
+body:not(.has-project) .appbar-tools { display: none }
+
+.appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; flex: 0 0 auto }
+
+.save-status { font-size: 11.5px; color: var(--muted); white-space: nowrap }
+.save-status[data-tone="warn"] { color: var(--comment) }
+.save-status[data-tone="error"] { color: var(--delete) }
+
+/* --- presence ---------------------------------------------------------- */
+
+.presence { display: flex; align-items: center }
+.presence:empty { display: none }
+.avatar {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  font: 600 9px/1 var(--sans); letter-spacing: .02em;
+  color: hsl(var(--hue, 210) 55% 22%);
+  background: hsl(var(--hue, 210) 62% 88%);
+  border: 1.5px solid var(--chrome);
+  margin-left: -6px; flex: 0 0 auto; cursor: default;
+}
+.presence .avatar:first-child { margin-left: 0 }
+.presence .more {
+  font: 10px/1 var(--mono); color: var(--muted); margin-left: 6px; white-space: nowrap;
+}
+
+/* ===========================================================================
+   Projects screen
+   =========================================================================== */
+
+.screen { overflow: auto; background: var(--chrome); padding: 40px 24px 60px }
+.screen-inner { max-width: 760px; margin: 0 auto }
+.screen-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 6px }
+.screen-head h2 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -.01em }
+.screen-head .btn { margin-left: auto }
+.screen-lede { color: var(--muted); font-size: 12.5px; margin: 0 0 22px }
+
+.project-rows { border-top: 1px solid var(--rule) }
+.project-row {
+  display: flex; align-items: center; gap: 12px;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+}
+.project-row:hover { background: var(--chrome-raised) }
+.project-open {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px;
+  border: 0; background: none; cursor: pointer; text-align: left;
+  padding: 13px 8px 13px 4px; color: var(--ink);
+}
+.project-open .name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.project-open .meta { font: 10px var(--mono); color: var(--faint); margin-left: auto; white-space: nowrap }
+.project-row .btn-icon { margin-right: 4px; opacity: 0 }
+.project-row:hover .btn-icon, .project-row:focus-within .btn-icon { opacity: 1 }
+
+.role-tag {
+  font: 600 9px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+  border: 1px solid var(--rule-strong); color: var(--muted);
+  padding: 3px 5px; border-radius: 2px; flex: 0 0 auto;
+}
+
+/* ===========================================================================
+   Workspace grid
+   ---------------------------------------------------------------------------
+   navigator · gutter · document · gutter · dock · gutter · preview
+   The dock sits between the text and the page: a reviewer reads threads next to
+   the source, with the artefact beyond them. Widths are written inline by
+   applyWorkspaceGrid(); this is the fallback before the first call.
+   =========================================================================== */
+
+.workspace {
+  display: grid;
+  grid-template-columns: 250px 4px minmax(320px, 1fr) 0 0 4px minmax(340px, 1fr);
+  min-height: 0;
+  background: var(--rule);
+}
+
+.gutter {
+  background: var(--rule-strong); cursor: col-resize; position: relative; z-index: 2;
+  transition: background .1s ease;
+}
+.gutter:hover, .workspace.dragging .gutter { background: var(--accent-line) }
+.workspace.dragging { cursor: col-resize; user-select: none }
+
+/* Edge tabs to bring a collapsed pane back. */
+/* Centred vertically so the tab never sits on top of a pane bar's controls. */
+.show-pane-tab {
+  position: fixed; top: 50%; transform: translateY(-50%); z-index: 20;
+  width: 15px; height: 46px; display: grid; place-items: center;
+  border: 1px solid var(--rule-strong); background: var(--chrome-raised);
+  color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.show-pane-tab:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line) }
+.show-pane-tab-left { left: 0; border-left: 0; border-radius: 0 3px 3px 0 }
+.show-pane-tab-right { right: 0; border-right: 0; border-radius: 3px 0 0 3px }
+
+/* Every pane is a column flexbox with its own bar + scroll body. */
+.navigator, .doc-pane, .dock, .preview-pane {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
+}
+
+.pane-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 6px 0 10px;
+  background: var(--chrome); border-bottom: 1px solid var(--rule);
+}
+
+.pane-empty {
+  flex: 1; display: grid; place-content: center; text-align: center;
+  padding: 30px; color: var(--muted); gap: 6px;
+}
+.pane-empty h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink-soft) }
+.pane-empty p { margin: 0; font-size: 12px; max-width: 34ch; line-height: 1.6 }
+
+/* ===========================================================================
+   Navigator: file tree + section outline
+   =========================================================================== */
+
+.navigator { background: var(--chrome); border-right: 1px solid var(--rule-strong) }
+
+.nav-section { display: flex; flex-direction: column; min-height: 0 }
+.nav-section-files { flex: 1 1 auto }
+.nav-section-outline { flex: 1 1 auto; border-top: 1px solid var(--rule) }
+
+.nav-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  margin: 0; padding: 10px 6px 6px 12px;
+  font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--faint);
+}
+.nav-head .count { color: var(--rule-strong); font-weight: 400 }
+.nav-head-actions { margin-left: auto; display: flex; gap: 2px }
+.nav-head-actions .btn-icon { width: 20px; height: 20px; font-size: 13px }
+
+.nav-body { overflow: auto; min-height: 0; padding-bottom: 8px }
+
+/* --- file tree --------------------------------------------------------- */
+
+.tree-row {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  border: 0; background: none; cursor: pointer; text-align: left;
+  padding: 3px 8px 3px 0; color: var(--ink-soft);
+  font: 12px/1.6 var(--sans);
+  border-left: 2px solid transparent;
+}
+.tree-row:hover { background: #00000008 }
+.tree-row.active { background: var(--accent-soft); border-left-color: var(--accent); color: var(--accent-strong); font-weight: 600 }
+.tree-row .twist {
+  flex: 0 0 auto; width: 13px; text-align: center; color: var(--faint); font-size: 9px;
+}
+.tree-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.tree-row .tag {
+  margin-left: auto; flex: 0 0 auto;
+  font: 600 8.5px/1 var(--mono); letter-spacing: .1em;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-line);
+  padding: 2px 4px; border-radius: 2px;
+}
+.tree-row.folder { color: var(--muted); font-weight: 500 }
+/* Indent guides make a nested path readable without drawing a full tree. */
+.tree-item { display: flex; align-items: stretch }
+.tree-item .indent { flex: 0 0 auto; width: 11px; border-right: 1px dotted var(--rule-strong); margin-left: 6px }
+.tree-item > .tree-row, .tree-item > .tree-row-wrap { flex: 1; min-width: 0 }
+.tree-row-wrap { display: flex; align-items: center }
+.tree-row-wrap .btn-icon { opacity: 0; flex: 0 0 auto; width: 20px; height: 20px; font-size: 14px }
+.tree-row-wrap:hover .btn-icon, .tree-row-wrap:focus-within .btn-icon { opacity: 1 }
+
+.tree-add {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  border: 0; background: none; cursor: pointer; text-align: left;
+  padding: 5px 10px 5px 12px; color: var(--accent); font-size: 12px;
+}
+.tree-add:hover { background: var(--accent-soft) }
+
+/* --- section outline --------------------------------------------------- */
+
+.outline-row {
+  width: 100%; display: flex; align-items: baseline; gap: 8px;
+  border: 0; background: none; cursor: pointer; text-align: left;
+  padding: 3px 10px 3px 12px; color: var(--ink-soft); font-size: 12px;
+  border-left: 2px solid transparent;
+}
+.outline-row:hover { background: #00000008 }
+.outline-row.active { color: var(--accent-strong); border-left-color: var(--accent); font-weight: 600; background: var(--accent-soft) }
+.outline-row .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.outline-row .ln { margin-left: auto; font: 9.5px var(--mono); color: var(--faint); flex: 0 0 auto }
+.outline-row[data-level="1"] { font-weight: 600; color: var(--ink) }
+.outline-row[data-level="2"] { padding-left: 24px }
+.outline-row[data-level="3"] { padding-left: 36px; font-size: 11.5px }
+.outline-row[data-level="4"], .outline-row[data-level="5"], .outline-row[data-level="6"] {
+  padding-left: 48px; font-size: 11.5px; color: var(--muted);
+}
+
+.nav-empty { padding: 10px 12px 14px; color: var(--faint); font-size: 11.5px; line-height: 1.6 }
+
+.nav-foot {
+  flex: 0 0 auto; border-top: 1px solid var(--rule); padding: 8px 12px 10px;
+  font: 10px/1.8 var(--mono); color: var(--faint);
+}
+.nav-foot b { color: var(--muted); font-weight: 600 }
+
+/* ===========================================================================
+   Document pane
+   =========================================================================== */
+
+.doc-pane { background: var(--paper) }
+
+.doc-bar { border-bottom: 1px solid var(--rule); background: var(--chrome) }
+.doc-id { display: flex; align-items: baseline; gap: 8px; min-width: 0 }
+/* The name holds its width and the path gives way first: at a narrow pane a
+   truncated file name is disorienting, a truncated path is merely terse. */
+.doc-id strong { flex: 0 1 auto; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.doc-id code { flex: 1 100 auto; min-width: 0; font: 10px var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.doc-bar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 0 auto }
+.doc-rev { font: 10px var(--mono); color: var(--faint); white-space: nowrap }
+
+/* Track changes: one switch, stating its own state. */
+.switch {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--rule-strong); background: var(--chrome-raised);
+  color: var(--muted); font-size: 11.5px; padding: 4px 9px;
+  border-radius: 999px; cursor: pointer; white-space: nowrap;
+}
+.switch::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--rule-strong); flex: 0 0 auto;
+}
+.switch:hover { border-color: #a9ada3; color: var(--ink) }
+.switch[aria-checked="true"] { background: var(--comment-soft); border-color: #d9bd77; color: #7c5a12 }
+.switch[aria-checked="true"]::before { background: var(--comment) }
+.switch:disabled { cursor: not-allowed; opacity: .8 }
+
+/* Review button + its count. The count exists here and in the dock, nowhere else. */
+.count-badge {
+  min-width: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--comment); color: #fff;
+  font: 600 10px/16px var(--mono); text-align: center;
+}
+
+/* Sticky heading: the section you are inside, pinned while you scroll. */
+.sticky-heading {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 5px 16px; border-bottom: 1px solid var(--rule);
+  background: #fbfaf5cc; backdrop-filter: blur(3px);
+  font-size: 11.5px; color: var(--muted); min-height: 26px;
+}
+.sticky-heading .crumb-sep { color: var(--rule-strong) }
+.sticky-heading .leaf { color: var(--ink); font-weight: 600 }
+
+/* display:flex + cm-editor flex:1 makes CodeMirror fill the pane; height:100%
+   alone leaves the editor as tall as its content, so the gutter rule stops
+   mid-pane on a short document. */
+.editor-host { flex: 1; min-height: 0; overflow: hidden; background: var(--paper); display: flex }
+
+/* --- CodeMirror -------------------------------------------------------- */
+
+.cm-editor { flex: 1; min-width: 0; height: 100%; background: transparent }
+.cm-editor.cm-focused { outline: none }
+.cm-scroller {
+  font-family: var(--mono) !important;
+  font-size: 14px; line-height: 1.75;
+  padding: 22px 0 45vh;              /* deep bottom padding: the last line can sit mid-screen */
+}
+/* The measure. Long monospace prose at full window width is unreadable, so the
+   content column is capped and centred inside the pane.
+   CodeMirror gives .cm-content `flex-grow: 2` inside the flex .cm-scroller, which
+   makes it fill the pane and defeats both `margin: auto` and `justify-content`.
+   Dropping the grow and centring the scroller's items keeps the gutter attached
+   to the left of the text column while the pair sits in the middle of the pane. */
+.cm-scroller { justify-content: center }
+.cm-content {
+  flex-grow: 0; max-width: 74ch; width: 100%;
+  padding: 0 20px; caret-color: var(--accent);
+}
+/* CodeMirror injects its own theme at runtime, after this stylesheet, so the
+   gutter rules need the extra `.cm-editor` specificity to win — otherwise the
+   gutter keeps its default panel background and reads as a second column. */
+.cm-editor .cm-gutters {
+  background: transparent; border: 0; color: var(--rule-strong);
+  font-size: 10.5px; padding-right: 4px;
+}
+.cm-editor .cm-activeLineGutter { background: transparent; color: var(--muted) }
+.cm-activeLine { background: #00000005 }
+.cm-selectionBackground, .cm-content ::selection { background: var(--accent-soft) !important }
+.cm-cursor { border-left-color: var(--accent) }
+.cm-placeholder { color: var(--faint); font-style: italic }
+.cm-tooltip {
+  border: 1px solid var(--rule-strong); background: var(--overlay);
+  border-radius: var(--radius); box-shadow: 0 6px 20px #1b1e1c1f; font-family: var(--sans);
+}
+.cm-tooltip-autocomplete ul li[aria-selected] { background: var(--accent); color: #fff }
+.cm-panels { border-color: var(--rule-strong); background: var(--chrome); color: var(--ink) }
+
+/* --- Typst constructs, styled in place (never collapsed into chips) ----- */
+
+.typst-heading { font-weight: 700; color: var(--ink) }
+.typst-strong { font-weight: 700 }
+.typst-emphasis { font-style: italic }
+.typst-list-line { padding-left: 14px; text-indent: -10px }
+.typst-list-marker { display: inline-block; width: 16px; color: var(--muted); font-weight: 600 }
+.typst-list-marker-unordered { color: var(--faint) }
+.typst-list-marker-ordered { font: 700 .85em var(--mono); color: var(--accent) }
+.typst-math { color: var(--accent-strong) }
+.typst-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px }
+
+.rich-citation {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-family: var(--sans); font-size: 11.5px; font-weight: 500;
+  background: var(--accent-soft); color: var(--accent-strong);
+  border: 1px solid var(--accent-line); border-radius: 8px;
+  padding: 0 7px; cursor: pointer; vertical-align: baseline; line-height: 1.5; white-space: nowrap;
+}
+.rich-citation:hover { background: #dce7f3 }
+.rich-figure {
+  margin: 8px 0; border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  overflow: hidden; cursor: pointer; max-width: 100%; background: var(--chrome-raised);
+}
+.rich-figure:hover { border-color: var(--accent-line) }
+.rich-figure-body {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 46px; padding: 10px 14px; background: var(--chrome);
+  color: var(--muted); font: 11px var(--sans);
+}
+.rich-figure-icon { font-size: 15px }
+.rich-figure-caption {
+  font: italic 11px var(--sans); color: var(--muted);
+  padding: 5px 12px; border-top: 1px solid var(--rule); background: var(--chrome-raised);
+}
+.rich-table {
+  margin: 6px 0; border-collapse: collapse; font: 11px var(--sans);
+  cursor: pointer; max-width: 100%; border: 1px solid var(--rule-strong);
+}
+.rich-table:hover { border-color: var(--accent-line) }
+.rich-table th {
+  background: var(--chrome); color: var(--ink-soft); font-weight: 600;
+  padding: 4px 10px; border: 1px solid var(--rule); text-align: left;
+}
+.rich-table td { padding: 3px 10px; border: 1px solid var(--rule); color: var(--muted) }
+
+/* --- review marks, rendered AS TEXT ------------------------------------ */
+
+.review-suggestion {
+  background: var(--insert-soft); border-bottom: 1.5px solid var(--insert); cursor: pointer;
+}
+.review-suggestion:hover { background: #d6e8dd }
+.review-comment {
+  background: var(--comment-soft); border-bottom: 1.5px solid var(--comment); cursor: pointer;
+}
+.review-comment:hover { background: #f2e3bd }
+.review-comment-anchor {
+  font: inherit; font-size: 9px; line-height: 1;
+  color: var(--comment); background: transparent;
+  border: 1px solid transparent; border-radius: 50%;
+  cursor: pointer; padding: 2px 3px; margin: 0 1px; vertical-align: baseline;
+}
+.review-comment-anchor:hover { background: var(--comment-soft); border-color: var(--comment) }
+
+/* --- compile problems, underlined in the source ------------------------ */
+
+.typst-diagnostic-error { border-bottom: 2px wavy var(--delete); background: var(--delete-soft) }
+.typst-diagnostic-warning { border-bottom: 2px wavy var(--comment); background: var(--comment-soft) }
+
+/* Floating "Comment" affordance at the end of a selection. */
+.selection-comment-button {
+  position: fixed; z-index: 60;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; font-size: 11.5px;
+  border: 1px solid var(--comment); background: var(--overlay); color: #7c5a12;
+  border-radius: var(--radius); cursor: pointer; box-shadow: 0 2px 10px #1b1e1c26; white-space: nowrap;
+}
+.selection-comment-button:hover { background: var(--comment-soft) }
+
+/* ===========================================================================
+   Dock — one standing workflow at a time
+   =========================================================================== */
+
+.dock { background: var(--chrome); border-left: 1px solid var(--rule-strong) }
+.dock .pane-bar h2 {
+  margin: 0; font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--muted);
+}
+.dock-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px 16px }
+.dock-body > :first-child { margin-top: 0 }
+.dock-note { font-size: 11.5px; color: var(--muted); line-height: 1.6; margin: 10px 0 }
+.dock-body h3 {
+  font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--faint); margin: 20px 0 8px;
+}
+.dock-toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px }
+
+/* --- filter chips ------------------------------------------------------ */
+
+.chips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px }
+.chip {
+  font: 10px var(--mono); letter-spacing: .04em;
+  border: 1px solid var(--rule-strong); background: var(--chrome-raised); color: var(--muted);
+  padding: 3px 8px; border-radius: 2px; cursor: pointer;
+}
+.chip:hover { border-color: #a9ada3; color: var(--ink) }
+.chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff }
+
+/* --- review queue ------------------------------------------------------ */
+
+.review-queue { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule) }
+.review-card {
+  border-bottom: 1px solid var(--rule);
+  border-left: 2px solid transparent;
+  padding: 9px 10px 9px 8px; cursor: pointer; background: transparent;
+}
+.review-card:hover { background: var(--chrome-raised) }
+.review-card:focus-visible { outline-offset: -2px }
+.review-card[aria-selected="true"] { background: var(--overlay); border-left-color: var(--accent) }
+.review-card-suggestion { border-left-color: transparent }
+.review-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-width: 0 }
+.review-chip {
+  font: 600 8.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  padding: 3px 5px; border-radius: 2px; flex: 0 0 auto;
+}
+.review-chip-insert { background: var(--insert-soft); color: var(--insert) }
+.review-chip-delete { background: var(--delete-soft); color: var(--delete) }
+.review-chip-comment { background: var(--comment-soft); color: var(--comment) }
+.review-card-author {
+  display: inline-flex; align-items: baseline; gap: 5px; min-width: 0;
+  font-size: 11.5px; font-weight: 600; color: var(--ink-soft);
+}
+.review-card-time { font: 10px var(--mono); color: var(--faint); font-weight: 400; white-space: nowrap }
+.review-card-head .avatar { margin-left: auto; width: 19px; height: 19px; border-color: transparent }
+.review-card-orphan {
+  font: 9px var(--mono); color: var(--comment); background: var(--comment-soft);
+  border-radius: 2px; padding: 2px 4px; flex: 0 0 auto;
+}
+.review-card-text {
+  margin: 0 0 6px; font-size: 12px; color: var(--ink-soft); line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+}
+.review-card-quote { font-style: italic }
+.review-card-loc { font: 9.5px var(--mono); color: var(--faint); display: block; margin-bottom: 6px }
+.review-card-note { margin: 0 0 6px; font-size: 10.5px; color: var(--muted) }
+.review-card-actions { display: flex; gap: 6px; justify-content: flex-end }
+
+.dock-foot {
+  flex: 0 0 auto; border-top: 1px solid var(--rule); background: var(--chrome);
+  padding: 7px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font: 10px var(--mono); color: var(--faint);
+}
+.dock-foot .keys { margin-left: auto; display: flex; gap: 8px; align-items: center }
+
+.empty-note { padding: 22px 6px; color: var(--muted); font-size: 12px; line-height: 1.6 }
+
+/* --- references / members / links lists --------------------------------- */
+
+.list { display: flex; flex-direction: column; border-top: 1px solid var(--rule) }
+.list-item {
+  display: grid; gap: 5px; padding: 10px 2px; border-bottom: 1px solid var(--rule); font-size: 12px;
+}
+.list-item strong { font-weight: 600; line-height: 1.4 }
+.list-item .meta { font: 10.5px/1.5 var(--mono); color: var(--faint) }
+.list-item .meta .state-ok, .list-item .meta .state-warn { font: inherit }
+.list-item .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap }
+.list-item .row .btn { margin-top: 2px }
+.state-ok { color: var(--insert) }
+.state-warn { color: var(--comment) }
+
+.field { display: block; font-size: 11.5px; color: var(--muted); margin-top: 14px }
+.field input, .field select, .field textarea {
+  display: block; width: 100%; margin-top: 5px;
+  border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  padding: 7px 8px; font: 13px var(--sans); background: var(--overlay); color: var(--ink);
+}
+.field textarea { resize: vertical; min-height: 3em }
+.field input:focus, .field select:focus, .field textarea:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 2px #23508a2e; outline: none;
+}
+.inline-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 10px 0 4px }
+.inline-form input, .inline-form select {
+  border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  padding: 6px 8px; font: 12px var(--sans); background: var(--overlay); color: var(--ink);
+}
+.inline-form input { flex: 1 1 160px; min-width: 0 }
+.link-row { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--rule); padding: 8px 0 }
+.link-row code {
+  flex: 1; min-width: 0; font: 10px var(--mono); color: var(--accent-strong);
+  background: var(--accent-soft); border-radius: 2px; padding: 3px 5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* --- history ------------------------------------------------------------ */
+
+.history { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden }
+.history-timeline { list-style: none; margin: 0; padding: 0; max-height: 34vh; overflow: auto; background: var(--chrome-raised) }
+.history-entry {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  padding: 8px 10px; border: 0; border-bottom: 1px solid var(--rule);
+  background: transparent; cursor: pointer; font-size: 11.5px;
+}
+.history-entry:hover { background: var(--accent-soft) }
+.history-entry.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent) }
+.history-entry-rev { font: 600 11px var(--mono); color: var(--accent-strong) }
+.history-entry-meta { color: var(--muted); font-size: 10px }
+.history-diff-pane { overflow: auto; max-height: 40vh; background: var(--paper); border-top: 1px solid var(--rule) }
+.history-diff-pane pre {
+  margin: 0; padding: 8px; font: 11px/1.6 var(--mono);
+  white-space: pre-wrap; word-break: break-word;
+}
+.diff-line-added { background: var(--insert-soft); color: #1d5c39; padding: 0 3px; display: block }
+.diff-line-removed { background: var(--delete-soft); color: #8b2a1e; padding: 0 3px; display: block }
+.diff-line-context { padding: 0 3px; display: block; color: var(--muted) }
+.history-empty { padding: 18px; color: var(--muted); font-size: 12px; text-align: center }
+
+/* --- inline review popover ---------------------------------------------- */
+
+.review-popover {
+  position: fixed; z-index: 50; width: 272px;
+  background: var(--overlay); border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--comment); border-radius: var(--radius);
+  box-shadow: 0 10px 30px #1b1e1c26; font-size: 12px; color: var(--ink);
+}
+.review-popover-head { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px 5px }
+.review-popover-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0 }
+.review-popover-meta strong { font-size: 11.5px }
+.review-popover-author { font-size: 10.5px; color: var(--muted) }
+.review-popover-kind {
+  align-self: flex-start; font: 600 8.5px/1 var(--mono); letter-spacing: .08em;
+  text-transform: uppercase; border-radius: 2px; padding: 3px 5px; margin-bottom: 3px;
+}
+.review-popover-kind-comment { background: var(--comment-soft); color: var(--comment) }
+.review-popover-kind-insert { background: var(--insert-soft); color: var(--insert) }
+.review-popover-kind-delete { background: var(--delete-soft); color: var(--delete) }
+.review-popover-head .avatar { margin-left: auto }
+.review-popover-close { border: 0; background: none; font-size: 17px; line-height: 1; color: var(--faint); cursor: pointer; padding: 0 2px }
+.review-popover-close:hover { color: var(--ink) }
+.review-popover-body { margin: 0; padding: 2px 11px 9px; line-height: 1.5; white-space: pre-wrap; word-break: break-word }
+.review-popover-snippet {
+  margin: 0; padding: 4px 11px 9px; font-style: italic; color: var(--ink-soft);
+  line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+}
+.review-resolved-line {
+  display: block; margin: 0 11px 8px; padding: 5px 7px; font-size: 10px; font-style: italic;
+  color: var(--muted); background: var(--chrome); border-radius: 2px;
+}
+.review-popover-actions {
+  display: flex; justify-content: flex-end; gap: 6px;
+  padding: 8px 10px; border-top: 1px solid var(--rule);
+}
+
+/* ===========================================================================
+   Preview
+   =========================================================================== */
+
+.preview-pane { background: var(--shell) }
+.preview-pane .pane-bar { background: var(--chrome); gap: 10px }
+
+/* The view switch: what the page IS, so it lives on the page's bar. */
+.view-switch { display: flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden; flex: 0 0 auto }
+.view-switch button {
+  border: 0; border-right: 1px solid var(--rule-strong); background: var(--chrome-raised);
+  color: var(--muted); font: 10.5px var(--sans); padding: 4px 9px; cursor: pointer; white-space: nowrap;
+}
+.view-switch button:last-child { border-right: 0 }
+.view-switch button:hover { background: #fff; color: var(--ink) }
+.view-switch button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 600 }
+
+.build-label, .page-position {
+  font: 10px var(--mono); color: var(--faint); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.build-label b { color: var(--muted); font-weight: 600 }
+
+.zoom-controls { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: 0 0 auto }
+.zoom-button {
+  border: 1px solid var(--rule-strong); background: var(--chrome-raised); color: var(--muted);
+  border-radius: 2px; width: 22px; height: 22px; display: grid; place-items: center;
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 0;
+}
+.zoom-button:hover { background: #fff; color: var(--ink) }
+.zoom-button:disabled { opacity: .4; cursor: not-allowed }
+.zoom-level { font: 10.5px var(--mono); min-width: 40px; text-align: center; color: var(--muted); user-select: none }
+
+.pdf-viewer { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 28px; background: var(--shell) }
+/* Marker class set while the viewer holds an empty/failed state instead of pages,
+   so the placeholder centres in the pane rather than sitting at the top. */
+.pdf-viewer.empty-preview { display: grid; place-content: center }
+.pdf-page {
+  width: max-content; min-width: 280px; min-height: 640px; margin: 0 auto 16px;
+  background: #fff; box-shadow: 0 1px 2px #0000001f, 0 8px 22px #0000001a;
+  position: relative; color: #22261f; font-family: var(--serif);
+}
+.pdf-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--faint); font-size: 12px }
+
 /* pdf.js v5 text-layer alignment (pdfjs-dist v5.7.284).
    The viewer renders the pdf.js TextLayer into .pdf-text-layer, NOT .textLayer,
    so the rules in pdf_viewer.css never match. pdf.js v5 sets --min-font-size on
@@ -24,226 +824,295 @@
    matches DEFAULT_ZOOM_INDEX in pdf-viewer.ts; for pixel-perfect alignment at
    other zoom levels renderPage() should set it inline, e.g.
    host.style.setProperty("--scale-factor", String(this.zoom)). */
-.pdf-page-shell{--scale-factor:1.25;--user-unit:1;--total-scale-factor:calc(var(--scale-factor) * var(--user-unit))}
-.pdf-text-layer{position:absolute;left:0;top:0;right:0;bottom:0;width:100%!important;height:100%!important;overflow:hidden;line-height:1;opacity:1;user-select:text;-webkit-user-select:text;--min-font-size:1;--text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size));--min-font-size-inv:calc(1 / var(--min-font-size))}
-.pdf-text-layer span:not(.markedContent){color:transparent;position:absolute;white-space:pre;transform-origin:0% 0%;z-index:1;--font-height:0;font-size:calc(var(--text-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
-.pdf-text-layer .markedContent{display:contents}
-.pdf-text-layer ::selection{background:rgba(100,160,255,.4)}
-.pdf-text-layer br{display:none}
-.pdf-loading{display:flex;align-items:center;justify-content:center;height:100%;color:#8a989b;font:12px 'DM Sans',sans-serif}
-@keyframes pdf-highlight-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,180,0,0)}50%{box-shadow:0 0 8px 3px rgba(255,180,0,.4)}}
-#document-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.pdf-viewer{overflow:auto;flex:1;min-height:0;padding:6px 6px 14px;background:#e8edeb}.pdf-page{width:max-content;min-width:300px;min-height:690px;margin:0 auto 14px;background:var(--paper);box-shadow:0 2px 10px #bac7c480;padding:0;color:#333b3c;font-family:Georgia,serif;position:relative}.pdf-running{font-family:'DM Sans',sans-serif;display:flex;justify-content:space-between;color:#9aa5a3;font-size:7px;letter-spacing:.1em;border-bottom:1px solid #dfe2db;padding-bottom:8px}.pdf-page h1{font-size:23px;font-weight:400;line-height:1.2;color:#1e424d;margin:34px 0 12px}.pdf-page h2{font-size:16px;font-weight:400;color:#356371;margin:25px 0 10px}.pdf-lede{font-size:11px;color:#788180}.pdf-page p{font-size:10px;line-height:1.65}.pdf-page hr{border:0;border-top:1px solid #d9dfdc;margin:26px 0}.pdf-page figure{margin:24px 0}.figure-placeholder{height:103px;background:#f1f4f0;border:1px solid #d7dfd7;color:#9daaa4;display:flex;align-items:center;justify-content:center;gap:8px;font:10px 'DM Sans'}.pdf-page figcaption,.pdf-page caption{font:9px 'DM Sans';color:#727e7e;text-align:left;padding-top:7px}.link-button{border:0;background:transparent;color:#3979a1;font-size:9px;cursor:pointer}.link-button:hover{text-decoration:underline}.pdf-page table{border-collapse:collapse;width:100%;font:9px 'DM Sans';margin-top:22px}.pdf-page th,.pdf-page td{border-bottom:1px solid #d7dfdc;text-align:left;padding:7px 5px}.pdf-page th{background:#edf3f1;color:#45616a;font-weight:600}.pdf-footer{font:7px 'DM Sans';color:#abb3ae;position:absolute;bottom:21px;left:49px;right:49px;border-top:1px solid #e1e4df;padding-top:7px;display:flex;justify-content:space-between}.secondary-page{min-height:520px}.skeleton-line{height:8px;background:linear-gradient(90deg,#eff2ee 25%,#e6eae6 37%,#eff2ee 63%);background-size:400% 100%;margin:13px 0;width:90%;animation:skeleton-shimmer 1.4s ease infinite}.skeleton-line.short{width:60%}@keyframes skeleton-shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}.connection-state{position:absolute;bottom:15px;right:23px;padding:7px 10px;background:#fff;border:1px solid var(--line);border-radius:5px;box-shadow:0 2px 9px #617a7620;font-size:10px;color:#5f6c70}.connection-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#55a77a;margin-right:7px}.edit-panel{border:1px solid var(--line);border-radius:9px;padding:0;width:385px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);overflow-y:auto;color:var(--ink);box-shadow:0 12px 40px #19333335}.edit-panel::backdrop{background:#17283245}.edit-panel form{padding:25px}.dialog-heading{justify-content:space-between}.eyebrow{font:10px 'DM Mono';letter-spacing:.12em;text-transform:uppercase;color:#5a6868}.dialog-heading h2{font-size:20px;margin:5px 0 15px;color:#274b55}.close-button{font-size:23px;color:#859292}.close-button:hover{color:#4a5757;background:#eef2f1;border-radius:5px}.edit-panel p{font-size:12px;color:#718080;line-height:1.5}.edit-panel label{display:block;font-size:11px;color:#556c70;margin-top:24px}.edit-panel input{display:block;width:100%;margin-top:7px;border:1px solid #ccd8d5;border-radius:4px;padding:9px;font:13px inherit}.dialog-actions{justify-content:flex-end;gap:8px;margin-top:28px}.empty-state{padding:20px 10px;color:var(--muted);font-size:12px}.empty-state h2,.empty-state h3{color:var(--ink);margin:0 0 8px}.empty-state p{line-height:1.5}.empty-preview{display:grid;place-items:center}.panel-note{font-size:12px;color:var(--muted);line-height:1.5}.reference-results{margin-top:18px;max-height:45vh;overflow:auto}.reference-item{display:grid;gap:7px;border-top:1px solid var(--line);padding:13px 0;font-size:12px}.reference-item span{color:var(--muted);font-size:11px}.fulltext-warning{color:#a06b29!important}.fulltext-ok{color:var(--green)!important}@media (max-width:1250px){body{min-width:0}.workspace{grid-template-columns:210px 4px minmax(380px,1fr) 4px minmax(420px,1fr)}.crumb{display:none}}@media (max-width:900px){.workspace{display:flex;flex-direction:column;height:auto}.outline{min-height:180px;border-right:0;border-bottom:1px solid var(--line)}.outline-footer{position:static;margin:15px 7px 0}.editor-pane,.preview-pane{min-height:550px}.topbar{padding:0 12px}.top-actions{gap:8px}.gutter,.review-pane,.review-gutter,.show-pane-tab{display:none!important}}
+.pdf-page-shell { --scale-factor: 1.25; --user-unit: 1; --total-scale-factor: calc(var(--scale-factor) * var(--user-unit)) }
+.pdf-text-layer {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  width: 100% !important; height: 100% !important; overflow: hidden;
+  line-height: 1; opacity: 1; user-select: text; -webkit-user-select: text;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.pdf-text-layer span:not(.markedContent) {
+  color: transparent; position: absolute; white-space: pre; transform-origin: 0% 0%; z-index: 1;
+  --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1; --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.pdf-text-layer .markedContent { display: contents }
+.pdf-text-layer ::selection { background: #23508a4d }
+.pdf-text-layer br { display: none }
 
-/* Workspace additions: outline navigation, projection picker, panel lists. */
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
-.outline-row{display:flex;align-items:stretch;gap:0}
-.outline-row .outline-item{flex:1;min-width:0}
-.outline-delete{border:0;background:transparent;color:#c4a0a0;font-size:16px;cursor:pointer;padding:0 8px;opacity:0;transition:opacity .15s;flex-shrink:0}
-.outline-row:hover .outline-delete,.outline-row:focus-within .outline-delete{opacity:1}
-.outline-delete:hover{color:#c44;color:#b33;background:#fbebeb}
-.outline-back{display:block;width:100%;text-align:left;border:0;background:transparent;color:#7b888c;font:inherit;font-size:11px;padding:0 7px 14px;cursor:pointer}
-.outline-back:hover{color:#2766a5}
-.view-select select{font:inherit;font-size:12px;color:#50646a;background:#fff;border:1px solid var(--line);border-radius:5px;padding:6px 8px}.view-select select:hover{border-color:#bcc7c5}.edit-panel input:focus,.edit-panel select:focus,.edit-panel textarea:focus,.share-invite input:focus,.share-invite select:focus,.view-select select:focus{border-color:#2766a5;box-shadow:0 0 0 2px rgba(39,102,165,.2);outline:none}
-.outline-item.active .outline-number{color:#2d5d70}.outline-add{margin-top:6px;border-top:1px dashed var(--line);border-radius:0;color:#3f6b80}
-.document-path{margin-left:auto;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#839095;font:9px 'DM Mono',monospace;font-weight:400}
-.outline-item.active .document-path{color:#557785}
-.review-banner[hidden]{display:none}
-.review-list,.export-files{margin:14px 0 0;padding-left:18px;font-size:12px;color:#5c6c70;line-height:1.7}
-.export-files{max-height:32vh;overflow:auto}
-.export-files .link-button{font-size:11px;font-family:'DM Mono',monospace}
-.construct-source{font-family:'DM Mono',monospace;font-size:11px;background:#f4f7f6;border:1px solid var(--line);border-radius:5px;padding:9px;overflow:auto;color:#3d5158}
-.edit-panel select{display:block;width:100%;margin-top:7px;border:1px solid #ccd8d5;border-radius:4px;padding:9px;font:13px inherit;background:#fff}
-/* Textarea mirrors the input rule so the multi-field reference form's authors
-   box matches the other fields. resize:vertical keeps it from blowing out the row. */
-.edit-panel textarea{display:block;width:100%;margin-top:7px;border:1px solid #ccd8d5;border-radius:4px;padding:9px;font:13px inherit;resize:vertical;min-height:2.6em}
-.edit-panel button+button{margin-left:8px}
-.edit-panel .dialog-actions{margin-top:28px}
-.edit-panel .primary-button:disabled{opacity:.55;cursor:not-allowed}
-.prompt-error{font-size:11px;color:#a06b29;margin:8px 0 0}
-.reference-item .toolbar-button{justify-self:start}
-.share-invite{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 4px}
-.share-invite input,.share-invite select{font:inherit;border:1px solid #ccd8d5;border-radius:4px;padding:8px;background:#fff;color:var(--ink)}
-.share-invite input{flex:1 1 180px}
-.share-invite select{flex:0 0 auto}
-.share-members-heading{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:#7b888c;margin:22px 0 0}
-#sign-in:disabled{opacity:.55;cursor:not-allowed}
-/* No-document landing: hide editor/preview chrome and show a focused placeholder
-   per pane so the empty 3-column layout doesn't imply an open document. The panes
-   are column flex by default; centring the lone placeholder reads as intentional. */
-.pane-placeholder{display:none;flex:1;place-items:center;text-align:center}
-body:not(.has-document) .editor-chrome,body:not(.has-document) .preview-chrome{display:none}
-body:not(.has-document) .pane-placeholder{display:grid}
-body:not(.has-document) .editor-pane,body:not(.has-document) .preview-pane{justify-content:center}
-
-/* Share-link UI: link rows with copy/revoke buttons.
-   Reuses .reference-results / .reference-item spacing so the links list sits
-   naturally below the members list in the Share dialog. */
-.share-link-row{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding:10px 0;font-size:12px}
-.share-link-row code{font-family:'DM Mono',monospace;font-size:10px;color:#2d5d70;background:#eef3f6;border-radius:3px;padding:2px 5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.share-link-row .toolbar-button{flex-shrink:0;font-size:11px;padding:4px 8px}
-
-/* History timeline + diff view.
-   The timeline is a vertical list of clickable entries (newest first); each shows
-   the revision number, author, and relative timestamp. Selecting one loads its
-   body into the diff pane; selecting a second one computes a line-by-line diff.
-   The diff pane uses a monospace pre with added/removed lines highlighted. */
-.history-layout{display:grid;grid-template-columns:minmax(130px,180px) minmax(0,1fr);gap:0;margin-top:14px;min-height:300px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.history-timeline{list-style:none;margin:0;padding:0;overflow:auto;max-height:50vh;border-right:1px solid var(--line);background:#f8faf9}
-.history-entry{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-bottom:1px solid var(--line);cursor:pointer;font-size:11px}
-.history-entry:hover{background:#eaf2f5}
-.history-entry.selected{background:#e8f1fa;border-left:3px solid #2766a5}
-.history-entry-rev{font-family:'DM Mono',monospace;font-weight:600;color:#274b55;font-size:11px}
-.history-entry-meta{color:var(--muted);font-size:10px}
-.history-diff-pane{overflow:auto;max-height:50vh;padding:0;background:#fffdfa}
-.history-diff-pane pre{margin:0;padding:10px;font:11px 'DM Mono',monospace;line-height:1.6;white-space:pre-wrap;word-break:break-word}
-.diff-line-added{background:#e6f4e6;color:#1a5c1a;padding:0 3px;display:block}
-.diff-line-removed{background:#fce8e8;color:#8b1a1a;padding:0 3px;display:block}
-.diff-line-context{padding:0 3px;display:block}
-.history-empty{padding:20px;color:var(--muted);font-size:12px;text-align:center}
-
-/* Inline review popover (Overleaf-style thread view).
-   Anchored to the clicked comment/suggestion via getBoundingClientRect; positioned
-   fixed relative to the viewport. Amber for comments (matches .review-comment), green
-   accent for suggestions (matches .review-suggestion) so the kind is obvious at a glance.
-   The popover is appended to #app and uses z-index above the editor but below the modal
-   dialog backdrop so the overview dialog still wins when both are open. */
-.review-popover{position:fixed;z-index:50;width:268px;background:#fffdfa;border:1px solid var(--line);border-left:3px solid #d7aa42;border-radius:7px;box-shadow:0 8px 28px #19333326;font-size:12px;color:var(--ink);padding:0}
-.review-popover[hidden]{display:none}
-.review-popover-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:10px 11px 6px}
-.review-popover-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
-.review-popover-meta strong{font-size:11px;color:#274b55}
-.review-popover-author{font-size:10px;color:var(--muted)}
-.review-popover-kind{align-self:flex-start;font:9px 'DM Mono',monospace;letter-spacing:.06em;text-transform:uppercase;border-radius:3px;padding:1px 5px;margin-bottom:2px}
-.review-popover-kind-comment{background:#fff0bf;color:#9a6b1f}
-.review-popover-kind-insert{background:#dff2e8;color:#2c6b4f}
-.review-popover-kind-delete{background:#fdecea;color:#a23a2c}
-.review-popover-close{border:0;background:transparent;font-size:18px;line-height:1;color:#9aa6a6;cursor:pointer;padding:0 2px;border-radius:4px}
-.review-popover-close:hover{background:#eef2f1;color:#566}
-.review-popover-body{margin:0;padding:2px 12px 10px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
-.review-popover-snippet{margin:0;padding:6px 11px 9px;border-left:0;font-style:italic;color:#3d5158;line-height:1.45;white-space:pre-wrap;word-break:break-word}
-.review-popover-actions{display:flex;justify-content:flex-end;gap:7px;padding:8px 11px 11px;border-top:1px solid var(--line)}
-
-/* Resizable + hideable workspace columns.
-   Gutters are 4px grid tracks inserted between the outline/editor/preview/review
-   columns; mousedown on one drives a JS resize that rewrites grid-template-columns.
-   `!important` on the hidden rules is needed because the panes default to
-   display:flex/grid, which otherwise override the [hidden] attribute. */
-.gutter{width:4px;cursor:col-resize;background:var(--line);position:relative;z-index:2;transition:background .08s}
-.gutter:hover{background:#bcc7c5}
-.gutter[hidden]{display:none!important}
-.workspace.dragging{cursor:col-resize;user-select:none}
-.workspace.dragging .gutter{background:#9aa6a4}
-.outline[hidden],.editor-pane[hidden],.preview-pane[hidden],.review-pane[hidden]{display:none!important}
-/* Buttons default to display:flex/grid via their classes; the [hidden] attribute
-   must win, or role-gated controls stay visible for non-authors (regression:
-   2026-08-09 role-gate fix, hidden="" was set but CSS overrode it). */
-.outline-item[hidden],.outline-add[hidden],.quiet-button[hidden],.toolbar-button[hidden],.primary-button[hidden],.secondary-button[hidden]{display:none!important}
-/* Toolbars wrap the title and actions; hide buttons dock against the right edge. */
-.panel-heading-actions{display:flex;align-items:center;gap:4px;margin-left:auto}
-.pane-toolbar-left{display:flex;align-items:center;gap:4px;min-width:0}
-.hide-button{border:0;background:transparent;color:#8f9a9a;font-size:16px;line-height:1;cursor:pointer;padding:2px 5px;border-radius:4px}
-.hide-button:hover{background:#eef2f1;color:#2766a5}
-.show-pane-tab{position:fixed;top:74px;z-index:20;width:16px;height:54px;display:grid;place-items:center;border:1px solid var(--line);background:#f8faf9;color:#7b888c;font-size:13px;cursor:pointer;box-shadow:0 1px 6px #1933331a;transition:background .08s,color .08s}
-.show-pane-tab[hidden]{display:none}
-.show-pane-tab:hover{background:#eaf2f5;color:#2766a5;border-color:#bcc7c5}
-.show-pane-tab-left{left:0;border-left:0;border-radius:0 5px 5px 0}
-.show-pane-tab-right{right:0;border-right:0;border-radius:5px 0 0 5px}
-.selection-comment-button{position:fixed;z-index:60;padding:4px 10px;font-size:12px;border:1px solid #d7aa42;background:#fffdfa;color:#9a6b1f;border-radius:5px;cursor:pointer;box-shadow:0 2px 8px #1933331a;white-space:nowrap}
-.selection-comment-button:hover{background:#fff0bf}
-
-/* Review sidebar (Overleaf-style docked 4th column).
-   Amber for comments (matches .review-comment), green for inserts (matches
-   .review-suggestion), red for deletes — the same accents as the inline marks and
-   the popover, so a card is recognisable against its source span. */
-.review-pane{background:#fbfcfc;border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.review-pane .pane-toolbar{background:#f8faf9}
-.review-sidebar-body{flex:1;min-height:0;overflow:auto;padding:10px 12px 16px;display:flex;flex-direction:column;gap:10px}
-.review-sidebar-toolbar{display:flex;gap:7px;flex-wrap:wrap}
-.toolbar-button.is-on{border-color:#cf9c4d;color:#967446;background:#fdf7ec}
-.toolbar-button:disabled{opacity:.5;cursor:not-allowed}
-.review-sidebar-toolbar .toolbar-button.is-on{border-color:#cf9c4d;color:#967446;background:#fdf7ec}
-.review-sidebar-empty{font-size:12px;color:var(--muted);line-height:1.5;padding:18px 4px}
-.review-cards{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.review-card{border:1px solid var(--line);border-left:3px solid var(--line);border-radius:6px;background:#fffdfa;padding:9px 10px;cursor:pointer;transition:background .08s,box-shadow .08s}
-.review-card:hover{background:#f4f8f7;box-shadow:0 1px 3px #19333314}
-.review-card-comment{border-left-color:#d7aa42}
-.review-card-suggestion{border-left-color:#70b18e}
-.review-card-head{display:flex;align-items:center;gap:7px;margin-bottom:5px}
-.review-card-author{font-size:11px;color:var(--muted);margin-left:auto}
-.review-card-orphan{font-size:9px;color:#8a5a22;background:#fdf7ec;border-radius:3px;padding:1px 5px}
-.review-chip{font:9px 'DM Mono',monospace;letter-spacing:.06em;text-transform:uppercase;border-radius:3px;padding:2px 6px;color:#fff}
-.review-chip-comment{background:#d7aa42}
-.review-chip-insert{background:#5a9e7b}
-.review-chip-delete{background:#c0392b}
-.review-card-text{margin:0 0 7px;font-size:12px;color:#3d5158;line-height:1.45;white-space:pre-wrap;word-break:break-word;font-style:italic}
-.review-card-note{margin:0 0 7px;font-size:10px;color:#8a5a22}
-.review-card-actions{display:flex;justify-content:flex-end;gap:6px}
-.review-card-actions .toolbar-button,.review-card-actions .primary-button{font-size:11px;padding:4px 9px}
-.review-sidebar-bulk{margin-top:auto;padding-top:10px;border-top:1px solid var(--line);display:flex;gap:7px;justify-content:flex-end}
-
-/* Author identity: avatar chip (initials on a per-author colour) + timestamp.
-   --hue is set inline per author (authorHue in main.ts); hsl() turns it into a
-   soft tinted background with a readable dark-on-light foreground, so the same
-   name always renders the same colour across sessions and peers (Google Docs does
-   the same). The avatar is a flex-shrink:0 chip so long names never squeeze it. */
-.review-avatar{flex:0 0 auto;display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font:600 9px 'DM Sans',sans-serif;color:hsl(var(--hue,210),55%,24%);background:hsl(var(--hue,210),65%,90%);border:1px solid hsl(var(--hue,210),45%,80%);text-transform:uppercase;line-height:1}
-.review-card-author{display:inline-flex;align-items:baseline;gap:5px;min-width:0;font-size:11px;color:#3d5158;font-weight:600}
-/* The time is a lighter, smaller suffix inside the author line; truncates so a long
-   name still fits the card without wrapping the timestamp to its own line. */
-.review-card-time{font-size:10px;color:var(--muted);font-weight:400;white-space:nowrap}
-.review-card-head .review-avatar{margin-left:auto;order:2}
-.review-card-head .review-card-author{order:1;margin-left:0}
-.review-card-head .review-card-orphan{order:3}
-/* Popover avatar sits at the head's right edge (before the close button). */
-.review-popover-head .review-avatar{margin-left:auto}
-/* "Resolved by {name} · {time}" — shown beneath the snippet in the popover for a
-   resolved/accepted/rejected item. Muted italic to read as an audit line. */
-.review-resolved-line{display:block;margin:0 12px 8px;padding:5px 8px;font-size:10px;font-style:italic;color:#5a6f6a;background:#eef3f1;border-radius:4px}
-
-/* Accessibility: honour the user's reduced-motion preference so the PDF search
-   highlight pulse and any transitions don't animate for motion-sensitive users. */
-@media (prefers-reduced-motion:reduce){.pdf-search-highlight{animation:none;transition:opacity .01s}.gutter{transition:none}.show-pane-tab{transition:none}}
-
-/* Themed scrollbars for the custom-scroll surfaces (PDF viewer, review sidebar,
-   reference/export lists, history panes, source preview, dialog, diagnostics).
-   Firefox uses scrollbar-width/scrollbar-color; Chromium/Safari use the
-   ::-webkit-scrollbar pseudo-elements. The track is transparent and the thumb is
-   inset (background-clip:padding-box + transparent border) so it never touches the
-   content edge, matching the rest of the UI's hairline aesthetic. */
-.pdf-viewer,.review-sidebar-body,.reference-results,.export-files,.construct-source,.history-timeline,.history-diff-pane,.edit-panel,.diagnostics-list{scrollbar-width:thin;scrollbar-color:#c4cfcd transparent}
-.pdf-viewer::-webkit-scrollbar,.review-sidebar-body::-webkit-scrollbar,.reference-results::-webkit-scrollbar,.export-files::-webkit-scrollbar,.construct-source::-webkit-scrollbar,.history-timeline::-webkit-scrollbar,.history-diff-pane::-webkit-scrollbar,.edit-panel::-webkit-scrollbar,.diagnostics-list::-webkit-scrollbar{width:10px;height:10px}
-.pdf-viewer::-webkit-scrollbar-track,.review-sidebar-body::-webkit-scrollbar-track,.reference-results::-webkit-scrollbar-track,.export-files::-webkit-scrollbar-track,.construct-source::-webkit-scrollbar-track,.history-timeline::-webkit-scrollbar-track,.history-diff-pane::-webkit-scrollbar-track,.edit-panel::-webkit-scrollbar-track,.diagnostics-list::-webkit-scrollbar-track{background:transparent}
-.pdf-viewer::-webkit-scrollbar-thumb,.review-sidebar-body::-webkit-scrollbar-thumb,.reference-results::-webkit-scrollbar-thumb,.export-files::-webkit-scrollbar-thumb,.construct-source::-webkit-scrollbar-thumb,.history-timeline::-webkit-scrollbar-thumb,.history-diff-pane::-webkit-scrollbar-thumb,.edit-panel::-webkit-scrollbar-thumb,.diagnostics-list::-webkit-scrollbar-thumb{background:#c4cfcd;border:2px solid transparent;border-radius:6px;background-clip:padding-box}
-.pdf-viewer::-webkit-scrollbar-thumb:hover,.review-sidebar-body::-webkit-scrollbar-thumb:hover,.reference-results::-webkit-scrollbar-thumb:hover,.export-files::-webkit-scrollbar-thumb:hover,.construct-source::-webkit-scrollbar-thumb:hover,.history-timeline::-webkit-scrollbar-thumb:hover,.history-diff-pane::-webkit-scrollbar-thumb:hover,.edit-panel::-webkit-scrollbar-thumb:hover,.diagnostics-list::-webkit-scrollbar-thumb:hover{background:#a9b6b4;background-clip:padding-box}
-
-/* High-contrast / forced-colours mode: thicken focus rings and borders so
-   interactive elements stay clearly delineated when the OS enforces stronger
-   contrast. The default hairline borders (var(--line) ~ #dce3e1) wash out under
-   forced colours; a 2px solid mid-tone keeps fields and buttons perceptible. */
-@media (prefers-contrast:more){
-  :focus-visible{outline:3px solid #000;outline-offset:2px}
-  .topbar :focus-visible{outline:3px solid #fff}
-  .outline-item.active,.history-entry.selected{border-left-width:4px}
-  .toolbar-button,.secondary-button,.zoom-button,.edit-panel input,.edit-panel select,.edit-panel textarea,.share-invite input,.share-invite select,.view-select select{border:2px solid #50646a}
+.pdf-search-highlight {
+  position: absolute; z-index: 5;
+  background: #ffd22859; border: 2px solid #f0b40cb3; border-radius: 2px;
+  pointer-events: none; transition: opacity 1.5s ease-out;
+  animation: pdf-highlight-pulse 1s ease-out 2;
+}
+@keyframes pdf-highlight-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 #f0b40c00 }
+  50% { box-shadow: 0 0 8px 3px #f0b40c66 }
 }
 
-/* Printing: the app is screen-first, but printing should still produce a usable
-   artefact. Hide all chrome (topbar, toolbars, outline, gutters, review, and the
-   connection/diagnostics overlays) and render only the compiled preview pages as a
-   clean flowing document. Without this the dark topbar and multi-column grid print
-   and the page is mostly empty whitespace. */
-@media print{
-  .topbar,.outline,.gutter,.pane-toolbar,.editor-footer,.preview-toolbar,.connection-state,.diagnostics-list,.show-pane-tab,.selection-comment-button,.review-pane,.review-popover,.editor-pane{display:none!important}
-  .workspace{display:block;height:auto}
-  .preview-pane{display:block;min-height:0;border:0;background:#fff}
-  .pdf-viewer{overflow:visible;padding:0;background:#fff;height:auto}
-  .pdf-page{box-shadow:none;break-inside:avoid;page-break-inside:avoid}
+/* ===========================================================================
+   Build drawer — problems and log
+   =========================================================================== */
+
+.drawer {
+  display: flex; flex-direction: column; min-height: 0; height: 190px;
+  background: var(--chrome); border-top: 1px solid var(--rule-strong);
+}
+.drawer-tabs {
+  flex: 0 0 auto; display: flex; align-items: center;
+  border-bottom: 1px solid var(--rule); background: var(--chrome);
+}
+.drawer-tabs button.tab {
+  border: 0; border-right: 1px solid var(--rule); background: transparent;
+  color: var(--muted); font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase;
+  padding: 8px 13px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+}
+.drawer-tabs button.tab:hover { color: var(--ink) }
+.drawer-tabs button.tab[aria-selected="true"] {
+  background: var(--paper); color: var(--ink); font-weight: 700; box-shadow: inset 0 -2px 0 var(--accent);
+}
+.drawer-tabs .tab .n {
+  display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px;
+  background: var(--rule-strong); color: #fff; font-size: 9px; border-radius: 2px;
+}
+.drawer-tabs .tab .n[data-tone="error"] { background: var(--delete) }
+.drawer-tabs .tab .n[data-tone="warn"] { background: var(--comment) }
+.drawer-summary { margin-left: auto; padding: 0 10px; font: 10px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.drawer-tabs .btn-icon { margin-right: 4px }
+.drawer-body { flex: 1; min-height: 0; overflow: auto; background: var(--paper) }
+
+.problem {
+  display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start;
+  width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--rule);
+  background: transparent; cursor: pointer; padding: 8px 12px; color: var(--ink-soft); font: 12px/1.45 var(--sans);
+}
+.problem:hover { background: var(--chrome-raised) }
+.problem .sev {
+  font: 600 8.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  padding: 3px 5px; border-radius: 2px; margin-top: 2px;
+}
+.problem .sev-error { background: var(--delete-soft); color: var(--delete) }
+.problem .sev-warning { background: var(--comment-soft); color: var(--comment) }
+.problem .loc { font: 10px var(--mono); color: var(--faint); margin-top: 3px }
+
+.log-line {
+  display: flex; gap: 10px; padding: 4px 12px; font: 11px/1.6 var(--mono); color: var(--ink-soft);
+  border-bottom: 1px solid #00000008;
+}
+.log-line .t { color: var(--faint); flex: 0 0 auto }
+.log-line .k { flex: 0 0 auto; font-weight: 700; width: 4.5ch }
+.log-line .k-ok { color: var(--insert) }
+.log-line .k-warn { color: var(--comment) }
+.log-line .k-err { color: var(--delete) }
+.log-line .k-info { color: var(--faint); font-weight: 400 }
+.log-empty { padding: 16px 12px; color: var(--faint); font-size: 11.5px }
+
+/* ===========================================================================
+   Status bar — every glanceable fact, and the primary action
+   =========================================================================== */
+
+.statusbar {
+  display: flex; align-items: stretch; height: var(--statusbar-h);
+  background: var(--chrome); border-top: 1px solid var(--rule-strong);
+  font: 11px var(--mono); color: var(--muted); overflow: hidden;
+}
+/* On the projects screen there is no document to report on, and no primary
+   action to offer: the whole bar goes rather than sitting there saying nothing. */
+body:not(.has-project) .statusbar { display: none }
+.status-cell {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 11px; border: 0; border-right: 1px solid var(--rule);
+  background: transparent; color: inherit; font: inherit; white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+button.status-cell { cursor: pointer }
+button.status-cell:hover { background: #00000008; color: var(--ink) }
+.status-spacer { flex: 1; border-right: 0 }
+.statusbar .right { display: flex; align-items: stretch; margin-left: auto }
+.statusbar .right .status-cell { border-right: 0; border-left: 1px solid var(--rule) }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: 0 0 auto }
+.status-dot[data-state="connected"] { background: var(--insert) }
+.status-dot[data-state="connecting"] { background: var(--comment) }
+.status-dot[data-state="disconnected"], .status-dot[data-state="unsupported"] { background: var(--faint) }
+.status-ok { color: var(--insert); font-weight: 700 }
+.status-warn { color: var(--comment); font-weight: 700 }
+.status-error { color: var(--delete); font-weight: 700 }
+
+/* The primary action is the last cell, full height, and never hideable. */
+#compile-button {
+  border: 0; border-radius: 0; padding: 0 16px; gap: 9px;
+  font: 600 11.5px var(--sans); letter-spacing: .01em;
 }
 
-/* Reduced-motion additions for the new transitions/animations introduced above
-   (outline hover fade, button hovers, select hover, skeleton shimmer). A second
-   media block is valid and cascades with the one at the top of this section. */
-@media (prefers-reduced-motion:reduce){
-  .outline-item,.quiet-button,.close-button,.view-select select{transition:none}
-  .skeleton-line{animation:none;background:#eff2ee}
+/* ===========================================================================
+   Modal — for one-question prompts only
+   =========================================================================== */
+
+.modal {
+  border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 0;
+  width: 420px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px);
+  overflow: auto; color: var(--ink); background: var(--overlay);
+  box-shadow: 0 18px 50px #1b1e1c33;
+}
+.modal::backdrop { background: #1b1e1c40 }
+.modal form { padding: 20px 22px 22px }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px }
+.modal-head .eyebrow {
+  font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--faint);
+}
+.modal-head h2 { font-size: 17px; font-weight: 600; margin: 4px 0 10px }
+.modal p { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin: 0 0 4px }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px }
+.prompt-error { font-size: 11.5px; color: var(--comment); margin: 8px 0 0 }
+.close-button { border: 0; background: none; font-size: 20px; line-height: 1; color: var(--faint); cursor: pointer; padding: 0 3px }
+.close-button:hover { color: var(--ink) }
+
+/* ===========================================================================
+   Command palette
+   =========================================================================== */
+
+.palette-backdrop {
+  position: fixed; inset: 0; z-index: 100; background: #1b1e1c2e;
+  display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh;
+}
+.palette {
+  width: min(620px, calc(100vw - 32px));
+  background: var(--overlay); border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  box-shadow: 0 24px 60px #1b1e1c40; display: flex; flex-direction: column; overflow: hidden;
+  max-height: 62vh;
+}
+.palette input {
+  border: 0; border-bottom: 1px solid var(--rule); padding: 14px 16px;
+  font: 15px var(--sans); color: var(--ink); background: transparent; outline: none;
+}
+.palette input::placeholder { color: var(--faint) }
+.palette-results { list-style: none; margin: 0; padding: 4px 0; overflow: auto; min-height: 0 }
+.palette-group {
+  padding: 8px 16px 4px; font: 600 9px/1.4 var(--mono); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--faint);
+}
+.palette-item {
+  display: flex; align-items: center; gap: 10px; padding: 7px 16px; cursor: pointer; font-size: 13px;
+}
+.palette-item .kind {
+  font: 9px var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--faint); flex: 0 0 auto; width: 5.5ch;
+}
+.palette-item .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.palette-item .hint { margin-left: auto; font: 10px var(--mono); color: var(--faint); flex: 0 0 auto }
+.palette-item[aria-selected="true"] { background: var(--accent-soft) }
+.palette-item[aria-selected="true"] .label { color: var(--accent-strong); font-weight: 600 }
+.palette-empty { padding: 22px 16px; color: var(--muted); font-size: 12.5px; text-align: center }
+.palette-foot {
+  border-top: 1px solid var(--rule); background: var(--chrome);
+  padding: 6px 14px; display: flex; gap: 12px; font: 10px var(--mono); color: var(--faint);
+}
+
+/* ===========================================================================
+   Focus mode — text only
+   =========================================================================== */
+
+body.focus-mode .navigator,
+body.focus-mode .dock,
+body.focus-mode .preview-pane,
+body.focus-mode .gutter,
+body.focus-mode .drawer,
+body.focus-mode .show-pane-tab { display: none !important }
+body.focus-mode .workspace { grid-template-columns: minmax(0, 1fr) !important }
+body.focus-mode .cm-scroller { padding-top: 40px }
+
+/* ===========================================================================
+   Scrollbars — inset thumbs, matching the hairline aesthetic
+   =========================================================================== */
+
+.nav-body, .dock-body, .drawer-body, .pdf-viewer, .palette-results,
+.history-timeline, .history-diff-pane, .modal, .screen {
+  scrollbar-width: thin; scrollbar-color: #c4c7bd transparent;
+}
+.nav-body::-webkit-scrollbar, .dock-body::-webkit-scrollbar, .drawer-body::-webkit-scrollbar,
+.pdf-viewer::-webkit-scrollbar, .palette-results::-webkit-scrollbar,
+.history-timeline::-webkit-scrollbar, .history-diff-pane::-webkit-scrollbar,
+.modal::-webkit-scrollbar, .screen::-webkit-scrollbar { width: 10px; height: 10px }
+.nav-body::-webkit-scrollbar-track, .dock-body::-webkit-scrollbar-track, .drawer-body::-webkit-scrollbar-track,
+.pdf-viewer::-webkit-scrollbar-track, .palette-results::-webkit-scrollbar-track,
+.history-timeline::-webkit-scrollbar-track, .history-diff-pane::-webkit-scrollbar-track,
+.modal::-webkit-scrollbar-track, .screen::-webkit-scrollbar-track { background: transparent }
+.nav-body::-webkit-scrollbar-thumb, .dock-body::-webkit-scrollbar-thumb, .drawer-body::-webkit-scrollbar-thumb,
+.pdf-viewer::-webkit-scrollbar-thumb, .palette-results::-webkit-scrollbar-thumb,
+.history-timeline::-webkit-scrollbar-thumb, .history-diff-pane::-webkit-scrollbar-thumb,
+.modal::-webkit-scrollbar-thumb, .screen::-webkit-scrollbar-thumb {
+  background: #c4c7bd; border: 2px solid transparent; border-radius: 6px; background-clip: padding-box;
+}
+
+/* ===========================================================================
+   Accessibility and output modes
+   =========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important }
+  .pdf-search-highlight { transition: opacity .01s }
+}
+
+/* Forced colours / high contrast: hairlines and soft tints wash out, so the
+   borders that carry structure are thickened and focus rings are made obvious. */
+@media (prefers-contrast: more) {
+  :root { --rule: #9aa093; --rule-strong: #6f756a }
+  :focus-visible { outline: 3px solid #000; outline-offset: 2px }
+  .btn, .chip, .zoom-button, .field input, .field select, .field textarea,
+  .inline-form input, .inline-form select { border: 2px solid #4a5046 }
+  .tree-row.active, .outline-row.active, .review-card[aria-selected="true"] { border-left-width: 4px }
+}
+
+@media (forced-colors: active) {
+  .btn, .chip, .status-cell, .tree-row, .outline-row, .review-card { forced-color-adjust: none }
+  .status-dot, .avatar, .review-chip { border: 1px solid CanvasText }
+  .review-suggestion { text-decoration: underline }
+  .review-comment { text-decoration: underline dotted }
+}
+
+/* Printing: the artefact, not the apparatus. */
+@media print {
+  .appbar, .navigator, .gutter, .doc-pane, .dock, .drawer, .statusbar,
+  .pane-bar, .show-pane-tab, .selection-comment-button, .review-popover,
+  .palette-backdrop, .screen { display: none !important }
+  #app { display: block; height: auto }
+  .workspace { display: block }
+  .preview-pane { display: block; background: #fff }
+  .pdf-viewer { overflow: visible; padding: 0; background: #fff; height: auto }
+  .pdf-page { box-shadow: none; break-inside: avoid; page-break-inside: avoid; margin: 0 auto }
+}
+
+/* ===========================================================================
+   Responsive
+   ---------------------------------------------------------------------------
+   Below 1180px the navigator narrows and the palette hint sheds its label;
+   below 900px the workspace stops being a set of columns and becomes a stack,
+   which is readable on a tablet. Authoring on a phone is not a goal.
+   =========================================================================== */
+
+@media (max-width: 1320px) {
+  .palette-hint { width: 200px }
+  .palette-hint .text { display: none }
+  .crumbs button, .crumbs span { max-width: 16ch }
+  /* The document bar keeps only its identity and its two controls; the path and
+     the version number are available in the breadcrumb and History. */
+  .doc-id code, .doc-rev { display: none }
+}
+
+@media (max-width: 900px) {
+  .workspace { display: flex; flex-direction: column; overflow: auto }
+  .workspace > .gutter, .show-pane-tab { display: none !important }
+  /* Each region becomes a fixed-height band in a scrolling stack. `flex: 0 0 …`
+     is required: as plain flex items with min-height:0 inner scrollers, the
+     panes collapse to a hairline instead of honouring max-height. */
+  .navigator { flex: 0 0 200px; border-right: 0; border-bottom: 1px solid var(--rule-strong) }
+  .nav-section-files, .nav-section-outline { flex: 1 1 50% }
+  .doc-pane { flex: 0 0 70vh }
+  .dock, .preview-pane { flex: 0 0 70vh; border-left: 0; border-top: 1px solid var(--rule-strong) }
+  .palette-hint { display: none }
+  .crumbs { max-width: 40vw }
 }

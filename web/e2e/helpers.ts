@@ -63,9 +63,9 @@ export async function openFirstProject(page: Page): Promise<void> {
   await page.locator(".cm-content").waitFor({ state: "visible", timeout: 15_000 })
 }
 
-/** Create a document through the UI. */
-export async function createDocument(page: Page, path: string, title: string): Promise<void> {
-  await page.locator("#new-project").click()
+/** Create a document through the UI (the ＋ in the navigator's Files header). */
+export async function createDocument(page: Page, path: string, _title: string): Promise<void> {
+  await page.locator("#add-document").click()
   await page.waitForSelector("#prompt-input", { state: "visible" })
   await page.locator("#prompt-input").fill(path)
   await page.locator("#prompt-ok").click()

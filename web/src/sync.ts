@@ -1,11 +1,19 @@
 import type { LoroDoc } from "loro-crdt"
 import { VersionVector } from "loro-crdt"
 import { decodeSyncFrame, encodeSyncFrame } from "./protocol"
+import { decodeRoster, encodePresenceState, type PresencePeer, type PresenceState } from "./presence"
 
 export type SyncStatus = "connecting" | "connected" | "disconnected" | "unsupported"
 
 export interface SyncConnection {
   readonly close: () => void
+  /**
+   * Publish this client's presence state (name, open document, caret location).
+   * Safe to call before the socket is open or after it drops: the latest state
+   * is remembered and re-sent on (re)connect, so a peer that reconnects
+   * reappears in everyone's roster without the caller tracking socket state.
+   */
+  readonly publishPresence: (state: PresenceState) => void
 }
 
 /**
@@ -37,6 +45,12 @@ export interface SyncOptions {
    */
   readonly onReady?: () => void
   readonly onStatus?: (status: SyncStatus, detail?: string) => void
+  /**
+   * The relay's presence roster, minus this client's own peer, whenever it
+   * changes. The relay coalesces bursts (250 ms) and sweeps peers that stop
+   * heartbeating (30 s TTL), so this fires at a UI-friendly rate.
+   */
+  readonly onPresence?: (peers: readonly PresencePeer[]) => void
 }
 
 /** Presence TTL on the relay is 30s, so a 10s heartbeat keeps us from being evicted. */
@@ -133,6 +147,24 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
     send(encodeSyncFrame({ type: "update", bytes }))
   }
 
+  // Latest presence state this client wants published, and the payload actually
+  // on the wire. Keeping both lets us (a) re-publish after a reconnect, since a
+  // dropped peer is swept from the relay's roster, and (b) drop no-op frames —
+  // the caller updates presence on every caret move, but only a change of line,
+  // section, or document is worth a broadcast to every peer in the room.
+  let presenceState: PresenceState | undefined
+  let presenceOnWire: string | undefined
+
+  const sendPresence = (force = false): void => {
+    if (presenceState === undefined) return
+    const bytes = encodePresenceState(presenceState)
+    const serialised = new TextDecoder().decode(bytes)
+    if (!force && serialised === presenceOnWire) return
+    if (socket?.readyState !== WebSocket.OPEN || !handshakeComplete) return
+    send(encodeSyncFrame({ type: "presence", bytes }))
+    presenceOnWire = serialised
+  }
+
   const stopHeartbeat = (): void => {
     if (heartbeatTimer !== undefined) clearTimeout(heartbeatTimer)
     heartbeatTimer = undefined
@@ -167,6 +199,11 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
     unsubscribe?.()
     unsubscribe = undefined
     handshakeComplete = false
+    // The relay drops a disconnected peer from its roster, so nothing of ours is
+    // on the wire any more: forget it, or the dedupe check would suppress the
+    // re-publish after reconnecting and we would stay invisible to peers.
+    presenceOnWire = undefined
+    options.onPresence?.([])
   }
 
   const connect = (): void => {
@@ -251,11 +288,22 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
             syncFrom = doc.oplogVersion()
           }
           status("connected")
+          // Announce ourselves as soon as the handshake completes (and again
+          // after every reconnect), so peers see who joined without waiting for
+          // the next caret move.
+          sendPresence(true)
           return
         }
         if (frame.type === "update" || frame.type === "snapshot") {
           if (!handshakeComplete) throw new Error("Sync update arrived before welcome")
           importRemote(doc, frame.bytes)
+          return
+        }
+        if (frame.type === "presence") {
+          // decodeRoster never throws: a malformed roster is a cosmetic problem,
+          // and throwing here would be caught below as a fatal protocol error
+          // and close the document's connection.
+          options.onPresence?.(decodeRoster(frame.bytes).filter((peer) => peer.peer !== doc.peerId))
           return
         }
         if (frame.type === "heartbeat") return
@@ -287,6 +335,10 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
       clearTimeout(reconnectTimer)
       teardownSocket()
       socket?.close()
+    },
+    publishPresence: (state: PresenceState) => {
+      presenceState = state
+      sendPresence()
     }
   }
 }

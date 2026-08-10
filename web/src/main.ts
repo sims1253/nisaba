@@ -19,13 +19,18 @@ import { Effect, Layer } from "effect"
 import { findConstructs, type Construct } from "./model"
 import { hybridEditorField, revealConstruct, reviewEditorField, setReviewItems, type ReferenceDisplay } from "./decorations"
 import { PdfBlobUrlStore, downloadBase64 } from "./effects"
-import { connectSync, isImportingRemote, type SyncStatus } from "./sync"
+import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { VirtualPdfViewer } from "./pdf-viewer"
 import * as api from "./api"
 import type { CompileView, Fulltext, MarkInput, MembershipRole, NisabaDocument, Project, Reference } from "./api"
 import { AuthTokenLive, OidcClient, OidcClientLive, onAuthFailure, readStoredAccessToken, currentUserDisplayName, decodedTokenPayload, isOidcCallback, oidcConfigFromEnv, scheduleTokenRefresh } from "./auth"
 import { emptyReviewState, reviewReducer, type ReviewItem, type ReviewState } from "./review"
 import { createCursorAt, resolveCursor } from "./cursor"
+import { SHELL_HTML } from "./shell"
+import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount, type Heading, type TreeNode } from "./outline"
+import { peerInitials, peerLocation, type PresencePeer } from "./presence"
+import { createPalette, type PaletteItem } from "./palette"
+import { fuzzyScore } from "./fuzzy"
 import "./styles.css"
 
 // ---------------------------------------------------------------------------
@@ -184,97 +189,7 @@ let resolvingSuggestions = false
 // Shell
 // ---------------------------------------------------------------------------
 
-root.innerHTML = `
-  <style>
-    /* Diagnostic underlines + list. Lives here rather than styles.css because
-       both the decoration class and the list markup are
-       introduced by this file. */
-    .typst-diagnostic-error{border-bottom:2px wavy #c0392b;background:#fdecea}
-    .typst-diagnostic-warning{border-bottom:2px wavy #b8860b;background:#fef6e3}
-    .diagnostics-list{border-bottom:2px solid #e8c5c5;background:#fbf5f5;max-height:50%;overflow:auto;padding:8px 19px;font-size:11px;flex-shrink:0}
-    .diagnostics-list h3{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9a5b4f;margin:6px 0 8px}
-    .diagnostic-item{display:grid;grid-template-columns:auto 1fr;gap:7px;padding:7px 0;border-top:1px solid #f0dcd8;cursor:pointer;color:#5a4038;line-height:1.4}
-    .diagnostic-item:hover{background:#f7ecea}
-    .diag-sev{font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;padding:2px 5px;border-radius:3px;height:fit-content;margin-top:1px}
-    .diag-sev-error{background:#c0392b;color:#fff}
-    .diag-sev-warning{background:#d9a521;color:#3a2a06}
-    .diag-loc{font-family:'DM Mono',monospace;color:#855d52;font-size:10px;margin-top:2px}
-    /* Typst inline-construct marks (decorations.ts styles strong/emphasis as
-       in-place text, not chips). The mark covers the full delimiter range so
-       the markup is visually distinguished from regular text while still
-       rendering bold/italic. */
-    .typst-strong{font-weight:700}
-    .typst-emphasis{font-style:italic}
-    .rich-citation{display:inline-flex;align-items:center;gap:2px;font-family:'DM Sans',sans-serif;background:#e9f1fa;color:#37699d;border:1px solid #c5dbf0;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:600;cursor:pointer;vertical-align:baseline;line-height:1.4;white-space:nowrap}
-    .rich-citation:hover{background:#d4e6f7;border-color:#a8cee8}
-    .rich-figure{margin:8px 0;border:1px solid #e3d5bd;border-radius:6px;overflow:hidden;cursor:pointer;max-width:100%;background:#fdfaf3}
-    .rich-figure:hover{border-color:#cf9c4d;box-shadow:0 1px 5px #cf9c4d33}
-    .rich-figure-body{display:flex;align-items:center;justify-content:center;gap:7px;min-height:48px;padding:10px 14px;background:#f5ece0;color:#7a5a32;font:11px 'DM Sans',sans-serif}
-    .rich-figure-icon{font-size:16px}
-    .rich-figure-caption{font:italic 11px 'DM Sans',sans-serif;color:#72664d;padding:5px 12px;border-top:1px solid #e3d5bd;background:#fdfaf3}
-    .rich-table{margin:6px 0;border-collapse:collapse;font:11px 'DM Sans',sans-serif;cursor:pointer;max-width:100%;border:1px solid #ddd}
-    .rich-table:hover{box-shadow:0 1px 5px #cf9c4d33;border-color:#cf9c4d}
-    .rich-table th{background:#edf3f1;color:#45616a;font-weight:600;padding:4px 10px;border:1px solid #ddd;text-align:left}
-    .rich-table td{padding:3px 10px;border:1px solid #eee;color:#555}
-  </style>
-  <header class="topbar">
-    <div class="brand"><span class="mark">N</span><span>Nisaba</span><span class="crumb" id="location-crumb">/ Projects</span></div>
-    <div class="top-actions">
-      <span class="save-status" id="save-status">Ready</span>
-      <button id="sign-in" class="toolbar-button" type="button">Sign in</button>
-    </div>
-  </header>
-  <div class="workspace">
-    <aside class="outline" aria-label="Projects and document outline">
-      <div class="panel-heading"><h2 id="outline-heading">Projects</h2><div class="panel-heading-actions"><button id="new-project" class="quiet-button" type="button" aria-label="Create project">＋</button><button id="hide-outline" class="hide-button" type="button" title="Hide outline" aria-label="Hide outline">‹</button></div></div>
-      <div id="outline-list" class="empty-state"><p>Loading projects…</p></div>
-      <div class="outline-footer" id="outline-footer"></div>
-    </aside>
-    <div class="gutter" data-gutter="outline" title="Drag to resize · double-click to show/hide the outline"></div>
-    <section class="editor-pane" aria-label="Typst source editor">
-      <div class="pane-toolbar editor-chrome">
-        <div class="pane-toolbar-left"><strong id="document-name">No document selected</strong><span class="mode-label" id="revision-label"></span></div>
-        <div class="toolbar-actions">
-          <label class="view-select"><span class="sr-only">Projection view</span>
-            <select id="view-select" aria-label="Projection view">
-              <option value="proposed">Proposed</option>
-              <option value="baseline">Baseline</option>
-              <option value="redline">Redline</option>
-              <option value="public">Public</option>
-            </select>
-          </label>
-          <button id="references-button" class="toolbar-button" type="button">References</button>
-          <button id="history-button" class="toolbar-button" type="button" title="Version history" hidden>History</button>
-          <button id="share-button" class="toolbar-button" type="button" title="Invite collaborators" hidden>Share</button>
-          <button id="export-button" class="toolbar-button" type="button">Export</button>
-          <button id="toolbar-suggesting" class="toolbar-button" type="button" aria-pressed="false" title="Toggle track changes" disabled>Track changes: off</button>
-          <button id="review-button" class="toolbar-button" type="button" aria-pressed="false">Review<span class="review-badge" hidden></span></button>
-          <button id="compile-button" class="primary-button" type="button">Compile <span>⌘↵</span></button>
-        </div>
-      </div>
-      <div class="review-banner editor-chrome" id="review-banner" hidden><span class="review-icon">✓</span><span id="review-summary"></span><button id="suggesting-button" type="button">Track changes: off</button></div>
-      <div id="editor" class="editor-host editor-chrome"></div>
-      <div class="editor-footer editor-chrome"><span id="sync-label"><span class="green-dot"></span> No document loaded</span><span id="cursor-position">Ln 1, Col 1</span></div>
-      <div class="pane-placeholder empty-state" id="editor-placeholder"><h2>No document open</h2><p>Select a document from the outline to start editing.</p></div>
-    </section>
-    <div class="gutter review-gutter" data-gutter="review" title="Drag to resize the review panel" hidden></div>
-    <aside class="review-pane" aria-label="Review threads" hidden>
-      <div class="pane-toolbar review-chrome"><div class="pane-toolbar-left"><strong>Review</strong></div><button class="hide-button" id="hide-review" type="button" title="Close review panel" aria-label="Close review panel">×</button></div>
-      <div class="review-sidebar-body" id="review-sidebar-body"></div>
-    </aside>
-    <div class="gutter" data-gutter="preview" title="Drag to resize · double-click to show/hide the preview"></div>
-    <section class="preview-pane" aria-label="Compiled PDF preview">
-      <div class="pane-toolbar preview-chrome"><div class="pane-toolbar-left"><strong>Preview</strong><span class="build-label" id="build-label">No build</span></div><div class="pdf-zoom-controls" id="pdf-zoom-controls" hidden><button id="zoom-out" class="zoom-button" type="button" title="Zoom out" aria-label="Zoom out">−</button><span class="zoom-level" id="zoom-level">125%</span><button id="zoom-in" class="zoom-button" type="button" title="Zoom in" aria-label="Zoom in">+</button><button id="zoom-reset" class="zoom-button" type="button" title="Reset zoom" aria-label="Reset zoom">⟲</button></div><button id="hide-preview" class="hide-button" type="button" title="Hide preview" aria-label="Hide preview">›</button></div>
-      <div id="diagnostics-list" class="diagnostics-list preview-chrome" hidden></div>
-      <div id="pdf-viewer" class="pdf-viewer empty-preview preview-chrome"><div class="empty-state"><h2>No preview yet</h2><p>Select a document and compile it to see the rendered PDF.</p></div></div>
-      <div class="connection-state preview-chrome" id="connection-state"><span class="connection-dot"></span><span>No document</span></div>
-      <div class="pane-placeholder empty-state" id="preview-placeholder"><h2>No preview</h2><p>Open a document and compile it to see the rendered PDF.</p></div>
-    </section>
-  </div>
-  <button id="show-outline-tab" class="show-pane-tab show-pane-tab-left" type="button" title="Show outline" hidden>›</button>
-  <button id="show-preview-tab" class="show-pane-tab show-pane-tab-right" type="button" title="Show preview" hidden>‹</button>
-  <dialog id="workspace-panel" class="edit-panel"><form method="dialog"><div class="dialog-heading"><div><span class="eyebrow" id="panel-eyebrow">Workspace</span><h2 id="panel-title">Panel</h2></div><button class="close-button" value="cancel" aria-label="Close panel">×</button></div><div id="panel-content"></div></form></dialog>
-`
+root.innerHTML = SHELL_HTML
 
 /**
  * Searches the editor for a text snippet and scrolls + highlights the match.
@@ -358,31 +273,90 @@ function authorHue(name: string): number {
 function status(message: string): void { setText("#save-status", message) }
 
 // ---------------------------------------------------------------------------
-// Workspace columns: drag-resize gutters + hide/show
+// Workspace columns: drag-resize gutters, hide/show, dock, focus mode
 // ---------------------------------------------------------------------------
 
 /**
- * Per-column widths in pixels. `-1` means "flex" (rendered as 1fr): the editor
- * and preview absorb the leftover space, while the outline and review panel keep
- * a fixed pixel size. The widths persist for the session (no localStorage yet),
- * which is enough for a writing tool where the user mostly keeps one layout.
+ * Per-column widths in pixels. `-1` means "flex" (rendered as 1fr): the document
+ * and preview absorb the leftover space, while the navigator and the dock keep a
+ * fixed pixel size. The widths persist for the session, which is enough for a
+ * writing tool where one layout is kept for hours.
  */
 interface ColumnWidths {
-  outline: number
-  editor: number
+  navigator: number
+  doc: number
+  dock: number
   preview: number
-  review: number
 }
 
-const columnWidths: ColumnWidths = { outline: 235, editor: -1, preview: -1, review: 320 }
+const columnWidths: ColumnWidths = { navigator: 250, doc: -1, dock: 340, preview: -1 }
 
-/** Hidden panes (and their gutter) collapse to 0; the editor is always visible. */
-interface HiddenPanes { outline: boolean; preview: boolean }
+/** Hidden panes (and their gutter) collapse to 0; the document is always visible. */
+interface HiddenPanes { navigator: boolean; preview: boolean }
 
-const hiddenPanes: HiddenPanes = { outline: false, preview: false }
+const hiddenPanes: HiddenPanes = { navigator: false, preview: false }
 
-/** Whether the review sidebar is docked into the workspace as a 4th column. */
-let reviewPaneVisible = false
+/**
+ * The tools that can occupy the dock, one at a time (docs/ui-design.md §4).
+ * Review is the only one that also re-renders on state changes, so the rest are
+ * plain "render once when opened" panels.
+ */
+type DockTool = "review" | "references" | "history" | "share" | "export"
+
+const DOCK_TITLES: Record<DockTool, string> = {
+  review: "Review",
+  references: "References",
+  history: "History",
+  share: "Share",
+  export: "Export"
+}
+
+/** Which tool is docked, or undefined when the dock is closed. */
+let dockTool: DockTool | undefined
+
+/**
+ * Below this width the navigator, the text, the dock, and the preview cannot all
+ * be useful at once — each ends up too narrow to read. Opening a dock on a narrow
+ * window therefore takes the preview's place, and closing it gives the preview
+ * back. Only an automatic collapse is undone; a preview the writer hid on purpose
+ * stays hidden.
+ */
+const FOUR_COLUMN_MIN_WIDTH = 1320
+let previewCollapsedForDock = false
+
+function makeRoomForDock(): void {
+  if (window.innerWidth >= FOUR_COLUMN_MIN_WIDTH || hiddenPanes.preview) return
+  hiddenPanes.preview = true
+  previewCollapsedForDock = true
+}
+
+function restorePreviewAfterDock(): void {
+  if (!previewCollapsedForDock) return
+  previewCollapsedForDock = false
+  hiddenPanes.preview = false
+}
+
+/**
+ * Re-applies the same rule when the window is resized rather than only when the
+ * dock opens, so dragging a window narrower (or working on a laptop after a
+ * desktop session) does not leave four unusable columns.
+ */
+function reflowForWidth(): void {
+  if (dockTool === undefined) return
+  if (window.innerWidth < FOUR_COLUMN_MIN_WIDTH) makeRoomForDock()
+  else restorePreviewAfterDock()
+  applyWorkspaceGrid()
+}
+
+let reflowFrame: number | undefined
+window.addEventListener("resize", () => {
+  if (reflowFrame !== undefined) return
+  reflowFrame = requestAnimationFrame(() => {
+    reflowFrame = undefined
+    reflowForWidth()
+    renderPagePosition()
+  })
+})
 
 const GUTTER = 4
 
@@ -391,64 +365,59 @@ const workspaceEl = root.querySelector<HTMLElement>(".workspace")!
 /**
  * Writes the grid template from the current widths + hidden/visible flags.
  *
- * Tracks are: outline · gutter · editor · gutter · review · gutter · preview.
- * The review column sits between the editor and the preview (its DOM order in
- * the template matches), so a reviewer reads comments next to the source with the
- * rendered PDF beyond them. A hidden pane and its adjacent gutter both collapse
- * to 0px (and the gutter is also `hidden`), which removes the column from the
- * layout without disturbing the others. The editor and preview use 1fr when their
- * width is -1; fixed panes use `Npx`. Recomputed on every drag move, hide/show
- * toggle, and review toggle so the stylesheet's static `grid-template-columns`
- * is always overridden to match.
+ * Tracks are: navigator · gutter · document · gutter · dock · gutter · preview.
+ * The dock sits between the text and the page so a reviewer reads threads next to
+ * the source with the artefact beyond them. A hidden pane and its adjacent gutter
+ * both collapse to 0px (and the gutter is also `hidden`), which removes the column
+ * without disturbing the others. When the dock is closed its two tracks are left
+ * out of the template entirely — `display:none` would pull the remaining children
+ * into the wrong tracks.
  */
 function applyWorkspaceGrid(): void {
   const px = (value: number): string => (value === -1 ? "1fr" : `${value}px`)
   const g = (visible: boolean): string => (visible ? `${GUTTER}px` : "0px")
-  const outlineW = hiddenPanes.outline ? "0px" : px(columnWidths.outline)
-  const outline = el<HTMLElement>(".outline")
+  const navigatorWidth = hiddenPanes.navigator ? "0px" : px(columnWidths.navigator)
+  // A hidden pane's track must be 0px, not 1fr: the pane itself is display:none,
+  // so a flexible track would simply hold dead space beside the text.
+  const previewWidth = hiddenPanes.preview ? "0px" : px(columnWidths.preview)
+  const dockOpen = dockTool !== undefined
+  // A hidden pane is `display:none`, which removes it from grid flow entirely —
+  // so a closed dock must not merely get a 0px track, or every child after it
+  // would slide one track to the left and the preview would end up 0px wide.
+  // Switch templates instead: 7 tracks with the dock, 5 without.
+  workspaceEl.style.gridTemplateColumns = dockOpen
+    ? `${navigatorWidth} ${g(!hiddenPanes.navigator)} ${px(columnWidths.doc)} ${g(true)} ${px(columnWidths.dock)} ${g(!hiddenPanes.preview)} ${previewWidth}`
+    : `${navigatorWidth} ${g(!hiddenPanes.navigator)} ${px(columnWidths.doc)} ${g(!hiddenPanes.preview)} ${previewWidth}`
+  const navigator = el<HTMLElement>("#navigator")
+  if (navigator) navigator.hidden = hiddenPanes.navigator
   const preview = el<HTMLElement>(".preview-pane")
-  const review = el<HTMLElement>(".review-pane")
-  const reviewGutterEl = el<HTMLElement>(".review-gutter")
-  // When review is closed, DON'T include review tracks in the grid at all —
-  // using display:none removes the element from grid flow, which would shift
-  // the remaining children into wrong tracks. Instead, switch between a 5-track
-  // template (no review) and a 7-track template (with review).
-  if (reviewPaneVisible) {
-    workspaceEl.style.gridTemplateColumns =
-      `${outlineW} ${g(!hiddenPanes.outline)} ${px(columnWidths.editor)} ${g(true)} ${px(columnWidths.review)} ${g(!hiddenPanes.preview)} ${px(columnWidths.preview)}`
-  } else {
-    workspaceEl.style.gridTemplateColumns =
-      `${outlineW} ${g(!hiddenPanes.outline)} ${px(columnWidths.editor)} ${g(!hiddenPanes.preview)} ${px(columnWidths.preview)}`
-  }
-  // Sync display so panes don't leave stray borders.
-  if (outline) outline.hidden = hiddenPanes.outline
   if (preview) preview.hidden = hiddenPanes.preview
-  if (review) review.hidden = !reviewPaneVisible
-  if (reviewGutterEl) reviewGutterEl.hidden = !reviewPaneVisible
-  // Each hidden pane gets its own edge tab to reopen it, positioned on the side
-  // where the pane lives (outline on the left, preview on the right) so the
-  // user finds the toggle where they'd expect it.
-  const showOutlineTab = el<HTMLButtonElement>("#show-outline-tab")
-  if (showOutlineTab) showOutlineTab.hidden = !hiddenPanes.outline
+  const dock = el<HTMLElement>("#dock")
+  if (dock) dock.hidden = !dockOpen
+  for (const bar of document.querySelectorAll<HTMLElement>(".gutter")) {
+    const key = bar.dataset.gutter
+    bar.hidden = key === "navigator" ? hiddenPanes.navigator
+      : key === "dock" ? !dockOpen
+        : hiddenPanes.preview
+  }
+  // A collapsed pane leaves an edge tab on the side it lives on, so the way back
+  // is where the user would reach for it.
+  const showNavigatorTab = el<HTMLButtonElement>("#show-navigator-tab")
+  if (showNavigatorTab) showNavigatorTab.hidden = !hiddenPanes.navigator
   const showPreviewTab = el<HTMLButtonElement>("#show-preview-tab")
   if (showPreviewTab) showPreviewTab.hidden = !hiddenPanes.preview
 }
 
 /**
- * Which pane a gutter sits between, and the widths it drives.
- *
- * Dragging a gutter shifts pixels between the two adjacent column tracks. The
- * editor is always a 1fr track, so when it is on one side of the drag it simply
- * flexes to fill the remainder — only the fixed pane on the other side is
- * assigned a concrete new width. A drag that would shrink a fixed pane below a
- * readable minimum (outline ≥ 140px, preview/review ≥ 240px) is clamped.
+ * Which pane a gutter resizes. The document is always a 1fr track, so a drag only
+ * ever assigns a concrete width to the fixed pane on the other side; the document
+ * flexes into whatever is left. Minimums keep a pane readable (navigator ≥ 150px,
+ * dock/preview ≥ 260px).
  */
-function gutterSides(gutter: string): { left: keyof ColumnWidths; right: keyof ColumnWidths; fixed: keyof ColumnWidths } | undefined {
-  // Column order is outline · gutter · editor · gutter · review · gutter · preview,
-  // so each gutter's fixed pane is the one it immediately borders.
-  if (gutter === "outline") return { left: "outline", right: "editor", fixed: "outline" }
-  if (gutter === "review") return { left: "editor", right: "review", fixed: "review" }
-  if (gutter === "preview") return { left: "review", right: "preview", fixed: "preview" }
+function gutterPane(gutter: string): keyof ColumnWidths | undefined {
+  if (gutter === "navigator") return "navigator"
+  if (gutter === "dock") return "dock"
+  if (gutter === "preview") return "preview"
   return undefined
 }
 
@@ -459,8 +428,7 @@ function gutterSides(gutter: string): { left: keyof ColumnWidths; right: keyof C
  * origin) and tracks mousemove on `document` so the cursor can leave the 4px bar
  * without losing the grab. Each move rewrites the fixed pane's width and calls
  * applyWorkspaceGrid, which redraws the template synchronously. A `.dragging`
- * class on the workspace disables text selection during the gesture. mouseup on
- * `document` tears the listeners down.
+ * class on the workspace disables text selection during the gesture.
  */
 function startGutterDrag(event: MouseEvent): void {
   const bar = event.currentTarget as HTMLElement
@@ -469,27 +437,26 @@ function startGutterDrag(event: MouseEvent): void {
   // A double-click reaches here as a second mousedown-up with no move; suppress a
   // zero-delta drag so it does not fight the dblclick hide/show handler.
   if (event.detail > 1) return
-  const sides = gutterSides(key)
-  if (!sides) return
-  // Do not start a drag for a gutter whose fixed pane is hidden (its track is 0).
-  if (sides.fixed === "outline" && hiddenPanes.outline) return
-  if (sides.fixed === "preview" && hiddenPanes.preview) return
-  if (sides.fixed === "review" && !reviewPaneVisible) return
+  const pane = gutterPane(key)
+  if (!pane) return
+  // Do not start a drag for a gutter whose pane is not on screen.
+  if (pane === "navigator" && hiddenPanes.navigator) return
+  if (pane === "preview" && hiddenPanes.preview) return
+  if (pane === "dock" && dockTool === undefined) return
   event.preventDefault()
   workspaceEl.classList.add("dragging")
-  const fixedSel = sides.fixed === "outline" ? ".outline" : sides.fixed === "preview" ? ".preview-pane" : ".review-pane"
-  const fixedEl = el<HTMLElement>(fixedSel)
+  const selector = pane === "navigator" ? "#navigator" : pane === "preview" ? ".preview-pane" : "#dock"
+  const paneEl = el<HTMLElement>(selector)
   const originX = bar.getBoundingClientRect().left
-  const startWidth = fixedEl?.getBoundingClientRect().width ?? columnWidths[sides.fixed]
-  const min = sides.fixed === "outline" ? 140 : 240
+  const startWidth = paneEl?.getBoundingClientRect().width ?? columnWidths[pane]
+  const min = pane === "navigator" ? 150 : 260
   const onMove = (moveEvent: MouseEvent): void => {
-    // The outline gutter is the outline pane's RIGHT edge (drag right grows it).
-    // The review/preview gutters are their pane's LEFT edge: dragging right pushes
-    // that edge into the pane and shrinks it, so invert to keep "drag the boundary
-    // with the cursor" consistent across all three columns.
+    // The navigator's gutter is its RIGHT edge (drag right grows it); the dock and
+    // preview gutters are their pane's LEFT edge, so dragging right shrinks them.
+    // Inverting keeps "the boundary follows the cursor" true for all three.
     let delta = moveEvent.clientX - originX
-    if (sides.fixed === "review" || sides.fixed === "preview") delta = -delta
-    columnWidths[sides.fixed] = Math.max(min, Math.round(startWidth + delta))
+    if (pane === "dock" || pane === "preview") delta = -delta
+    columnWidths[pane] = Math.max(min, Math.round(startWidth + delta))
     applyWorkspaceGrid()
   }
   const onUp = (): void => {
@@ -501,34 +468,42 @@ function startGutterDrag(event: MouseEvent): void {
   document.addEventListener("mouseup", onUp)
 }
 
-/**
- * Toggles a pane's visibility and reapplies the grid.
- *
- * Double-clicking a gutter is the documented shortcut to collapse the pane it
- * separates on its fixed side (outline/preview/review). The toolbar ×/› buttons
- * use the same path. Hiding collapses the pane + its gutter to 0px; showing
- * restores the last pixel width (or a sane default if it was dragged to 0).
- */
-function togglePane(pane: "outline" | "preview"): void {
+/** Collapses/restores a pane. Double-clicking its gutter does the same. */
+function togglePane(pane: "navigator" | "preview"): void {
   hiddenPanes[pane] = !hiddenPanes[pane]
+  // An explicit show/hide takes the decision away from the dock's auto-collapse.
+  if (pane === "preview") previewCollapsedForDock = false
   applyWorkspaceGrid()
 }
 
 for (const bar of root.querySelectorAll<HTMLElement>(".gutter")) {
   bar.addEventListener("mousedown", startGutterDrag)
-  // Double-click on a gutter collapses the adjacent fixed pane (matches the hint
-  // in the gutter title attribute). dblclick fires after the suppressed drag.
   bar.addEventListener("dblclick", () => {
     const key = bar.dataset.gutter
-    if (key === "outline") togglePane("outline")
+    if (key === "navigator") togglePane("navigator")
     else if (key === "preview") togglePane("preview")
   })
 }
 
-el("#hide-outline")?.addEventListener("click", () => togglePane("outline"))
+el("#hide-navigator")?.addEventListener("click", () => togglePane("navigator"))
 el("#hide-preview")?.addEventListener("click", () => togglePane("preview"))
-el("#show-outline-tab")?.addEventListener("click", () => { hiddenPanes.outline = false; applyWorkspaceGrid() })
+el("#show-navigator-tab")?.addEventListener("click", () => { hiddenPanes.navigator = false; applyWorkspaceGrid() })
 el("#show-preview-tab")?.addEventListener("click", () => { hiddenPanes.preview = false; applyWorkspaceGrid() })
+
+/**
+ * Focus mode: nothing but the text (⌘⇧F).
+ *
+ * The panes are hidden by a body class rather than by mutating `hiddenPanes`, so
+ * leaving focus mode restores exactly the layout the writer had — including a
+ * deliberately collapsed preview or an open dock.
+ */
+let focusMode = false
+function toggleFocusMode(): void {
+  focusMode = !focusMode
+  document.body.classList.toggle("focus-mode", focusMode)
+  status(focusMode ? "Focus mode — press ⌘⇧F to bring the panels back" : "Ready")
+  editor.focus()
+}
 
 // PDF zoom controls. The controls are hidden until a PDF is loaded; when shown,
 // each button drives the VirtualPdfViewer's discrete zoom level and updates the
@@ -541,16 +516,85 @@ el("#zoom-reset")?.addEventListener("click", () => { pdfViewer.resetZoom(); upda
 applyWorkspaceGrid()
 
 /**
- * Toggles the editor/preview chrome on whether a document is open.
+ * Switches between the two screens and the empty/loaded states within them.
  *
- * On first landing (logged in, projects list, nothing selected) the full editor
- * toolbar + CodeMirror + preview pane imply an open document where none exists.
- * Hiding the chrome (and showing a focused placeholder per pane) keeps the
- * Projects/outline as the focus without collapsing the 3-column layout.
+ * Picking a project and working in one are different jobs, so they are different
+ * screens: the projects screen owns the window until a project is open, and the
+ * workspace only exists once there is something to work on. Within the workspace,
+ * the document chrome (bar, editor, sticky heading) is replaced by a placeholder
+ * until a file is open, so an empty editor never implies an open document.
  */
 function renderWorkspaceState(): void {
+  const inProject = state.project !== undefined
   const open = state.document !== undefined
+  document.body.classList.toggle("has-project", inProject)
   document.body.classList.toggle("has-document", open)
+  const screen = el<HTMLElement>("#projects-screen")
+  if (screen) screen.hidden = inProject
+  const workspace = el<HTMLElement>("#workspace")
+  if (workspace) workspace.hidden = !inProject
+  for (const node of document.querySelectorAll<HTMLElement>(".doc-chrome, .preview-chrome")) node.hidden = !open
+  const previewPlaceholder = el<HTMLElement>("#preview-placeholder")
+  if (previewPlaceholder) previewPlaceholder.hidden = open
+  const stickyHeading = el<HTMLElement>("#sticky-heading")
+  if (stickyHeading && !open) stickyHeading.hidden = true
+  const editorPlaceholder = el<HTMLElement>("#editor-placeholder")
+  if (editorPlaceholder) editorPlaceholder.hidden = open
+  if (!inProject) {
+    closeDock()
+    setDrawerOpen(false)
+  }
+  renderCrumbs()
+}
+
+/**
+ * The breadcrumb: `Projects › project › file › §section`, each segment a jump
+ * target. It is the answer to "where am I?" for a writer three folders deep in a
+ * sixty-page document, and it doubles as the way back out.
+ */
+function renderCrumbs(): void {
+  const host = el<HTMLElement>("#crumbs")
+  if (!host) return
+  host.replaceChildren()
+  const push = (node: HTMLElement): void => {
+    if (host.childElementCount > 0) {
+      const separator = document.createElement("span")
+      separator.className = "sep"
+      separator.textContent = "›"
+      separator.setAttribute("aria-hidden", "true")
+      host.append(separator)
+    }
+    host.append(node)
+  }
+  if (!state.project) return
+  const project = document.createElement("button")
+  project.type = "button"
+  project.textContent = state.project.name
+  project.title = "Back to all projects"
+  project.addEventListener("click", leaveProject)
+  push(project)
+  const selected = state.selected
+  if (!selected) return
+  const file = document.createElement("button")
+  file.type = "button"
+  file.className = "current"
+  file.textContent = selected.document.path
+  file.title = "Reveal in the sidebar"
+  file.addEventListener("click", () => {
+    hiddenPanes.navigator = false
+    applyWorkspaceGrid()
+    el<HTMLElement>("#file-tree")?.querySelector<HTMLElement>(".tree-row.active")?.scrollIntoView({ block: "nearest" })
+  })
+  push(file)
+  const trail = headingTrail(currentHeadings, editor.state.selection.main.head)
+  const leaf = trail.at(-1)
+  if (!leaf) return
+  const section = document.createElement("button")
+  section.type = "button"
+  section.textContent = `§${leaf.title}`
+  section.title = "Scroll to this section"
+  section.addEventListener("click", () => revealPosition(leaf.from))
+  push(section)
 }
 
 /**
@@ -569,7 +613,71 @@ function run<A>(
   void Effect.runPromise(effect).then(onSuccess, onError)
 }
 
-function showPanel(eyebrow: string, title: string, content: string): HTMLElement | undefined {
+// ---------------------------------------------------------------------------
+// Dock and modal
+//
+// Two different things were previously the same 385px <dialog>: standing
+// workflows (References, History, Share, Export) that you use *while* writing,
+// and one-question prompts (rename, confirm, comment text). Standing workflows
+// now open in the dock at full height; the modal is reserved for prompts, which
+// is the one case where taking over the screen is the right answer.
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders a standing workflow into the dock, opening it if closed. Returns the
+ * content host so the caller can wire up the controls it just rendered.
+ */
+function showPanel(tool: DockTool, content: string): HTMLElement | undefined {
+  dockTool = tool
+  makeRoomForDock()
+  setText("#dock-title", DOCK_TITLES[tool])
+  applyWorkspaceGrid()
+  const foot = el<HTMLElement>("#dock-foot")
+  if (foot) { foot.hidden = true; foot.replaceChildren() }
+  const host = el<HTMLElement>("#dock-content")
+  if (host) {
+    host.innerHTML = content
+    host.scrollTop = 0
+  }
+  syncDockButtons()
+  return host ?? undefined
+}
+
+/** Reflects the open tool on the buttons that open it. */
+function syncDockButtons(): void {
+  const buttons: Record<DockTool, string> = {
+    review: "#review-button",
+    references: "#references-button",
+    history: "#history-button",
+    share: "#share-button",
+    export: "#export-button"
+  }
+  for (const [tool, selector] of Object.entries(buttons)) {
+    el<HTMLElement>(selector)?.setAttribute("aria-expanded", String(dockTool === tool))
+  }
+}
+
+function closeDock(): void {
+  if (dockTool === undefined) return
+  dockTool = undefined
+  restorePreviewAfterDock()
+  applyWorkspaceGrid()
+  el<HTMLElement>("#dock-content")?.replaceChildren()
+  syncDockButtons()
+  // The floating selection-comment affordance belongs to the review dock; with
+  // the dock closed there is nothing to receive the comment.
+  selectionCommentButton?.remove()
+  selectionCommentButton = undefined
+}
+
+/** Opens a tool, or closes the dock when that tool is already showing. */
+function toggleDock(tool: DockTool, open: () => void): void {
+  if (dockTool === tool) { closeDock(); return }
+  open()
+}
+
+/** Opens the shared modal for a prompt or a short form. */
+function showModal(eyebrow: string, title: string, content: string): HTMLElement | undefined {
   const dialog = el<HTMLDialogElement>("#workspace-panel")
   setText("#panel-eyebrow", eyebrow)
   setText("#panel-title", title)
@@ -605,12 +713,12 @@ function promptInPanel(
   // that cancels the just-opened next prompt.
   const promptId = `${title}-${Math.random().toString(36).slice(2)}`
   dialog?.setAttribute("data-prompt", promptId)
-  showPanel(eyebrow, title, `
-    <label>${escapeHtml(label)}<input id="prompt-input" type="text" placeholder="${escapeHtml(options.placeholder ?? "")}" autocomplete="off" /></label>
+  showModal(eyebrow, title, `
+    <label class="field">${escapeHtml(label)}<input id="prompt-input" type="text" placeholder="${escapeHtml(options.placeholder ?? "")}" autocomplete="off" /></label>
     <p class="prompt-error" id="prompt-error" hidden></p>
-    <div class="dialog-actions">
-      <button class="toolbar-button" id="prompt-cancel" type="button">Cancel</button>
-      <button class="primary-button" id="prompt-ok" type="button" disabled>OK</button>
+    <div class="modal-actions">
+      <button class="btn" id="prompt-cancel" type="button">Cancel</button>
+      <button class="btn btn-primary" id="prompt-ok" type="button" disabled>OK</button>
     </div>`)
   const input = el<HTMLInputElement>("#prompt-input")
   const okButton = el<HTMLButtonElement>("#prompt-ok")
@@ -664,21 +772,34 @@ function promptInPanel(
 }
 
 // ---------------------------------------------------------------------------
-// Outline: projects → documents
+// Projects screen
 // ---------------------------------------------------------------------------
 
+/**
+ * The projects screen: one row per project, name first, metadata right-aligned.
+ *
+ * Rows rather than cards — a card grid looks generous at six projects and
+ * becomes a scavenger hunt at sixty, whereas a row list stays scannable and
+ * shows more per screen.
+ */
 function renderProjects(): void {
-  const list = el<HTMLElement>("#outline-list")
+  const list = el<HTMLElement>("#project-list")
   if (!list) return
-  setText("#outline-heading", "Projects")
   if (state.projects.length === 0) {
-    list.innerHTML = `<div class="empty-state"><h3>No projects yet</h3><p>Create a project to start authoring.</p><button id="empty-create-project" class="primary-button" type="button">Create project</button></div>`
+    list.innerHTML = `<div class="empty-note"><p>No projects yet. A project holds the files, references, and history of one document.</p><p><button id="empty-create-project" class="btn btn-primary" type="button">Create your first project</button></p></div>`
     el("#empty-create-project")?.addEventListener("click", createProject)
+    applyRoleGates()
     return
   }
-  list.innerHTML = state.projects
-    .map((project) => `<div class="outline-row"><button class="outline-item" data-project="${escapeHtml(project.id)}" type="button"><span class="file-icon">▣</span><span>${escapeHtml(project.name)}</span></button><button class="outline-delete" data-delete-project="${escapeHtml(project.id)}" type="button" title="Delete project">×</button></div>`)
-    .join("")
+  list.innerHTML = `<div class="project-rows">${state.projects
+    .map((project) => `<div class="project-row">
+        <button class="project-open" data-project="${escapeHtml(project.id)}" type="button">
+          <span class="name">${escapeHtml(project.name)}</span>
+          <span class="meta">${escapeHtml(projectTimestamp(project))}</span>
+        </button>
+        <button class="btn-icon btn-danger" data-delete-project="${escapeHtml(project.id)}" type="button" title="Delete this project" aria-label="Delete ${escapeHtml(project.name)}">×</button>
+      </div>`)
+    .join("")}</div>`
   for (const button of list.querySelectorAll<HTMLButtonElement>("[data-project]")) {
     button.addEventListener("click", () => {
       const project = state.projects.find((item) => item.id === button.dataset.project)
@@ -692,10 +813,10 @@ function renderProjects(): void {
       promptInPanel(
         "Projects",
         "Delete project",
-        `Type the project name to confirm deletion of "${project.name}"`,
+        `This cannot be undone. Type "${project.name}" to confirm.`,
         (confirmText) => {
           if (confirmText.trim() !== project.name.trim()) {
-            status("The typed text did not match; project was not deleted")
+            status("That did not match the project name — nothing was deleted")
             return
           }
           run(api.deleteProject(project.id), () => {
@@ -707,93 +828,289 @@ function renderProjects(): void {
             renderProjects()
           })
         },
-        { placeholder: "Retype the project name to confirm" }
+        { placeholder: project.name }
       )
     })
   }
+  applyRoleGates()
 }
 
-function renderOutline(): void {
-  const list = el<HTMLElement>("#outline-list")
-  if (!list || !state.project) return
-  setText("#outline-heading", state.project.name)
-  const back = `<button class="outline-back" id="back-to-projects" type="button">← All projects</button>`
-  if (state.outline.length === 0) {
-    list.innerHTML = `${back}<div class="empty-state"><p>This project has no documents yet.</p><button id="add-document-empty" class="primary-button" type="button">Add document</button></div>`
-    el("#add-document-empty")?.addEventListener("click", addDocument)
-  } else {
-    const rows = state.outline.map(({ document }) => {
-      const active = state.selected?.document.id === document.id ? " active" : ""
-      return `<div class="outline-row"><button class="outline-item${active}" data-document="${escapeHtml(document.id)}" type="button"><span class="file-icon">📄</span><span>${escapeHtml(document.title)}</span><code class="document-path">${escapeHtml(document.path)}</code></button><button class="outline-delete" data-delete-document="${escapeHtml(document.id)}" type="button" title="Delete document">×</button></div>`
-    })
-    list.innerHTML = back + rows.join("") + `<button class="outline-item outline-add" id="add-document" type="button"><span class="file-icon">＋</span><span>Add document</span></button><button class="outline-item outline-add" id="add-demo" type="button"><span class="file-icon">🦡</span><span>Add demo document</span></button>`
-    el("#add-document")?.addEventListener("click", addDocument)
-    el("#add-demo")?.addEventListener("click", addDemoFile)
-    for (const button of list.querySelectorAll<HTMLButtonElement>("[data-document]")) {
-      button.addEventListener("click", () => {
-        const entry = state.outline.find((item) => item.document.id === button.dataset.document)
-        if (entry) openDocument(entry)
-      })
-      button.addEventListener("dblclick", () => {
-        const entry = state.outline.find((item) => item.document.id === button.dataset.document)
-        const project = state.project
-        if (!entry || !project) return
-        promptInPanel("Documents", "Rename document", "Title", (title) => {
-          run(api.updateDocument(project.id, entry.document.id, { title }), () => {
-            status("Document renamed")
-            loadOutline()
-          })
-        }, { placeholder: entry.document.title })
-      })
-    }
-    for (const button of list.querySelectorAll<HTMLButtonElement>("[data-delete-document]")) {
-      button.addEventListener("click", () => {
-        const entry = state.outline.find((item) => item.document.id === button.dataset.deleteDocument)
-        const project = state.project
-        if (!entry || !project) return
-        promptInPanel("Documents", "Delete document", `Type the title to confirm deletion of "${entry.document.title}"`, (confirmText) => {
-          if (confirmText.trim() !== entry.document.title.trim()) {
-            status("The typed text did not match; document was not deleted")
-            return
-          }
-          run(api.deleteDocument(project.id, entry.document.id), () => {
-            status("Document deleted")
-            if (state.selected?.document.id === entry.document.id) {
-              syncConnection?.close()
-              syncConnection = undefined
-              state.selected = undefined
-              state.document = undefined
-              state.review = emptyReviewState
-              editor.dispatch({ effects: setReviewItems.of([]) })
-              closeReviewPopover()
-              editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: "" } })
-              setSyncStatus("disconnected", "Open a document to collaborate")
-              setText("#document-name", "No document selected")
-              setText("#revision-label", "")
-              renderWorkspaceState()
-            }
-            loadOutline()
-          })
-        }, { placeholder: entry.document.title })
-      })
-    }
+/** "edited 2 h ago" for a project row; falls back to nothing on a bad date. */
+function projectTimestamp(project: Project): string {
+  const parsed = Date.parse(project.updated_at)
+  return Number.isFinite(parsed) ? `edited ${timeAgo(parsed)}` : ""
+}
+
+/** Leaves the open project and returns to the projects screen. */
+function leaveProject(): void {
+  closeOpenDocument()
+  state.project = undefined
+  state.role = undefined
+  currentHeadings = []
+  persistLastOpen({})
+  renderWorkspaceState()
+  renderProjects()
+  applyRoleGates()
+}
+
+/**
+ * Tears down whatever document is open: sync connection, editor content, review
+ * state, preview, and the derived UI. Shared by "leave the project" and "the open
+ * document was just deleted", which previously duplicated this sequence.
+ */
+function closeOpenDocument(): void {
+  syncConnection?.close()
+  syncConnection = undefined
+  flushPendingSave()
+  cancelDiagnosticsCompile()
+  state.selected = undefined
+  state.document = undefined
+  state.review = emptyReviewState
+  presencePeers = []
+  renderPresence()
+  editor.dispatch({ effects: setReviewItems.of([]) })
+  closeReviewPopover()
+  if (editor.state.doc.length > 0) {
+    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: "" } })
   }
-  el("#back-to-projects")?.addEventListener("click", () => {
-    state.project = undefined
-    state.selected = undefined
-    state.document = undefined
-    syncConnection?.close()
-    syncConnection = undefined
-    setSyncStatus("disconnected", "Open a document to collaborate")
-    setText("#document-name", "No document")
-    setText("#location-crumb", "/ Projects")
-    renderWorkspaceState()
-    renderProjects()
+  setSyncStatus("disconnected", "Open a document to work with other people on it")
+  setText("#document-name", "No document open")
+  setText("#document-path", "")
+  setText("#revision-label", "")
+  clearPreview()
+  renderDiagnostics([])
+  renderWorkspaceState()
+  renderSectionOutline()
+}
+
+// ---------------------------------------------------------------------------
+// Navigator: file tree + section outline
+// ---------------------------------------------------------------------------
+
+/**
+ * The file tree.
+ *
+ * Folders are derived from the documents' paths (see outline.ts) because that is
+ * what the project model actually is — a flat set of path-addressed files. The
+ * previous flat list with a truncated path suffix hid the structure authors put
+ * there. The entrypoint carries a MAIN tag: it is the file the preview builds
+ * from, and that is the only question the tag needs to answer.
+ */
+function renderFileTree(): void {
+  const host = el<HTMLElement>("#file-tree")
+  if (!host || !state.project) return
+  setText("#file-count", state.outline.length === 0 ? "" : String(state.outline.length))
+  if (state.outline.length === 0) {
+    host.innerHTML = `<div class="nav-empty">No files yet.<br /><button id="add-document-empty" class="btn btn-primary btn-small" type="button" style="margin-top:8px">Add a file</button></div>`
+    el("#add-document-empty")?.addEventListener("click", addDocument)
+    applyRoleGates()
+    return
+  }
+  const tree = buildFileTree(state.outline.map((entry) => ({ path: entry.document.path, item: entry })))
+  host.replaceChildren(...renderTreeNodes(tree, 0))
+  applyRoleGates()
+}
+
+/** Folders the user has collapsed; everything is expanded until they say otherwise. */
+const collapsedFolders = new Set<string>()
+
+function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number): HTMLElement[] {
+  const out: HTMLElement[] = []
+  for (const node of nodes) {
+    const item = document.createElement("div")
+    item.className = "tree-item"
+    for (let level = 0; level < depth; level++) {
+      const indent = document.createElement("span")
+      indent.className = "indent"
+      item.append(indent)
+    }
+    if (node.type === "folder") {
+      const collapsed = collapsedFolders.has(node.path)
+      const row = document.createElement("button")
+      row.type = "button"
+      row.className = "tree-row folder"
+      row.setAttribute("aria-expanded", String(!collapsed))
+      row.innerHTML = `<span class="twist" aria-hidden="true">${collapsed ? "▸" : "▾"}</span><span class="label"></span>`
+      const label = row.querySelector<HTMLElement>(".label")
+      if (label) label.textContent = node.name
+      row.addEventListener("click", () => {
+        if (collapsed) collapsedFolders.delete(node.path)
+        else collapsedFolders.add(node.path)
+        renderFileTree()
+      })
+      item.append(row)
+      out.push(item)
+      if (!collapsed) out.push(...renderTreeNodes(node.children, depth + 1))
+      continue
+    }
+    const entry = node.item
+    const wrap = document.createElement("div")
+    wrap.className = "tree-row-wrap"
+    const row = document.createElement("button")
+    row.type = "button"
+    row.className = "tree-row"
+    if (state.selected?.document.id === entry.document.id) row.classList.add("active")
+    row.dataset.document = entry.document.id
+    row.title = `${entry.document.path} — double-click to rename`
+    row.innerHTML = `<span class="twist" aria-hidden="true"></span><span class="label"></span>`
+    const label = row.querySelector<HTMLElement>(".label")
+    if (label) label.textContent = node.name
+    if (isEntrypoint(entry.document.path)) {
+      const tag = document.createElement("span")
+      tag.className = "tag"
+      tag.textContent = "MAIN"
+      tag.title = "The preview is built from this file"
+      row.append(tag)
+    }
+    row.addEventListener("click", () => openDocument(entry))
+    row.addEventListener("dblclick", () => renameDocument(entry))
+    const remove = document.createElement("button")
+    remove.type = "button"
+    remove.className = "btn-icon btn-danger"
+    remove.dataset.deleteDocument = entry.document.id
+    remove.title = "Delete this file"
+    remove.setAttribute("aria-label", `Delete ${entry.document.path}`)
+    remove.textContent = "×"
+    remove.addEventListener("click", (event) => { event.stopPropagation(); deleteDocument(entry) })
+    wrap.append(row, remove)
+    item.append(wrap)
+    out.push(item)
+  }
+  return out
+}
+
+/**
+ * Which file the preview builds from. The project model has no explicit
+ * entrypoint field yet, so the convention is `main.typ` at the root, falling back
+ * to the first file — the same choice compileCurrent makes, kept in one place so
+ * the tag and the build can never disagree.
+ */
+function entrypointPath(): string | undefined {
+  const paths = state.outline.map((entry) => entry.document.path)
+  return paths.find((path) => path === "main.typ") ?? paths[0]
+}
+
+function isEntrypoint(path: string): boolean {
+  return entrypointPath() === path
+}
+
+function renameDocument(entry: OutlineEntry): void {
+  const project = state.project
+  if (!project) return
+  promptInPanel("File", "Rename file", "New name", (title) => {
+    run(api.updateDocument(project.id, entry.document.id, { title }), () => {
+      status("File renamed")
+      loadOutline()
+    })
+  }, { placeholder: entry.document.title })
+}
+
+function deleteDocument(entry: OutlineEntry): void {
+  const project = state.project
+  if (!project) return
+  promptInPanel("File", "Delete file", `This cannot be undone. Type "${entry.document.title}" to confirm.`, (confirmText) => {
+    if (confirmText.trim() !== entry.document.title.trim()) {
+      status("That did not match the file name — nothing was deleted")
+      return
+    }
+    run(api.deleteDocument(project.id, entry.document.id), () => {
+      status("File deleted")
+      if (state.selected?.document.id === entry.document.id) closeOpenDocument()
+      loadOutline()
+    })
+  }, { placeholder: entry.document.title })
+}
+
+/** Kept for callers that still speak in terms of "the outline of the project". */
+function renderOutline(): void {
+  renderFileTree()
+  renderCrumbs()
+}
+
+/**
+ * The section outline: the open document's headings, live.
+ *
+ * This is the navigation writers actually use in a long text, and it did not
+ * exist before. It is rebuilt from the source on every edit (the parse is
+ * memoised) and highlights the heading the caret is under.
+ */
+let currentHeadings: readonly Heading[] = []
+
+function renderSectionOutline(): void {
+  const host = el<HTMLElement>("#section-outline")
+  if (!host) return
+  if (!state.document) {
+    host.innerHTML = `<div class="nav-empty">Open a file to see its sections.</div>`
+    return
+  }
+  if (currentHeadings.length === 0) {
+    host.innerHTML = `<div class="nav-empty">No headings yet. Start a line with <code>=</code> to make one.</div>`
+    return
+  }
+  const active = activeHeadingIndex(currentHeadings, editor.state.selection.main.head)
+  host.replaceChildren(...currentHeadings.map((heading, index) => {
+    const row = document.createElement("button")
+    row.type = "button"
+    row.className = index === active ? "outline-row active" : "outline-row"
+    row.dataset.level = String(Math.min(heading.level, 6))
+    if (index === active) row.setAttribute("aria-current", "true")
+    const title = document.createElement("span")
+    title.className = "title"
+    title.textContent = heading.title
+    const line = document.createElement("span")
+    line.className = "ln"
+    line.textContent = String(editor.state.doc.lineAt(Math.min(heading.from, editor.state.doc.length)).number)
+    row.append(title, line)
+    row.addEventListener("click", () => revealPosition(heading.from))
+    return row
+  }))
+}
+
+/** Scrolls the editor to an offset, selects the line start, and focuses. */
+function revealPosition(position: number): void {
+  const target = Math.min(position, editor.state.doc.length)
+  editor.dispatch({ selection: { anchor: target }, scrollIntoView: true, effects: EditorView.scrollIntoView(target, { y: "start", yMargin: 40 }) })
+  editor.focus()
+}
+
+/**
+ * The sticky heading: which section you are inside, pinned above the text.
+ * Borrowed from VS Code's sticky scroll; in a long section it answers "where am
+ * I?" without a glance at the sidebar.
+ */
+function renderStickyHeading(): void {
+  const host = el<HTMLElement>("#sticky-heading")
+  if (!host) return
+  if (!state.document) { host.hidden = true; return }
+  const trail = headingTrail(currentHeadings, editor.state.selection.main.head)
+  if (trail.length === 0) { host.hidden = true; return }
+  host.hidden = false
+  host.replaceChildren()
+  trail.forEach((heading, index) => {
+    if (index > 0) {
+      const separator = document.createElement("span")
+      separator.className = "crumb-sep"
+      separator.textContent = "›"
+      host.append(separator)
+    }
+    const span = document.createElement("span")
+    if (index === trail.length - 1) span.className = "leaf"
+    span.textContent = heading.title
+    host.append(span)
   })
 }
 
+/** Re-derives everything that depends on the document text. */
+function refreshDocumentStructure(): void {
+  currentHeadings = state.document ? documentHeadings(editor.state.doc.toString()) : []
+  renderSectionOutline()
+  renderStickyHeading()
+  const words = wordCount(editor.state.doc.toString())
+  setText("#word-count", `${words.toLocaleString()} ${words === 1 ? "word" : "words"}`)
+}
+
 function createProject(): void {
-  promptInPanel("New project", "Create project", "Project name", (name) => {
+  promptInPanel("Projects", "New project", "What is it called?", (name) => {
     run(api.createProject(name), (project) => {
       state.projects = [...state.projects, project]
       status(`Created ${project.name}`)
@@ -855,11 +1172,10 @@ function openProject(project: Project): void {
   // M5: remember which project is open so a tab-away/return restores it instead
   // of dropping the user back on the project list.
   persistLastOpen({ projectId: project.id })
-  setText("#location-crumb", `/ ${project.name}`)
   renderWorkspaceState()
   loadOutline()
-  run(api.listReferences(project.id), (references) => { state.references = references })
-  run(api.listFulltexts(project.id), (fulltexts) => { state.fulltexts = new Map(fulltexts.map((item) => [item.reference_id, item])) })
+  run(api.listReferences(project.id), (references) => { state.references = references; renderProjectFacts() })
+  run(api.listFulltexts(project.id), (fulltexts) => { state.fulltexts = new Map(fulltexts.map((item) => [item.reference_id, item])); renderProjectFacts() })
   // Fetch the caller's project-scoped role to gate reviewer UX: a reviewer is
   // locked into suggesting mode (H1) and has Export hidden (M4). On failure,
   // default to read-only (least privilege) so a transient error does not grant
@@ -883,21 +1199,47 @@ function loadOutline(): void {
       .sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }))
       .map((document) => ({ document }))
     renderOutline()
-    setText("#outline-footer", `${documents.length} document${documents.length === 1 ? "" : "s"}`)
+    renderProjectFacts()
   })
+}
+
+/**
+ * The navigator's footer: the project's standing facts, as facts rather than
+ * buttons. Files, how many references still lack an attached PDF (which is what
+ * blocks an export), and which file the preview builds from.
+ */
+function renderProjectFacts(): void {
+  const host = el<HTMLElement>("#nav-foot")
+  if (!host) return
+  const files = state.outline.length
+  const references = state.references.length
+  const withFulltext = state.references.filter((reference) => state.fulltexts.has(reference.id)).length
+  const entry = entrypointPath()
+  host.replaceChildren()
+  const line = (label: string, value: string): void => {
+    const row = document.createElement("div")
+    row.append(`${label} `)
+    const strong = document.createElement("b")
+    strong.textContent = value
+    row.append(strong)
+    host.append(row)
+  }
+  line("files", `${files}`)
+  line("references", references === 0 ? "none yet" : `${withFulltext} of ${references} with a PDF`)
+  if (entry !== undefined) line("preview builds", entry)
 }
 
 function addDocument(): void {
   const project = state.project
   if (!project) return
-  promptInPanel("Documents", "Add document", "Path", (pathValue) => {
+  promptInPanel("Files", "New file", "Name and folder", (pathValue) => {
     const documentPath = pathValue.endsWith(".typ") ? pathValue : `${pathValue}.typ`
     const title = documentPath.split("/").pop()?.replace(/\.typ$/i, "") || "Untitled"
     run(api.createDocument(project.id, { path: documentPath, title }), () => {
-      status("Document created")
+      status("File created")
       loadOutline()
     })
-  }, { placeholder: "main.typ" })
+  }, { placeholder: "chapters/introduction.typ" })
 }
 
 /** Adds a demo document with substantial Typst content. */
@@ -1142,7 +1484,7 @@ function generateDemoBody(refIds: string[]): string {
 // Document loading, sync, autosave
 // ---------------------------------------------------------------------------
 
-let syncConnection: { readonly close: () => void } | undefined
+let syncConnection: SyncConnection | undefined
 
 function openDocument(entry: OutlineEntry): void {
   const project = state.project
@@ -1188,7 +1530,8 @@ function openDocument(entry: OutlineEntry): void {
   persistLastOpen({ projectId: project.id, documentId: entry.document.id })
   renderOutline()
   setText("#document-name", entry.document.title)
-  status("Loading document…")
+  setText("#document-path", entry.document.path)
+  status("Opening…")
   run(
     api.getDocument(project.id, documentId),
     (document) => {
@@ -1225,8 +1568,17 @@ function openDocument(entry: OutlineEntry): void {
       // (applyRemoteReview/loadPersistedReview diff against the current set).
       const persisted = loadPersistedReview()
       if (persisted && persisted.length > 0) applyRemoteReview(persisted)
-      setText("#revision-label", `rev ${document.revision}`)
-      status("Loaded")
+      setText("#revision-label", `v${document.revision}`)
+      status("Ready")
+      // Everything derived from the text: outline, sticky heading, word count,
+      // breadcrumb, and the review surfaces for the document just opened.
+      refreshDocumentStructure()
+      renderCrumbs()
+      renderReviewBanner()
+      renderReviewDock()
+      lastBuild = undefined
+      renderBuildLabel()
+      renderBuildHealth()
       connectDocument(document, replica)
     }
   )
@@ -1264,7 +1616,7 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
   if (!token) {
     // The relay is fail-closed: an empty token is rejected. Say so instead of
     // leaving the UI claiming it is connected.
-    setSyncStatus("disconnected", "Sign in to collaborate; edits are saved to the project")
+    setSyncStatus("disconnected", "Sign in to work with other people; your edits are still saved to the project")
     syncConnection = undefined
     return
   }
@@ -1302,8 +1654,15 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
       } finally {
         isLoadingDocument = false
       }
+      // Tell the room who we are and where we are as soon as the handshake is
+      // complete, so peers see us without waiting for the next caret move.
+      publishPresence()
     },
-    onStatus: (value, detail) => setSyncStatus(value, detail)
+    onStatus: (value, detail) => setSyncStatus(value, detail),
+    onPresence: (peers) => {
+      presencePeers = peers
+      renderPresence()
+    }
   })
 }
 
@@ -1326,18 +1685,92 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
   // reconnect without a redundant status callback.
   lastSyncStatus = value
   lastSyncDetail = detail
-  if (browserOffline) {
-    setText("#connection-state span:last-child", "Offline · Changes saved to the project")
-    setText("#sync-label", "Local")
-    return
-  }
-  const label =
-    value === "connected" ? "Online · Collaborating"
+  const cell = el<HTMLElement>("#connection-state")
+  const dot = el<HTMLElement>("#status-dot")
+  const effective: SyncStatus = browserOffline ? "disconnected" : value
+  if (dot) dot.dataset.state = effective
+  // The short word is the state; the sentence is the explanation, and it goes in
+  // the tooltip so the bar stays scannable. "Live" is only ever claimed when the
+  // relay says so — going offline dims it immediately, without waiting for the
+  // WebSocket to notice.
+  const short = browserOffline ? "Offline"
+    : value === "connected" ? "Live"
       : value === "connecting" ? "Connecting…"
-        : value === "unsupported" ? `Sync unavailable${detail ? ` · ${detail}` : ""}`
-          : detail ?? "Offline · Changes saved to the project"
-  setText("#connection-state span:last-child", label)
-  setText("#sync-label", value === "connected" ? "Live" : "Local")
+        : value === "unsupported" ? "Sync off"
+          : "Local"
+  const explanation = browserOffline ? "You are offline — your work is still saved to this device and syncs when you reconnect"
+    : value === "connected" ? "Connected: other people see your edits as you type"
+      : value === "connecting" ? "Reconnecting to the collaboration server…"
+        : value === "unsupported" ? `Collaboration unavailable${detail ? ` · ${detail}` : ""}`
+          : detail ?? "Not connected — your edits are still saved to the project"
+  setText("#sync-label", presenceSuffix(short))
+  if (cell) cell.title = explanation
+}
+
+// ---------------------------------------------------------------------------
+// Presence: who else is here, and where
+//
+// The relay has always kept a roster with heartbeats; the client never read it,
+// so the UI could only say "2 collaborators online". Now every peer publishes
+// their name, file, section, and line, and the header shows them as avatars.
+// ---------------------------------------------------------------------------
+
+let presencePeers: readonly PresencePeer[] = []
+
+/** The status bar's sync cell reads "Live · 3 here" once other people are present. */
+function presenceSuffix(short: string): string {
+  return presencePeers.length === 0 ? short : `${short} · ${presencePeers.length + 1} here`
+}
+
+function renderPresence(): void {
+  const host = el<HTMLElement>("#presence")
+  if (!host) return
+  host.replaceChildren()
+  // Cap the stack: beyond four avatars the row stops being scannable, and the
+  // remainder is more useful as a count.
+  const shown = presencePeers.slice(0, 4)
+  for (const peer of shown) {
+    const avatar = document.createElement("span")
+    avatar.className = "avatar"
+    avatar.style.setProperty("--hue", String(authorHue(peer.name || String(peer.peer))))
+    avatar.textContent = peerInitials(peer.name)
+    const where = peerLocation(peer)
+    avatar.title = where === "" ? peer.name || "Someone else" : `${peer.name || "Someone else"} — ${where}`
+    host.append(avatar)
+  }
+  if (presencePeers.length > shown.length) {
+    const more = document.createElement("span")
+    more.className = "more"
+    more.textContent = `+${presencePeers.length - shown.length}`
+    host.append(more)
+  }
+  setText("#sync-label", presenceSuffix(
+    browserOffline ? "Offline"
+      : lastSyncStatus === "connected" ? "Live"
+        : lastSyncStatus === "connecting" ? "Connecting…"
+          : lastSyncStatus === "unsupported" ? "Sync off"
+            : state.document ? "Local" : "No document"
+  ))
+}
+
+/**
+ * Publishes where this client is working. Called on caret moves, so it is
+ * throttled to one frame's worth of change and the connection itself drops
+ * frames that would repeat the state already on the wire.
+ */
+function publishPresence(): void {
+  const connection = syncConnection
+  const document_ = state.selected?.document
+  if (!connection || !document_) return
+  const head = editor.state.selection.main.head
+  const line = editor.state.doc.lineAt(Math.min(head, editor.state.doc.length)).number
+  const trail = headingTrail(currentHeadings, head)
+  connection.publishPresence({
+    name: currentUserDisplayName(),
+    path: document_.path,
+    section: trail.at(-1)?.title,
+    line
+  })
 }
 
 /**
@@ -1449,7 +1882,7 @@ function runSave(projectId: string, context: SaveContext): void {
       // save was for.
       if (state.selected?.document.id === context.documentId) {
         state.document = saved
-        setText("#revision-label", `rev ${saved.revision}`)
+        setText("#revision-label", `v${saved.revision}`)
       }
       status("Saved")
     },
@@ -1471,7 +1904,7 @@ function runSave(projectId: string, context: SaveContext): void {
           (latest) => {
             if (state.selected?.document.id !== context.documentId) { status("Saved elsewhere"); return }
             state.document = latest
-            setText("#revision-label", `rev ${latest.revision}`)
+            setText("#revision-label", `v${latest.revision}`)
             const localBody = editor.state.doc.toString()
             if (localBody === latest.body) {
               // Already in sync (the CRDT merged the peer edit); nothing to write.
@@ -1537,7 +1970,7 @@ function cancelDiagnosticsCompile(): void {
 // ---------------------------------------------------------------------------
 
 function openConstruct(construct: Construct): void {
-  showPanel(
+  showModal(
     "Focused editing",
     construct.kind[0]?.toUpperCase() + construct.kind.slice(1),
     `<p>This ${escapeHtml(construct.kind)} is part of the document source, which stays the single source of truth.</p><pre class="construct-source">${escapeHtml(construct.label ?? "")}</pre>`
@@ -1600,34 +2033,6 @@ const typstCompletions: CompletionSource = (context: CompletionContext): Complet
     validFor: /#\w*/,
     options: typstCommands
   }
-}
-
-/**
- * Fuzzy substring matcher for reference search.
- *
- * Matches a query against a haystack by checking whether all characters of the
- * query appear in order (not necessarily contiguous). This is fast, simple, and
- * handles the common case of typing a few letters from a title, author, or key.
- * Returns a numeric score (higher = better match) or -1 if no match.
- */
-function fuzzyScore(query: string, haystack: string): number {
-  if (!query) return 0
-  const q = query.toLowerCase()
-  const h = haystack.toLowerCase()
-  let qi = 0
-  let score = 0
-  let streak = 0
-  for (let hi = 0; hi < h.length && qi < q.length; hi++) {
-    if (h[hi] === q[qi]) {
-      qi++
-      streak++
-      score += streak // consecutive matches score higher
-      if (hi === 0 || h[hi - 1] === " " || h[hi - 1] === "-") score += 2 // word-boundary bonus
-    } else {
-      streak = 0
-    }
-  }
-  return qi === q.length ? score : -1
 }
 
 /**
@@ -1759,11 +2164,21 @@ const editor = new EditorView({
           // so dispatching a sentinel that matches no construct empties the set and
           // returns every still-chipped construct to its button form.
           update.view.dispatch({ effects: revealConstruct.of(construct ? { from: construct.from, to: construct.to } : { from: -1, to: -1 }) })
+          // Where the caret is drives four surfaces: the sticky heading, the
+          // outline highlight, the breadcrumb's section, and what peers see of us.
+          renderStickyHeading()
+          renderSectionOutline()
+          renderCrumbs()
+          publishPresence()
         }
         if (update.docChanged) {
           // Re-parse the document only when text actually changed, then reuse the
           // result for all subsequent cursor moves until the next edit.
           cachedConstructs = findConstructs(update.state.doc.toString())
+          // The outline, sticky heading, and word count are all functions of the
+          // text, so they refresh here and nowhere else.
+          refreshDocumentStructure()
+          renderCrumbs()
         }
         if (update.docChanged && state.document) {
           // Two kinds of change are not user edits and must not trigger a PATCH:
@@ -2099,14 +2514,13 @@ function addCoalesced(review: ReviewState, item: ReviewItem, originFrom: number,
 
 function openReferences(): void {
   const project = state.project
-  if (!project) { showPanel("Project library", "References", `<p class="empty-state">Select a project first.</p>`); return }
+  if (!project) { showPanel("references", `<p class="empty-note">Open a project first.</p>`); return }
   showPanel(
-    "Project library",
-    "References",
-    `<label>Filter by title, DOI, or PMID<input id="reference-filter" type="search" placeholder="Filter the project library" /></label>
-     <button id="add-reference" class="toolbar-button" type="button">Add reference</button>
-     <div id="reference-results" class="reference-results"></div>
-     <p class="panel-note">References cited in the document need an attached PDF before the project can be exported.</p>`
+    "references",
+    `<label class="field">Search the library<input id="reference-filter" type="search" placeholder="Title, author, DOI or PMID" /></label>
+     <button id="add-reference" class="btn" type="button">Add reference</button>
+     <div id="reference-results" class="list"></div>
+     <p class="dock-note">Every reference the text cites needs an attached PDF before the project can be exported.</p>`
   )
   el<HTMLInputElement>("#reference-filter")?.addEventListener("input", (event) => {
     renderReferences((event.target as HTMLInputElement).value)
@@ -2135,7 +2549,7 @@ function openReferences(): void {
  * default to null when blank, which the schema accepts.
  */
 function openAddReferenceForm(projectId: string): void {
-  showPanel("Project library", "Add reference", `
+  showModal("Project library", "Add reference", `
     <label>Title<input id="ref-title" type="text" placeholder="Reference title" autocomplete="off" /></label>
     <label>Authors<textarea id="ref-authors" placeholder="Comma- or newline-separated" autocomplete="off"></textarea></label>
     <label>Year<input id="ref-year" type="number" min="0" placeholder="2024" autocomplete="off" /></label>
@@ -2143,9 +2557,9 @@ function openAddReferenceForm(projectId: string): void {
     <label>Journal<input id="ref-journal" type="text" placeholder="Journal" autocomplete="off" /></label>
     <label>PMID<input id="ref-pmid" type="text" placeholder="PMID" autocomplete="off" /></label>
     <p class="prompt-error" id="prompt-error" hidden></p>
-    <div class="dialog-actions">
-      <button class="toolbar-button" id="ref-cancel" type="button">Cancel</button>
-      <button class="primary-button" id="ref-add" type="button" disabled>Add</button>
+    <div class="modal-actions">
+      <button class="btn" id="ref-cancel" type="button">Cancel</button>
+      <button class="btn btn-primary" id="ref-add" type="button" disabled>Add</button>
     </div>`)
   const titleInput = el<HTMLInputElement>("#ref-title")
   const authorsInput = el<HTMLTextAreaElement>("#ref-authors")
@@ -2243,7 +2657,7 @@ function renderReferences(filter = ""): void {
   if (!target || !project) return
   const items = state.references.filter((reference) => matchesFilter(reference, filter))
   if (items.length === 0) {
-    target.innerHTML = `<p>${state.references.length === 0 ? "This project has no references yet." : "No references match that filter."}</p>`
+    target.innerHTML = `<p class="empty-note">${state.references.length === 0 ? "No references yet. Add one to cite it from the text." : "Nothing matches that search."}</p>`
     return
   }
   target.innerHTML = items
@@ -2255,10 +2669,22 @@ function renderReferences(filter = ""): void {
       const authors = reference.metadata.authors.length > 0 ? `${escapeHtml(reference.metadata.authors[0]!)}${reference.metadata.authors.length > 1 ? " et al." : ""}` : "No authors"
       const identifier = reference.metadata.doi ?? reference.metadata.pmid ?? "No identifier"
       const journal = reference.metadata.journal ? ` · ${escapeHtml(reference.metadata.journal)}` : ""
+      // The PDF state is a fact about the entry (and the thing that blocks an
+      // export), so it sits with the metadata; the actions share one row beneath.
       const attachment = fulltext
-        ? `<span class="fulltext-ok">PDF attached · ${escapeHtml(fulltext.filename)}</span>`
-        : `<span class="fulltext-warning">PDF missing; export blocked if cited</span><button type="button" class="toolbar-button" data-upload="${escapeHtml(reference.id)}">Attach PDF</button>`
-      return `<article class="reference-item"><strong>${escapeHtml(reference.metadata.title)}</strong><span>${authors}${reference.metadata.year === null ? "" : ` · ${reference.metadata.year}`}${journal} · ${escapeHtml(identifier)}</span><button type="button" data-cite="${escapeHtml(reference.id)}" class="toolbar-button">Insert citation</button>${attachment}<button type="button" class="toolbar-button" data-delete="${escapeHtml(reference.id)}" title="Remove this reference">Delete</button></article>`
+        ? `<span class="state-ok">PDF attached · ${escapeHtml(fulltext.filename)}</span>`
+        : `<span class="state-warn">No PDF yet — an export that cites this will be blocked</span>`
+      const upload = fulltext ? "" : `<button type="button" class="btn btn-small" data-upload="${escapeHtml(reference.id)}">Attach PDF</button>`
+      return `<article class="list-item">
+        <strong>${escapeHtml(reference.metadata.title)}</strong>
+        <span class="meta">${authors}${reference.metadata.year === null ? "" : ` · ${reference.metadata.year}`}${journal} · ${escapeHtml(identifier)}</span>
+        <span class="meta">${attachment}</span>
+        <span class="row">
+          <button type="button" data-cite="${escapeHtml(reference.id)}" class="btn btn-small">Insert citation</button>
+          ${upload}
+          <button type="button" class="btn btn-small btn-danger" data-delete="${escapeHtml(reference.id)}" title="Remove this reference">Delete</button>
+        </span>
+      </article>`
     })
     .join("")
 
@@ -2267,7 +2693,6 @@ function renderReferences(filter = ""): void {
       // `#cite(<id>)` is the label form the exporter's citation scanner reads.
       editor.dispatch({ changes: { from: editor.state.selection.main.head, insert: `#cite(<${button.dataset.cite}>)` } })
       editor.focus()
-      el<HTMLDialogElement>("#workspace-panel")?.close()
     })
   }
   for (const button of target.querySelectorAll<HTMLButtonElement>("[data-upload]")) {
@@ -2333,43 +2758,50 @@ function renderReferences(filter = ""): void {
  * no affordance, so a reviewer could never see a project until someone POSTed
  * out-of-band.
  */
+/** Role names as the interface says them. */
+const ROLE_LABELS: Record<string, string> = {
+  owner: "Owner",
+  author: "Author",
+  reviewer: "Reviewer",
+  "read-only": "Read-only"
+}
+
 function openShare(): void {
   const project = state.project
-  if (!project) { showPanel("Sharing", "Share", `<p class="empty-state">Select a project first.</p>`); return }
+  if (!project) { showPanel("share", `<p class="empty-note">Open a project first.</p>`); return }
   showPanel(
-    "Sharing",
-    "Share",
-    `<p class="panel-note">Invite a collaborator by their username (e.g. <code>alice@nisaba.local</code>). They'll see this project after their next sign-in.</p>
-     <div id="share-invite-form" class="share-invite">
+    "share",
+    `<p class="dock-note">Invite a collaborator by their username (e.g. <code>alice@nisaba.local</code>). They'll see this project after their next sign-in.</p>
+     <div id="share-invite-form" class="inline-form">
        <input id="share-subject" type="text" placeholder="Username to invite" autocomplete="off" />
        <select id="share-role" aria-label="Role">
-         <option value="author">Author — edit and comment</option>
-         <option value="reviewer">Reviewer — suggest and comment</option>
-         <option value="read-only">Read-only — view only</option>
+         <option value="author">Author — can edit the text</option>
+         <option value="reviewer">Reviewer — can suggest and comment</option>
+         <option value="read-only">Read-only — can read and preview</option>
        </select>
-       <button id="share-invite" class="primary-button" type="button">Invite</button>
+       <button id="share-invite" class="btn btn-primary" type="button">Invite</button>
      </div>
-     <h3 class="share-members-heading">Current members</h3>
-     <div id="share-members" class="reference-results"><p class="panel-note">Loading…</p></div>
-     <h3 class="share-members-heading">Shareable links</h3>
-     <p class="panel-note">Generate a link that grants access to this project at a chosen role. Anyone who opens the link while signed in gets that role.</p>
-     <div class="share-invite">
+     <h3>Who has access</h3>
+     <div id="share-members" class="list"><p class="dock-note">Loading…</p></div>
+     <h3>Links</h3>
+     <p class="dock-note">Generate a link that grants access to this project at a chosen role. Anyone who opens the link while signed in gets that role.</p>
+     <div class="inline-form">
        <select id="share-link-role" aria-label="Link role">
          <option value="reviewer">Reviewer</option>
          <option value="author">Author</option>
          <option value="read-only">Read-only</option>
        </select>
-       <button id="create-share-link" class="toolbar-button" type="button">Create link</button>
+       <button id="create-share-link" class="btn" type="button">Create link</button>
      </div>
-     <div id="share-links" class="reference-results"><p class="panel-note">No shareable links yet.</p></div>`
+     <div id="share-links" class="list"><p class="dock-note">No shareable links yet.</p></div>`
   )
   const canManageMembers = state.role === "owner" || state.role === "author"
   const renderMembers = (members: readonly api.Membership[]) => {
     const host = el<HTMLElement>("#share-members")
     if (!host) return
     host.innerHTML = members.length === 0
-      ? `<p class="panel-note">No members yet.</p>`
-      : members.map((m) => `<article class="reference-item"><strong>${escapeHtml(m.subject)}</strong><span>${escapeHtml(m.role)}</span>${canManageMembers && m.role !== "owner" ? `<button type="button" class="toolbar-button" data-remove-member="${escapeHtml(m.subject)}">Remove</button>` : ""}</article>`).join("")
+      ? `<p class="dock-note">No members yet.</p>`
+      : members.map((m) => `<article class="list-item"><span class="row"><strong>${escapeHtml(m.subject)}</strong><span class="role-tag">${escapeHtml(ROLE_LABELS[m.role] ?? m.role)}</span>${canManageMembers && m.role !== "owner" ? `<button type="button" class="btn btn-small btn-danger" style="margin-left:auto" data-remove-member="${escapeHtml(m.subject)}">Remove</button>` : ""}</span></article>`).join("")
     for (const button of host.querySelectorAll<HTMLButtonElement>("[data-remove-member]")) {
       button.addEventListener("click", () => {
         const subject = button.dataset.removeMember ?? ""
@@ -2382,7 +2814,7 @@ function openShare(): void {
       })
     }
   }
-  run(api.listMembers(project.id), renderMembers, () => { const h = el("#share-members"); if (h) h.innerHTML = `<p class="panel-note">Couldn't load members (you may not have permission).</p>` })
+  run(api.listMembers(project.id), renderMembers, () => { const h = el("#share-members"); if (h) h.innerHTML = `<p class="dock-note">Couldn't load members (you may not have permission).</p>` })
   // The panel host (#workspace-panel) already wraps content in a <form
   // method="dialog">, so a nested <form> here is illegal HTML and the browser
   // drops it (silently breaking submit). Use a <div> + button click instead,
@@ -2418,10 +2850,10 @@ function openShare(): void {
     const host = el<HTMLElement>("#share-links")
     if (!host) return
     host.innerHTML = links.length === 0
-      ? `<p class="panel-note">No shareable links yet.</p>`
+      ? `<p class="dock-note">No shareable links yet.</p>`
       : links.map((link) => {
           const url = `${window.location.origin}/?share=${encodeURIComponent(link.token)}`
-          return `<div class="share-link-row"><code>${escapeHtml(url)}</code><button type="button" class="toolbar-button" data-copy="${escapeHtml(url)}">Copy</button><button type="button" class="toolbar-button" data-revoke="${escapeHtml(link.token)}">Revoke</button></div>`
+          return `<div class="link-row"><code>${escapeHtml(url)}</code><button type="button" class="btn" data-copy="${escapeHtml(url)}">Copy</button><button type="button" class="btn" data-revoke="${escapeHtml(link.token)}">Revoke</button></div>`
         }).join("")
     for (const button of host.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
       button.addEventListener("click", () => {
@@ -2535,15 +2967,15 @@ function lineDiff(oldText: string, newText: string): { type: "added" | "removed"
  */
 function openHistory(): void {
   const { project, selected } = state
-  if (!project || !selected) { showPanel("History", "History", `<p class="empty-state">Select a document first.</p>`); return }
-  showPanel("History", "Version history", `<p class="panel-note">Loading revisions…</p>`)
+  if (!project || !selected) { showPanel("history", `<p class="empty-note">Open a document first.</p>`); return }
+  showPanel("history", `<p class="dock-note">Loading earlier versions…</p>`)
   run(
     api.listDocumentHistory(project.id, selected.document.id),
     (revisions) => {
-      const host = el<HTMLElement>("#panel-content")
+      const host = el<HTMLElement>("#dock-content")
       if (!host) return
       if (revisions.length === 0) {
-        host.innerHTML = `<p class="empty-state">No saved revisions yet. Edits are snapshotted automatically on save.</p>`
+        host.innerHTML = `<p class="empty-note">No saved revisions yet. Edits are snapshotted automatically on save.</p>`
         return
       }
       // The "Current" pseudo-entry represents the live editor text, so the user
@@ -2555,12 +2987,19 @@ function openHistory(): void {
       ]
       let firstSelected: string | null = null
       host.innerHTML = `
-        <p class="panel-note">Click one revision to view it. Click a second to diff against the first.</p>
-        <div class="history-layout">
+        <p class="dock-note">Pick a version to read it. Pick a second one to see what changed between them.</p>
+        <div class="history">
           <ul class="history-timeline" id="history-timeline">
-            ${entries.map((entry) => `<li class="history-entry" data-rev="${escapeHtml(entry.id)}"><span class="history-entry-rev">${entry.isCurrent ? "Current" : `Rev ${entry.revision}`}</span><span class="history-entry-meta">${escapeHtml(entry.author ?? "—")} · ${new Date(entry.created_at).toLocaleString()}</span></li>`).join("")}
+            ${entries.map((entry) => {
+              const at = Date.parse(entry.created_at)
+              const when = entry.isCurrent ? "Working copy" : Number.isFinite(at) ? timeAgo(at) : `version ${entry.revision}`
+              const detail = entry.isCurrent
+                ? "your unsaved text"
+                : `${escapeHtml(entry.author ?? "someone")} · ${Number.isFinite(at) ? new Date(at).toLocaleString() : `version ${entry.revision}`}`
+              return `<li><button type="button" class="history-entry" data-rev="${escapeHtml(entry.id)}"><span class="history-entry-rev">${escapeHtml(when)}</span><span class="history-entry-meta">${detail}</span></button></li>`
+            }).join("")}
           </ul>
-          <div class="history-diff-pane" id="history-diff-pane"><div class="history-empty">Select a revision to view.</div></div>
+          <div class="history-diff-pane" id="history-diff-pane"><div class="history-empty">Pick a version above.</div></div>
         </div>`
       const bodies = new Map(entries.map((e) => [e.id, e.body]))
       const pane = el<HTMLElement>("#history-diff-pane")
@@ -2586,7 +3025,7 @@ function openHistory(): void {
           // Click same: deselect.
           firstSelected = null
           renderSelection()
-          pane.innerHTML = `<div class="history-empty">Select a revision to view.</div>`
+          pane.innerHTML = `<div class="history-empty">Pick a version above.</div>`
         } else {
           // Second selection: diff firstSelected → revId.
           const oldBody = bodies.get(firstSelected) ?? ""
@@ -2597,20 +3036,21 @@ function openHistory(): void {
       })
     },
     (error: unknown) => {
-      const host = el<HTMLElement>("#panel-content")
-      if (host) host.innerHTML = `<p class="empty-state">Couldn't load history: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
+      const host = el<HTMLElement>("#dock-content")
+      if (host) host.innerHTML = `<p class="empty-note">Couldn't load history: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
     }
   )
 }
 
 function openExport(): void {
   const project = state.project
-  if (!project) { showPanel("Export", "Export", `<p class="empty-state">Select a project first.</p>`); return }
+  if (!project) { showPanel("export", `<p class="empty-note">Open a project first.</p>`); return }
   const entries = state.outline.map(({ document }) => `<option value="${escapeHtml(document.path)}">${escapeHtml(document.title)} — ${escapeHtml(document.path)}</option>`).join("")
-  showPanel("Export", "Export", `
-    <label>Entry document<select id="export-entry">${entries}</select></label>
-    <button id="run-export" class="primary-button" type="button" ${entries ? "" : "disabled"}>Export project</button>
-    <div id="export-result" class="panel-note"></div>`)
+  showPanel("export", `
+    <label class="field">Which document<select id="export-entry">${entries}</select></label>
+    <p class="dock-note">Exports the <b>${escapeHtml(VIEW_LABELS[state.view])}</b> version — the one the preview is showing — as a PDF, together with the reference files it cites.</p>
+    <button id="run-export" class="btn btn-primary" type="button" ${entries ? "" : "disabled"}>Prepare download</button>
+    <div id="export-result" class="dock-note"></div>`)
   el("#run-export")?.addEventListener("click", () => {
     const entry = el<HTMLSelectElement>("#export-entry")?.value
     if (!entry) return
@@ -2625,10 +3065,10 @@ function openExport(): void {
       const zipName = result.zip_filename ?? `${project.name}.zip`
       const host = el<HTMLElement>("#export-result")
       if (!host) return
-      host.innerHTML = `<p>Build ${escapeHtml(result.compile.build_id)} · ${files.length} reference file${files.length === 1 ? "" : "s"}</p>
-        ${zip ? `<p><button id="download-zip" class="primary-button" type="button">Download export bundle</button> <code>${escapeHtml(zipName)}</code></p>` : ""}
-        ${pdf ? `<button id="download-pdf" class="toolbar-button" type="button">Download PDF</button>` : `<p class="fulltext-warning">The compile produced no PDF.</p>`}
-        <ul class="export-files">${files.map((file, index) => `<li><button type="button" class="link-button" data-file="${index}">${escapeHtml(file.path)}</button></li>`).join("")}</ul>`
+      host.innerHTML = `<p>Ready — ${files.length} reference file${files.length === 1 ? "" : "s"} included.</p>
+        ${zip ? `<p><button id="download-zip" class="btn btn-primary" type="button">Download everything (.zip)</button> <code>${escapeHtml(zipName)}</code></p>` : ""}
+        ${pdf ? `<button id="download-pdf" class="btn" type="button">Download PDF</button>` : `<p class="state-warn">The build produced no PDF — check the problems panel.</p>`}
+        <ul class="export-files list">${files.map((file, index) => `<li><button type="button" class="btn btn-small" data-file="${index}">${escapeHtml(file.path)}</button></li>`).join("")}</ul>`
       el("#download-zip")?.addEventListener("click", () => { try { if (zip) downloadBase64(zip, zipName, "application/zip") } catch { status("Download failed: corrupt data") } })
       el("#download-pdf")?.addEventListener("click", () => { try { if (pdf) downloadBase64(pdf, `${project.name}.pdf`, "application/pdf") } catch { status("Download failed: corrupt data") } })
       for (const button of host.querySelectorAll<HTMLButtonElement>("[data-file]")) {
@@ -2640,7 +3080,7 @@ function openExport(): void {
     }, (error) => {
       if (exportButton) exportButton.disabled = false
       const host = el<HTMLElement>("#export-result")
-      if (host) host.innerHTML = `<p class="fulltext-warning">Export failed: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
+      if (host) host.innerHTML = `<p class="state-warn">Export failed: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
     })
   })
 }
@@ -2649,50 +3089,55 @@ function openExport(): void {
 // Review
 // ---------------------------------------------------------------------------
 
+/**
+ * Review state, stated in exactly two places.
+ *
+ * The old client announced the same "3 open items" in an amber banner, a toolbar
+ * badge, AND the sidebar, plus a duplicate track-changes toggle in two of them —
+ * redundant surfaces that drift apart and teach people to trust none of them.
+ * Now: the count sits on the Review button (the door to the queue), and the queue
+ * itself is the room. Track changes is one switch, in the document bar, which
+ * states its own state.
+ *
+ * The function keeps its old name because it is called from a dozen places after
+ * every review mutation.
+ */
 function renderReviewBanner(): void {
-  const banner = el<HTMLElement>("#review-banner")
-  if (!banner) return
   const open = state.review.items.filter((item) => item.status === "open").length
-  banner.hidden = open === 0 && !state.review.suggesting
-  setText("#review-summary", open === 0 ? "No open review items" : `${open} open review item${open === 1 ? "" : "s"}`)
-  // The toolbar Review button carries the same live count as the banner so the
-  // review affordance is discoverable without opening the pane (H: badge).
-  const reviewButton = el<HTMLElement>("#review-button")
+  const reviewButton = el<HTMLButtonElement>("#review-button")
+  const badge = el<HTMLElement>("#review-count")
+  if (badge) {
+    badge.textContent = String(open)
+    badge.hidden = open === 0
+  }
   if (reviewButton) {
-    const badge = reviewButton.querySelector<HTMLElement>(".review-badge")
-    if (open > 0) {
-      reviewButton.setAttribute("aria-pressed", "true")
-      if (badge) {
-        badge.textContent = String(open)
-        badge.hidden = false
-      }
-    } else if (badge) {
-      reviewButton.setAttribute("aria-pressed", "false")
-      badge.hidden = true
-    }
+    reviewButton.disabled = !state.selected
+    reviewButton.title = open === 0
+      ? "Comments and suggested changes (⌘⇧R)"
+      : `${open} open item${open === 1 ? "" : "s"} (⌘⇧R)`
   }
-  setText("#suggesting-button", `Track changes: ${state.review.suggesting ? "on" : "off"}`)
-  // The banner's suggesting toggle must be disabled for reviewers too, not just
-  // the toolbar toggle below: a reviewer is locked into suggesting mode (H1), but
-  // the banner button (visible whenever there are open items or suggesting is on)
-  // was never disabled — letting a reviewer click it to turn tracking off and
-  // make untracked edits.
-  const bannerToggle = el<HTMLButtonElement>("#suggesting-button")
-  if (bannerToggle) bannerToggle.disabled = state.role === "reviewer"
-  // The toolbar toggle is the always-reachable Track Changes affordance: the
-  // banner's #suggesting-button is hidden on a clean doc (banner.hidden above),
-  // so without this a reviewer can never turn track changes on in the first
-  // place. It is disabled until a document is open.
-  const toolbarToggle = el<HTMLButtonElement>("#toolbar-suggesting")
-  if (toolbarToggle) {
-    // Reviewers are locked into suggesting mode (H1): they cannot turn track
-    // changes off, so the toggle is disabled but still reflects the on state.
-    const reviewerLocked = state.role === "reviewer"
-    toolbarToggle.disabled = !state.selected || reviewerLocked
-    toolbarToggle.setAttribute("aria-pressed", String(state.review.suggesting))
-    toolbarToggle.classList.toggle("is-on", state.review.suggesting)
-    setText("#toolbar-suggesting", `Track changes: ${state.review.suggesting ? "on" : "off"}`)
+  // Reviewers are locked into suggesting mode: every edit they make is recorded
+  // as a proposal rather than silently changing the text. The switch shows the
+  // state but refuses to move, and says why on hover.
+  const suggesting = el<HTMLButtonElement>("#suggesting-button")
+  if (suggesting) {
+    const locked = state.role === "reviewer"
+    suggesting.disabled = !state.selected || locked
+    suggesting.setAttribute("aria-checked", String(state.review.suggesting))
+    suggesting.textContent = `Track changes: ${state.review.suggesting ? "on" : "off"}`
+    suggesting.title = locked
+      ? "As a reviewer your edits are always recorded as suggestions"
+      : state.review.suggesting
+        ? "Your edits are recorded as suggestions for someone to accept"
+        : "Record your edits as suggestions instead of changing the text"
   }
+}
+
+/** Flips track changes and re-renders every surface that shows it. */
+function toggleSuggesting(): void {
+  state.review = reviewReducer(state.review, { type: "toggle-suggesting" })
+  renderReviewBanner()
+  renderReviewDock()
 }
 
 /**
@@ -2736,9 +3181,9 @@ function applyRoleGates(): void {
   // blocked from baseline writes and deletions), so the controls are hidden for
   // reviewers too instead of surfacing a confusing 403 after the fact.
   // NOTE: the selectors here must match the real DOM ids/classes rendered by
-  // renderProjectList/renderOutline (regression: they used to target
-  // non-existent ids, leaving the destructive controls visible to every role —
-  // the e2e permissions spec now asserts the real selectors).
+  // renderProjects/renderFileTree (regression: they used to target non-existent
+  // ids, leaving the destructive controls visible to every role — the e2e
+  // permissions spec asserts the real selectors).
   const deleteProjectBtns = document.querySelectorAll<HTMLButtonElement>("[data-delete-project]")
   deleteProjectBtns.forEach((btn) => { btn.hidden = !canManage; btn.disabled = !canManage })
   const addDocBtn = el<HTMLButtonElement>("#add-document")
@@ -2755,12 +3200,11 @@ function applyRoleGates(): void {
   if (newProjectBtn) { newProjectBtn.hidden = !canManage; newProjectBtn.disabled = !canManage }
   const emptyStateBtn = el<HTMLButtonElement>("#empty-create-project")
   if (emptyStateBtn) { emptyStateBtn.hidden = !canManage; emptyStateBtn.disabled = !canManage }
-  // Compiling is read-only and every role may do it (docs roles table); the
-  // button was previously disabled for read-only users.
+  // Updating the preview is a read action every role may take (see the roles
+  // table in the user guide), so the primary action is never gated — only the
+  // in-flight compile disables it.
   const compileBtn = el<HTMLButtonElement>("#compile-button")
-  if (compileBtn) compileBtn.disabled = false
-  const bannerToggle = el<HTMLInputElement>("#review-banner-toggle")
-  if (bannerToggle) bannerToggle.disabled = readOnly || state.role === "reviewer"
+  if (compileBtn && !compiling) compileBtn.disabled = false
   const addRefBtn = el<HTMLButtonElement>("#add-reference")
   if (addRefBtn) { addRefBtn.hidden = !canManage; addRefBtn.disabled = !canManage }
 
@@ -2866,8 +3310,8 @@ function openReviewPopover(id: string, anchor: HTMLElement): void {
   // Comments resolve; suggestions accept/reject. The buttons reuse the same actions as
   // the dialog so behaviour (authoritative text mutation for suggestions) is identical.
   const action = item.kind === "comment"
-    ? `<button class="primary-button" type="button" data-popover-resolve="${escapeHtml(item.id)}">Resolve</button>`
-    : `<button class="primary-button" type="button" data-popover-accept="${escapeHtml(item.id)}">Accept</button> <button class="toolbar-button" type="button" data-popover-reject="${escapeHtml(item.id)}">Reject</button>`
+    ? `<button class="btn btn-primary" type="button" data-popover-resolve="${escapeHtml(item.id)}">Resolve</button>`
+    : `<button class="btn btn-primary" type="button" data-popover-accept="${escapeHtml(item.id)}">Accept</button> <button class="btn" type="button" data-popover-reject="${escapeHtml(item.id)}">Reject</button>`
   popover.innerHTML = `
     <div class="review-popover-head">
       <div class="review-popover-meta">${change} <strong>${escapeHtml(kindLabel)}</strong><span class="review-popover-author">${escapeHtml(item.author)} · ${escapeHtml(timeAgo(item.createdAt))}</span></div>
@@ -3004,237 +3448,425 @@ function handleReviewClick(event: MouseEvent): void {
 }
 
 // ---------------------------------------------------------------------------
-// Review sidebar (Overleaf-style docked column)
+// Review dock — the queue
 // ---------------------------------------------------------------------------
 
 /**
- * Persistent review sidebar that replaces the modal Review overview.
+ * The review dock: every open comment and suggested change, as a triage queue.
  *
- * It mirrors the inline `.review-popover` actions at a glance: every open item
- * renders as a card (author, kind chip, text, Resolve/Accept/Reject), clicking a
- * card jumps the editor to its anchor via `revealReviewItem`, and the toolbar
- * carries the suggesting toggle + comment-at-cursor affordance. Accept-all /
- * reject-all appear at the foot when open suggestions exist. The pane docks as a
- * 4th workspace column (`applyWorkspaceGrid` adds its track + gutter); it is
- * `display:none` otherwise so it does not reserve space.
+ * Two audiences, one surface. An author dips in to see what people proposed; a
+ * reviewer works through forty items in a sitting. That second job is why the
+ * queue is a keyboard listbox rather than a list of cards: ↑/↓ moves, Enter jumps
+ * to the text, A accepts, R rejects, C comments, Esc goes back to writing. The
+ * shortcuts are printed in the dock's footer and bind ONLY while focus is inside
+ * the dock, so a single letter can never fire into the document.
  *
- * `renderReviewSidebar()` is idempotent and called after every review mutation
- * (openDocument reset, banner re-render, suggestion tracking, accept/reject,
- * toggle-suggesting). When closed it is a no-op, so review state still mutates
- * correctly with the pane hidden.
+ * Rendering is idempotent and called after every review mutation; when the dock
+ * is showing something else it is a no-op, so review state still mutates
+ * correctly with the queue closed.
  */
-function renderReviewSidebar(): void {
-  const host = el<HTMLElement>("#review-sidebar-body")
-  if (!host) return
-  if (!reviewPaneVisible) return
-  const open = state.review.items.filter((item) => item.status === "open")
-  const openSuggestions = open.filter((item): item is Extract<ReviewItem, { kind: "suggestion" }> => item.kind === "suggestion")
-  const body = open.length === 0
-    ? `<p class="review-sidebar-empty">No review items. Turn on suggesting to track changes, or place a cursor and add a comment.</p>`
-    : open.map(renderSidebarCard).join("")
-  host.innerHTML = `
-    <div class="review-sidebar-toolbar">
-      <button id="sidebar-suggesting" class="toolbar-button${state.review.suggesting ? " is-on" : ""}" type="button" aria-pressed="${state.review.suggesting}"${state.role === "reviewer" ? " disabled title=\"Reviewers are always in suggesting mode\"" : ""}>Track changes: ${state.review.suggesting ? "on" : "off"}</button>
-      <button id="sidebar-comment" class="toolbar-button" type="button">Add comment</button>
-    </div>
-    <ul class="review-cards">${body}</ul>
-    ${openSuggestions.length > 0
-      ? `<div class="review-sidebar-bulk"><button id="sidebar-accept-all" class="primary-button" type="button">Accept all</button> <button id="sidebar-reject-all" class="toolbar-button" type="button">Reject all</button></div>`
-      : ""}`
-  el("#sidebar-suggesting")?.addEventListener("click", () => {
-    state.review = reviewReducer(state.review, { type: "toggle-suggesting" })
-    renderReviewBanner()
-    renderReviewSidebar()
+type ReviewFilter = "all" | "suggestions" | "comments" | "mine"
+
+let reviewFilter: ReviewFilter = "all"
+/** Id of the queue row with roving focus, so re-renders keep the caret's place. */
+let activeReviewId: string | undefined
+
+function openReviewItems(): readonly ReviewItem[] {
+  return state.review.items.filter((item) => item.status === "open")
+}
+
+function filteredReviewItems(): readonly ReviewItem[] {
+  const me = currentUserDisplayName()
+  return openReviewItems().filter((item) => {
+    if (reviewFilter === "suggestions") return item.kind === "suggestion"
+    if (reviewFilter === "comments") return item.kind === "comment"
+    if (reviewFilter === "mine") return item.author === me
+    return true
   })
-  el("#sidebar-comment")?.addEventListener("click", () => {
-    const sel = editor.state.selection.main
-    const hasSelection = sel.from !== sel.to
-    const label = hasSelection ? "Comment on selection" : "Comment at cursor"
-    promptInPanel("Reviewer suggesting mode", label, "Comment text", (commentBody) => {
-      const from = sel.from
-      const to = sel.to
-      // Anchor the mark to stable Loro cursors so it survives edits.
-      const fromCursor = createCursorAt(activeLoro, from)
-      const toCursor = to > from ? createCursorAt(activeLoro, to) : fromCursor
-      state.review = reviewReducer(state.review, { type: "add", item: { id: crypto.randomUUID(), kind: "comment", from, to, fromCursor, toCursor, body: commentBody, author: currentUserDisplayName(), status: "open", createdAt: Date.now() } })
+}
+
+function renderReviewDock(): void {
+  if (dockTool !== "review") return
+  const host = el<HTMLElement>("#dock-content")
+  if (!host) return
+  const open = openReviewItems()
+  const items = filteredReviewItems()
+  const suggestions = open.filter((item) => item.kind === "suggestion").length
+  const comments = open.length - suggestions
+
+  host.replaceChildren()
+
+  const chips = document.createElement("div")
+  chips.className = "chips"
+  const chipSpec: readonly { key: ReviewFilter; label: string }[] = [
+    { key: "all", label: `All ${open.length}` },
+    { key: "suggestions", label: `Changes ${suggestions}` },
+    { key: "comments", label: `Comments ${comments}` },
+    { key: "mine", label: "Mine" }
+  ]
+  for (const spec of chipSpec) {
+    const chip = document.createElement("button")
+    chip.type = "button"
+    chip.className = "chip"
+    chip.textContent = spec.label
+    chip.setAttribute("aria-pressed", String(reviewFilter === spec.key))
+    chip.addEventListener("click", () => { reviewFilter = spec.key; renderReviewDock() })
+    chips.append(chip)
+  }
+  host.append(chips)
+
+  const addComment = document.createElement("button")
+  addComment.type = "button"
+  addComment.className = "btn btn-small"
+  addComment.id = "sidebar-comment"
+  addComment.textContent = "Add a comment here"
+  addComment.title = "Comment on the selected text, or at the cursor"
+  addComment.addEventListener("click", () => addCommentAtSelection())
+  const toolbar = document.createElement("div")
+  toolbar.className = "dock-toolbar"
+  toolbar.append(addComment)
+  host.append(toolbar)
+
+  if (items.length === 0) {
+    const empty = document.createElement("p")
+    empty.className = "empty-note"
+    empty.textContent = open.length === 0
+      ? "Nothing to review yet. Turn on track changes to record your edits as suggestions, or select some text and add a comment."
+      : "Nothing matches this filter."
+    host.append(empty)
+  } else {
+    const queue = document.createElement("ul")
+    queue.className = "review-queue"
+    queue.id = "review-queue"
+    queue.setAttribute("role", "listbox")
+    queue.setAttribute("aria-label", "Open review items")
+    if (activeReviewId === undefined || !items.some((item) => item.id === activeReviewId)) {
+      activeReviewId = items[0]?.id
+    }
+    for (const item of items) queue.append(reviewRow(item, item.id === activeReviewId))
+    queue.addEventListener("keydown", (event) => handleQueueKey(event, items))
+    host.append(queue)
+  }
+
+  renderReviewFoot(open)
+}
+
+/** The dock footer: bulk actions on the left, the shortcut legend on the right. */
+function renderReviewFoot(open: readonly ReviewItem[]): void {
+  const foot = el<HTMLElement>("#dock-foot")
+  if (!foot) return
+  foot.replaceChildren()
+  const openSuggestions = open.filter((item): item is Extract<ReviewItem, { kind: "suggestion" }> => item.kind === "suggestion")
+  if (openSuggestions.length > 0) {
+    const acceptAll = document.createElement("button")
+    acceptAll.type = "button"
+    acceptAll.className = "btn btn-small"
+    acceptAll.id = "sidebar-accept-all"
+    acceptAll.textContent = `Accept all ${openSuggestions.length}`
+    acceptAll.addEventListener("click", () => acceptAllSuggestions(openSuggestions))
+    const rejectAll = document.createElement("button")
+    rejectAll.type = "button"
+    rejectAll.className = "btn btn-small"
+    rejectAll.id = "sidebar-reject-all"
+    rejectAll.textContent = "Reject all"
+    rejectAll.addEventListener("click", () => rejectAllSuggestions(openSuggestions))
+    foot.append(acceptAll, rejectAll)
+  }
+  const keys = document.createElement("span")
+  keys.className = "keys"
+  keys.textContent = "↑↓ move · ↵ show · A accept · R reject · C comment"
+  foot.append(keys)
+  foot.hidden = false
+}
+
+/**
+ * One queue row: kind, who, when, where, and the text — plus the two actions that
+ * resolve it. `role="option"` inside the listbox, with roving tabindex so Tab
+ * enters the queue once and the arrows do the rest.
+ */
+function reviewRow(item: ReviewItem, selected: boolean): HTMLElement {
+  const row = document.createElement("li")
+  row.className = item.kind === "comment" ? "review-card review-card-comment" : "review-card review-card-suggestion"
+  row.dataset.reviewId = item.id
+  row.setAttribute("role", "option")
+  row.setAttribute("aria-selected", String(selected))
+  row.tabIndex = selected ? 0 : -1
+
+  const head = document.createElement("div")
+  head.className = "review-card-head"
+  const chip = document.createElement("span")
+  const kind = item.kind === "comment" ? "comment" : item.change
+  chip.className = `review-chip review-chip-${kind}`
+  chip.textContent = kind === "insert" ? "Added" : kind === "delete" ? "Deleted" : "Comment"
+  const author = document.createElement("span")
+  author.className = "review-card-author"
+  author.textContent = item.author
+  const time = document.createElement("span")
+  time.className = "review-card-time"
+  time.textContent = timeAgo(item.createdAt)
+  author.append(" ", time)
+  head.append(chip, author)
+  if (item.orphaned) {
+    const orphan = document.createElement("span")
+    orphan.className = "review-card-orphan"
+    orphan.textContent = "needs re-anchoring"
+    orphan.title = "The text this was attached to has changed too much to locate"
+    head.append(orphan)
+  }
+  const avatar = document.createElement("span")
+  avatar.className = "avatar"
+  avatar.style.setProperty("--hue", String(authorHue(item.author)))
+  avatar.setAttribute("aria-hidden", "true")
+  avatar.textContent = authorInitials(item.author)
+  head.append(avatar)
+  row.append(head)
+
+  const text = document.createElement("p")
+  text.className = "review-card-text"
+  if (item.kind === "comment") {
+    text.textContent = item.body
+  } else {
+    text.classList.add("review-card-quote")
+    const snippet = item.text ?? ""
+    text.textContent = `“${snippet.length > 200 ? `${snippet.slice(0, 200)}…` : snippet}”`
+  }
+  row.append(text)
+
+  const location = document.createElement("span")
+  location.className = "review-card-loc"
+  location.textContent = reviewLocation(item)
+  row.append(location)
+
+  if (item.kind === "suggestion" && item.change === "delete") {
+    const note = document.createElement("p")
+    note.className = "review-card-note"
+    note.textContent = "Already removed from the text — Reject puts it back."
+    row.append(note)
+  }
+
+  const actions = document.createElement("div")
+  actions.className = "review-card-actions"
+  if (item.kind === "comment") {
+    actions.append(actionButton("Resolve", "btn btn-primary btn-small", () => applyReviewItemAction(item, "resolve")))
+  } else {
+    actions.append(
+      actionButton("Accept", "btn btn-primary btn-small", () => applyReviewItemAction(item, "accept")),
+      actionButton("Reject", "btn btn-small", () => applyReviewItemAction(item, "reject"))
+    )
+  }
+  row.append(actions)
+
+  row.addEventListener("click", (event) => {
+    if ((event.target as HTMLElement).closest("button")) return
+    selectReviewItem(item.id)
+    revealReviewItem(item)
+  })
+  row.addEventListener("focus", () => selectReviewItem(item.id, false))
+  return row
+}
+
+function actionButton(label: string, className: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement("button")
+  button.type = "button"
+  button.className = className
+  button.textContent = label
+  button.addEventListener("click", (event) => { event.stopPropagation(); onClick() })
+  return button
+}
+
+/** `main.typ · line 12` — where the item is, in the writer's terms. */
+function reviewLocation(item: ReviewItem): string {
+  const path = state.selected?.document.path ?? ""
+  const line = editor.state.doc.lineAt(Math.min(item.from, editor.state.doc.length)).number
+  return path === "" ? `line ${line}` : `${path} · line ${line}`
+}
+
+/** Moves the queue's roving selection, optionally moving DOM focus with it. */
+function selectReviewItem(id: string, focus = true): void {
+  activeReviewId = id
+  const queue = el<HTMLElement>("#review-queue")
+  if (!queue) return
+  for (const row of queue.querySelectorAll<HTMLElement>(".review-card")) {
+    const isActive = row.dataset.reviewId === id
+    row.setAttribute("aria-selected", String(isActive))
+    row.tabIndex = isActive ? 0 : -1
+    if (isActive && focus) {
+      row.focus()
+      row.scrollIntoView({ block: "nearest" })
+    }
+  }
+}
+
+/**
+ * Queue keyboard triage. Bound to the listbox, never to the document, so the
+ * single-letter shortcuts cannot reach the editor.
+ */
+function handleQueueKey(event: KeyboardEvent, items: readonly ReviewItem[]): void {
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  const index = items.findIndex((item) => item.id === activeReviewId)
+  const item = items[index]
+  const move = (delta: number): void => {
+    if (items.length === 0) return
+    const next = items[(index + delta + items.length) % items.length]
+    if (next) selectReviewItem(next.id)
+  }
+  switch (event.key) {
+    case "ArrowDown": event.preventDefault(); move(1); break
+    case "ArrowUp": event.preventDefault(); move(-1); break
+    case "Home": event.preventDefault(); if (items[0]) selectReviewItem(items[0].id); break
+    case "End": event.preventDefault(); { const last = items.at(-1); if (last) selectReviewItem(last.id) } break
+    case "Enter": event.preventDefault(); if (item) revealReviewItem(item); break
+    case "a": case "A":
+      event.preventDefault()
+      if (item?.kind === "suggestion") applyReviewItemAction(item, "accept")
+      break
+    case "r": case "R":
+      event.preventDefault()
+      if (item?.kind === "suggestion") applyReviewItemAction(item, "reject")
+      break
+    case "c": case "C":
+      event.preventDefault()
+      if (item?.kind === "comment") applyReviewItemAction(item, "resolve")
+      else addCommentAtSelection()
+      break
+    case "Escape": event.preventDefault(); editor.focus(); break
+    default: break
+  }
+}
+
+/** Adds a comment on the current selection (or at the cursor). */
+function addCommentAtSelection(): void {
+  const selection = editor.state.selection.main
+  const hasSelection = selection.from !== selection.to
+  promptInPanel(
+    "Review",
+    hasSelection ? "Comment on the selected text" : "Comment here",
+    "Your comment",
+    (commentBody) => {
+      const fromCursor = createCursorAt(activeLoro, selection.from)
+      const toCursor = selection.to > selection.from ? createCursorAt(activeLoro, selection.to) : fromCursor
+      state.review = reviewReducer(state.review, {
+        type: "add",
+        item: {
+          id: crypto.randomUUID(),
+          kind: "comment",
+          from: selection.from,
+          to: selection.to,
+          fromCursor,
+          toCursor,
+          body: commentBody,
+          author: currentUserDisplayName(),
+          status: "open",
+          createdAt: Date.now()
+        }
+      })
       editor.dispatch({ effects: setReviewItems.of(state.review.items) })
       renderReviewBanner()
-      renderReviewSidebar()
+      renderReviewDock()
       persistReview()
-    }, { placeholder: "Comment text" })
-  })
-  // Per-card actions reuse applyReviewItemAction (same authoritative path as the
-  // popover/dialog), then re-render this sidebar to reflect the new open set.
-  for (const button of host.querySelectorAll<HTMLButtonElement>("[data-accept], [data-reject], [data-resolve]")) {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation()
-      const id = button.dataset.id
-      const item = state.review.items.find((it) => it.id === id)
-      if (!id || !item) return
-      const type = button.dataset.resolve !== undefined
-        ? "resolve" as const
-        : button.dataset.accept !== undefined
-          ? "accept" as const
-          : "reject" as const
-      applyReviewItemAction(item, type)
-    })
-  }
-  // Clicking the card body (not its buttons) scrolls the editor to the item's
-  // anchor and opens the inline popover, matching the dialog row behaviour.
-  for (const card of host.querySelectorAll<HTMLElement>(".review-card")) {
-    // Cards jump to the editor anchor on click; make them keyboard-reachable
-    // (a11y: they were mouse-only).
-    card.tabIndex = 0
-    card.setAttribute("role", "button")
-    card.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).closest("button")) return
-      const id = card.dataset.reviewId
-      const item = state.review.items.find((it) => it.id === id)
-      if (item) revealReviewItem(item)
-    })
-    card.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return
-      if ((event.target as HTMLElement).closest("button")) return
-      event.preventDefault()
-      const id = card.dataset.reviewId
-      const item = state.review.items.find((it) => it.id === id)
-      if (item) revealReviewItem(item)
-    })
-  }
-  el("#sidebar-accept-all")?.addEventListener("click", () => {
-    state.review = reviewReducer(state.review, { type: "bulk-accept", ids: openSuggestions.map((item) => item.id), by: currentUserDisplayName(), at: Date.now() })
-    editor.dispatch({ effects: setReviewItems.of(state.review.items) })
-    renderReviewBanner()
-    renderReviewSidebar()
-    persistReview()
-  })
-  el("#sidebar-reject-all")?.addEventListener("click", () => {
-    // One authoritative transaction for all rejects (see openReview's reject-all
-    // comment): without it the removal of each insert would re-track as deletes.
-    const changes: { from: number; to?: number; insert?: string }[] = []
-    for (const item of openSuggestions) {
-      if (item.change === "delete" && item.text) {
-        // HIGH #6: Clamp the restore position to the current doc length (the same
-        // guard the single-item reject path uses) so a stale offset can't throw a
-        // RangeError.
-        changes.push({ from: Math.min(item.from, editor.state.doc.length), insert: item.text })
-      } else if (item.change === "insert") {
-        // HIGH #6: Validate the range just like the single-item path: only remove
-        // the suggested text if it still matches what is in the doc (clamped to doc
-        // length). A stale or since-edited range is silently skipped so we never
-        // corrupt surrounding text at a stale offset.
-        const from = item.from
-        const to = Math.min(item.to, editor.state.doc.length)
-        if (editor.state.doc.sliceString(from, to) === item.text) {
-          changes.push({ from, to, insert: "" })
-        }
-      }
+      if (dockTool !== "review") openReviewDock()
+    },
+    { placeholder: "What should change, and why?" }
+  )
+}
+
+function acceptAllSuggestions(openSuggestions: readonly Extract<ReviewItem, { kind: "suggestion" }>[]): void {
+  state.review = reviewReducer(state.review, { type: "bulk-accept", ids: openSuggestions.map((item) => item.id), by: currentUserDisplayName(), at: Date.now() })
+  editor.dispatch({ effects: setReviewItems.of(state.review.items) })
+  renderReviewBanner()
+  renderReviewDock()
+  persistReview()
+}
+
+function rejectAllSuggestions(openSuggestions: readonly Extract<ReviewItem, { kind: "suggestion" }>[]): void {
+  // One authoritative transaction for all rejects: without it the removal of each
+  // insert would be re-tracked as a new delete suggestion, and "reject all" would
+  // churn forever.
+  const changes: { from: number; to?: number; insert?: string }[] = []
+  for (const item of openSuggestions) {
+    if (item.change === "delete" && item.text) {
+      // Clamp the restore position to the current doc length so a stale offset
+      // cannot throw a RangeError.
+      changes.push({ from: Math.min(item.from, editor.state.doc.length), insert: item.text })
+    } else if (item.change === "insert") {
+      // Only remove the suggested text if it still matches what is in the doc; a
+      // since-edited range is skipped rather than corrupting surrounding text.
+      const from = item.from
+      const to = Math.min(item.to, editor.state.doc.length)
+      if (editor.state.doc.sliceString(from, to) === item.text) changes.push({ from, to, insert: "" })
     }
-    // HIGH #6: Sort ascending by `from` — CodeMirror requires the change array in a
-    // single transaction to be ordered (and non-overlapping) so each change maps to
-    // the correct original-document offset.
-    changes.sort((a, b) => a.from - b.from)
-    resolvingSuggestions = true
-    try {
-      if (changes.length > 0) editor.dispatch({ annotations: resolveAnnotation.of(true), changes })
-    } finally {
-      resolvingSuggestions = false
-    }
-    state.review = reviewReducer(state.review, { type: "bulk-reject", ids: openSuggestions.map((item) => item.id), by: currentUserDisplayName(), at: Date.now() })
-    editor.dispatch({ effects: setReviewItems.of(state.review.items) })
-    renderReviewBanner()
-    renderReviewSidebar()
-    persistReview()
-  })
+  }
+  // CodeMirror requires the change array in a single transaction to be ordered
+  // and non-overlapping, so each change maps to the right original offset.
+  changes.sort((a, b) => a.from - b.from)
+  resolvingSuggestions = true
+  try {
+    if (changes.length > 0) editor.dispatch({ annotations: resolveAnnotation.of(true), changes })
+  } finally {
+    resolvingSuggestions = false
+  }
+  state.review = reviewReducer(state.review, { type: "bulk-reject", ids: openSuggestions.map((item) => item.id), by: currentUserDisplayName(), at: Date.now() })
+  editor.dispatch({ effects: setReviewItems.of(state.review.items) })
+  renderReviewBanner()
+  renderReviewDock()
+  persistReview()
+}
+
+/** Kept under its old name for the many call sites that fire after a mutation. */
+function renderReviewSidebar(): void {
+  renderReviewDock()
 }
 
 /**
- * Sidebar thread card markup. Mirrors the popover's visual language (amber chip
- * for comments, green/red for insert/delete) so a card is recognisable at a
- * glance against the inline mark it corresponds to.
- */
-function renderSidebarCard(item: ReviewItem): string {
-  const anchor = item.orphaned ? `<span class="review-card-orphan">anchor lost</span>` : ""
-  // Avatar (initials on the author's colour) + name + relative timestamp, shared by
-  // comment and suggestion cards so every card shows who said it and when at a glance.
-  const authorLine = `<span class="review-avatar" style="--hue:${authorHue(item.author)}" aria-hidden="true">${escapeHtml(authorInitials(item.author))}</span><span class="review-card-author">${escapeHtml(item.author)} <span class="review-card-time">${escapeHtml(timeAgo(item.createdAt))}</span></span>`
-  if (item.kind === "comment") {
-    return `<li class="review-card review-card-comment" data-review-id="${escapeHtml(item.id)}" title="Click to jump to this comment in the editor">
-      <div class="review-card-head"><span class="review-chip review-chip-comment">Comment</span>${authorLine}${anchor}</div>
-      <p class="review-card-text">${escapeHtml(item.body)}</p>
-      <div class="review-card-actions"><button class="primary-button" data-resolve data-id="${escapeHtml(item.id)}">Resolve</button></div>
-    </li>`
-  }
-  const chip = item.change === "insert" ? "Insert" : "Delete"
-  const chipClass = item.change === "insert" ? "review-chip-insert" : "review-chip-delete"
-  const snippet = item.text !== undefined ? `<p class="review-card-text">“${escapeHtml(item.text.length > 200 ? `${item.text.slice(0, 200)}…` : item.text)}”</p>` : ""
-  const note = item.change === "delete" ? `<p class="review-card-note">Text already removed · Reject restores it</p>` : ""
-  return `<li class="review-card review-card-suggestion" data-review-id="${escapeHtml(item.id)}" title="Click to jump to this suggestion in the editor">
-    <div class="review-card-head"><span class="review-chip ${chipClass}">${chip}</span>${authorLine}${anchor}</div>
-    ${snippet}${note}
-    <div class="review-card-actions"><button class="primary-button" data-accept data-id="${escapeHtml(item.id)}">Accept</button> <button class="toolbar-button" data-reject data-id="${escapeHtml(item.id)}">Reject</button></div>
-  </li>`
-}
-
-/**
- * Docks/undocks the review sidebar and re-applies the grid so the 4th column +
- * gutter appear/disappear. Toggling closed does not touch review state.
- */
-/**
- * Floating "Add comment" button that appears at the end of a text selection when
- * the review sidebar is open — like Overleaf's selection-comment affordance.
+ * Floating "Comment" affordance at the end of a text selection — the Google Docs
+ * gesture, and the one people reach for before they find any panel. It appears
+ * whenever text is selected in a document the user may comment on.
  */
 let selectionCommentButton: HTMLButtonElement | undefined
 function updateSelectionCommentButton(view: EditorView): void {
-  const sel = view.state.selection.main
-  const hasSelection = sel.from !== sel.to
-  if (!hasSelection || !reviewPaneVisible) {
+  const selection = view.state.selection.main
+  const hasSelection = selection.from !== selection.to
+  if (!hasSelection || !state.document || state.role === "read-only") {
     selectionCommentButton?.remove()
     selectionCommentButton = undefined
     return
   }
-  // Position the button at the end of the selection.
-  const coords = view.coordsAtPos(sel.to)
-  if (!coords) { selectionCommentButton?.remove(); selectionCommentButton = undefined; return }
+  const coords = view.coordsAtPos(selection.to)
+  if (!coords) {
+    selectionCommentButton?.remove()
+    selectionCommentButton = undefined
+    return
+  }
   if (!selectionCommentButton) {
     selectionCommentButton = document.createElement("button")
     selectionCommentButton.className = "selection-comment-button"
     selectionCommentButton.type = "button"
-    selectionCommentButton.textContent = "💬 Comment"
+    selectionCommentButton.textContent = "Comment"
     selectionCommentButton.addEventListener("click", () => {
-      const s = editor.state.selection.main
-      promptInPanel("Reviewer suggesting mode", "Comment on selection", "Comment text", (commentBody) => {
-        const fromCursor = createCursorAt(activeLoro, s.from)
-        const toCursor = s.to > s.from ? createCursorAt(activeLoro, s.to) : fromCursor
-        state.review = reviewReducer(state.review, { type: "add", item: { id: crypto.randomUUID(), kind: "comment", from: s.from, to: s.to, fromCursor, toCursor, body: commentBody, author: currentUserDisplayName(), status: "open", createdAt: Date.now() } })
-        editor.dispatch({ effects: setReviewItems.of(state.review.items) })
-        renderReviewBanner()
-        renderReviewSidebar()
-        persistReview()
-      }, { placeholder: "Comment text" })
+      addCommentAtSelection()
       selectionCommentButton?.remove()
       selectionCommentButton = undefined
     })
   }
   selectionCommentButton.style.left = `${coords.right + 6}px`
-  selectionCommentButton.style.top = `${coords.top - 4}px`
+  selectionCommentButton.style.top = `${coords.top - 6}px`
   if (!selectionCommentButton.isConnected) document.body.append(selectionCommentButton)
 }
 
-function toggleReviewSidebar(): void {
-  reviewPaneVisible = !reviewPaneVisible
-  const reviewButton = el<HTMLButtonElement>("#review-button")
-  if (reviewButton) reviewButton.setAttribute("aria-pressed", String(reviewPaneVisible))
+/** Opens the review queue in the dock. */
+function openReviewDock(): void {
+  dockTool = "review"
+  makeRoomForDock()
+  setText("#dock-title", "Review")
   applyWorkspaceGrid()
-  if (reviewPaneVisible) {
-    renderReviewSidebar()
-  } else {
-    // Remove the floating selection-comment button: it checks reviewPaneVisible
-    // on the next editor update, but until then it would linger on screen with
-    // no sidebar to receive the comment.
-    selectionCommentButton?.remove()
-    selectionCommentButton = undefined
-  }
+  syncDockButtons()
+  renderReviewDock()
+  // Move focus into the queue so keyboard triage starts immediately.
+  requestAnimationFrame(() => el<HTMLElement>("#review-queue")?.querySelector<HTMLElement>('.review-card[aria-selected="true"]')?.focus())
+}
+
+function toggleReviewSidebar(): void {
+  toggleDock("review", openReviewDock)
 }
 
 // ---------------------------------------------------------------------------
@@ -3246,14 +3878,19 @@ function clearPreview(): void {
   const viewer = el<HTMLElement>("#pdf-viewer")
   viewer?.replaceChildren()
   viewer?.classList.add("empty-preview")
-  viewer?.append(makeEmptyPreviewNode("No preview yet", "Select a document and compile it to see the rendered PDF."))
+  viewer?.append(makeEmptyPreviewNode("Nothing to show yet", "Choose Update preview to render the pages."))
   el<HTMLElement>("#pdf-zoom-controls")?.setAttribute("hidden", "")
+  setText("#page-position", "")
 }
 
 function makeEmptyPreviewNode(title: string, body: string): HTMLElement {
   const node = document.createElement("div")
-  node.className = "empty-state"
-  node.innerHTML = `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(body)}</p>`
+  node.className = "pane-empty"
+  const heading = document.createElement("h2")
+  heading.textContent = title
+  const text = document.createElement("p")
+  text.textContent = body
+  node.append(heading, text)
   return node
 }
 
@@ -3262,55 +3899,284 @@ function showPreviewFailure(message: string): void {
   if (!viewer) return
   viewer.replaceChildren()
   viewer.classList.add("empty-preview")
-  viewer.append(makeEmptyPreviewNode("Compile failed", message))
+  viewer.append(makeEmptyPreviewNode("The preview could not be built", message))
   el<HTMLElement>("#pdf-zoom-controls")?.setAttribute("hidden", "")
+  setText("#page-position", "")
+}
+
+// ---------------------------------------------------------------------------
+// The view switch: which version of the document the preview renders
+//
+// These are projections computed server-side (crates/nisaba-core): baseline
+// rejects every pending change, proposed accepts every one, redline renders the
+// text with change markers, and public is proposed minus redacted spans. The
+// labels are the writer's words for exactly those things (docs/ui-design.md §1).
+// ---------------------------------------------------------------------------
+
+const VIEW_LABELS: Record<CompileView, string> = {
+  proposed: "Final",
+  baseline: "Original",
+  redline: "All markup",
+  public: "Public copy"
+}
+
+const VIEW_HINTS: Record<CompileView, string> = {
+  proposed: "Every suggested change applied — what the document becomes",
+  baseline: "No suggested changes applied — the last agreed text",
+  redline: "The text with insertions and deletions marked",
+  public: "Final, with redacted passages removed"
+}
+
+const VIEW_ORDER: readonly CompileView[] = ["proposed", "baseline", "redline", "public"]
+
+function renderViewSwitch(): void {
+  const host = el<HTMLElement>("#view-switch")
+  if (!host) return
+  host.replaceChildren(...VIEW_ORDER.map((view) => {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.dataset.view = view
+    button.textContent = VIEW_LABELS[view]
+    button.title = VIEW_HINTS[view]
+    button.setAttribute("aria-pressed", String(state.view === view))
+    button.addEventListener("click", () => {
+      if (state.view === view) return
+      state.view = view
+      renderViewSwitch()
+      // Asking for a view means asking to see it: recompile now. A compile already
+      // in flight queues this one via pendingCompile, so the choice is never lost.
+      if (state.document) compileCurrent()
+    })
+    return button
+  }))
+}
+
+// ---------------------------------------------------------------------------
+// Build drawer: problems and log
+//
+// Errors used to be a list wedged above the PDF, stealing preview height on every
+// failure and putting source-line errors as far from the source as the layout
+// allows. They now live in a drawer that opens itself when a build fails, with
+// the chronological build log beside them.
+// ---------------------------------------------------------------------------
+
+type DrawerTab = "problems" | "log"
+
+let drawerTab: DrawerTab = "problems"
+let drawerOpen = false
+
+interface BuildLogEntry {
+  readonly at: number
+  readonly level: "ok" | "warn" | "err" | "info"
+  readonly text: string
+}
+
+const buildLog: BuildLogEntry[] = []
+const MAX_LOG_ENTRIES = 60
+
+function logBuild(level: BuildLogEntry["level"], text: string): void {
+  buildLog.unshift({ at: Date.now(), level, text })
+  if (buildLog.length > MAX_LOG_ENTRIES) buildLog.length = MAX_LOG_ENTRIES
+  renderBuildLog()
+}
+
+function renderBuildLog(): void {
+  const host = el<HTMLElement>("#build-log")
+  if (!host) return
+  if (buildLog.length === 0) {
+    host.innerHTML = `<p class="log-empty">Nothing built yet in this session.</p>`
+    return
+  }
+  host.replaceChildren(...buildLog.map((entry) => {
+    const line = document.createElement("div")
+    line.className = "log-line"
+    const time = document.createElement("span")
+    time.className = "t"
+    time.textContent = new Date(entry.at).toLocaleTimeString()
+    const level = document.createElement("span")
+    level.className = `k k-${entry.level}`
+    level.textContent = entry.level
+    const text = document.createElement("span")
+    text.textContent = entry.text
+    line.append(time, level, text)
+    return line
+  }))
+}
+
+function setDrawerOpen(open: boolean, tab?: DrawerTab): void {
+  drawerOpen = open
+  if (tab) drawerTab = tab
+  const drawer = el<HTMLElement>("#build-drawer")
+  if (drawer) drawer.hidden = !open
+  const problems = el<HTMLElement>("#diagnostics-list")
+  const log = el<HTMLElement>("#build-log")
+  if (problems) problems.hidden = drawerTab !== "problems"
+  if (log) log.hidden = drawerTab !== "log"
+  el<HTMLElement>("#drawer-tab-problems")?.setAttribute("aria-selected", String(drawerTab === "problems"))
+  el<HTMLElement>("#drawer-tab-log")?.setAttribute("aria-selected", String(drawerTab === "log"))
 }
 
 /**
- * Renders the diagnostics list and applies the editor underline decorations.
- * Each diagnostic is clickable: it scrolls to its source line and selects the
- * underlined range so the location is obvious even without a gutter.
+ * Renders the problems list, the counts on the tab and the status bar, and the
+ * editor's underline decorations. Each problem is clickable: it selects the
+ * offending span in the source, which is the only thing anyone wants to do with
+ * a compile error.
  */
 function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
   state.diagnostics = diagnostics
   editor.dispatch({ effects: setDiagnostics.of(diagnostics) })
   const host = el<HTMLElement>("#diagnostics-list")
+  const errors = diagnostics.filter((item) => item.severity !== "warning").length
+  const warnings = diagnostics.length - errors
+  const countNode = el<HTMLElement>("#problem-count")
+  if (countNode) {
+    countNode.textContent = String(diagnostics.length)
+    if (errors > 0) countNode.dataset.tone = "error"
+    else if (warnings > 0) countNode.dataset.tone = "warn"
+    else delete countNode.dataset.tone
+  }
   if (!host) return
   if (diagnostics.length === 0) {
-    host.hidden = true
-    host.replaceChildren()
+    host.innerHTML = `<p class="log-empty">No problems.</p>`
+    // A clean build has nothing to say: close the drawer unless the writer pinned
+    // it open on the log tab.
+    if (drawerOpen && drawerTab === "problems") setDrawerOpen(false)
     return
   }
   const entry = state.selected ? state.selected.document.path : ""
-  const errors = diagnostics.filter((item) => item.severity !== "warning").length
-  const warnings = diagnostics.length - errors
-  host.hidden = false
-  host.innerHTML = `<h3>${errors} error${errors === 1 ? "" : "s"} · ${warnings} warning${warnings === 1 ? "" : "s"}</h3>` +
-    diagnostics.map((item, index) => {
-      const sev = item.severity === "warning" ? "warning" : "error"
-      const loc = locationLabel(item, entry)
-      return `<div class="diagnostic-item" data-diag="${index}"><span class="diag-sev diag-sev-${sev}">${escapeHtml(sev)}</span><div><div>${escapeHtml(item.message)}</div>${loc ? `<div class="diag-loc">${escapeHtml(loc)}</div>` : ""}</div></div>`
-    }).join("")
-  for (const node of host.querySelectorAll<HTMLElement>("[data-diag]")) {
-    node.addEventListener("click", () => {
-      const diag = state.diagnostics[Number(node.dataset.diag)]
-      if (!diag) return
+  host.replaceChildren(...diagnostics.map((item, index) => {
+    const severity = item.severity === "warning" ? "warning" : "error"
+    const row = document.createElement("button")
+    row.type = "button"
+    row.className = "problem"
+    row.dataset.diag = String(index)
+    const badge = document.createElement("span")
+    badge.className = `sev sev-${severity}`
+    badge.textContent = severity
+    const body = document.createElement("div")
+    const message = document.createElement("div")
+    message.textContent = item.message
+    body.append(message)
+    const location = locationLabel(item, entry)
+    if (location !== "") {
+      const loc = document.createElement("div")
+      loc.className = "loc"
+      loc.textContent = location
+      body.append(loc)
+    }
+    row.append(badge, body)
+    row.addEventListener("click", () => {
       const length = editor.state.doc.length
-      const from = Math.min(diag.start ?? 0, length)
-      const to = Math.min(diag.end ?? from, length)
-      // A zero-width selection at the offset still scrolls it into view; a real
-      // range additionally highlights the underlined span.
+      const from = Math.min(item.start ?? 0, length)
+      const to = Math.min(item.end ?? from, length)
+      // A zero-width selection still scrolls the spot into view; a real range also
+      // highlights the underlined span.
       editor.dispatch({ selection: { anchor: from, head: Math.max(to, from) }, scrollIntoView: true })
       editor.focus()
     })
+    return row
+  }))
+}
+
+/** `main.typ · line 12` — the writer's coordinates, not a character offset. */
+function locationLabel(item: CompileDiagnostic, entry: string): string {
+  const file = item.path ?? entry
+  if (item.start === null || item.start === undefined) return file
+  const line = editor.state.doc.lineAt(Math.min(item.start, editor.state.doc.length)).number
+  return file === "" ? `line ${line}` : `${file} · line ${line}`
+}
+
+/**
+ * The build cell in the status bar: the one-glance answer to "is the preview
+ * good?". Clicking it opens the drawer at the tab that explains the answer.
+ */
+function renderBuildHealth(): void {
+  const cell = el<HTMLButtonElement>("#build-health")
+  if (!cell) return
+  const errors = state.diagnostics.filter((item) => item.severity !== "warning").length
+  const warnings = state.diagnostics.length - errors
+  cell.replaceChildren()
+  const mark = document.createElement("span")
+  if (errors > 0) {
+    mark.className = "status-error"
+    mark.textContent = `${errors} problem${errors === 1 ? "" : "s"}`
+    cell.title = "Open the problems panel"
+  } else if (lastBuild === undefined) {
+    mark.textContent = "No preview yet"
+    cell.title = "Choose Update preview to build the pages"
+  } else {
+    mark.className = warnings > 0 ? "status-warn" : "status-ok"
+    const pages = lastBuild.pages === undefined ? "" : ` · ${lastBuild.pages} page${lastBuild.pages === 1 ? "" : "s"}`
+    mark.textContent = warnings > 0
+      ? `${warnings} warning${warnings === 1 ? "" : "s"}${pages}`
+      : `Preview up to date${pages}`
+    cell.title = "Open the build log"
+  }
+  cell.append(mark)
+}
+
+/**
+ * "Page 3 of 12" on the preview bar, derived from the scroll position: the page
+ * whose top edge is nearest the top of the viewport is the one being read.
+ */
+function renderPagePosition(): void {
+  const viewer = el<HTMLElement>("#pdf-viewer")
+  const label = el<HTMLElement>("#page-position")
+  if (!viewer || !label) return
+  const total = pdfViewer.pageCount
+  if (total === 0) { label.textContent = ""; return }
+  const pages = viewer.querySelectorAll<HTMLElement>(".pdf-page")
+  let current = 1
+  let best = Number.POSITIVE_INFINITY
+  const top = viewer.getBoundingClientRect().top
+  for (const page of pages) {
+    const distance = Math.abs(page.getBoundingClientRect().top - top)
+    if (distance < best) {
+      best = distance
+      current = Number(page.dataset.page) || current
+    }
+  }
+  label.textContent = `page ${current} of ${total}`
+}
+
+/** Keeps the compile button honest about what it is doing right now. */
+function setCompileButtonBusy(busy: boolean): void {
+  const button = el<HTMLButtonElement>("#compile-button")
+  if (!button) return
+  button.disabled = busy
+  button.replaceChildren()
+  button.append(busy ? "Building…" : "Update preview")
+  if (!busy) {
+    const key = document.createElement("kbd")
+    key.textContent = "⌘↵"
+    button.append(" ", key)
   }
 }
 
-function locationLabel(item: CompileDiagnostic, entry: string): string {
-  const file = item.path ?? entry
-  if (item.start === null || item.start === undefined) return file ? escapeHtml(file) : ""
-  const line = editor.state.doc.lineAt(Math.min(item.start, editor.state.doc.length)).number
-  return `${escapeHtml(file)}:${line}`
+/** What the current preview was built from — shown on the preview bar. */
+interface BuildSummary {
+  readonly buildId: string
+  readonly at: number
+  readonly ms: number
+  pages?: number
+}
+
+let lastBuild: BuildSummary | undefined
+
+function renderBuildLabel(): void {
+  const label = el<HTMLElement>("#build-label")
+  if (!label) return
+  if (lastBuild === undefined) {
+    label.textContent = "No preview yet"
+    label.title = ""
+    return
+  }
+  label.textContent = `${VIEW_LABELS[state.view]} · built ${timeAgo(lastBuild.at)}`
+  // Provenance is a first-class fact in Nisaba, but the build id is expert
+  // metadata: it belongs in the tooltip and the log, not in the writer's line.
+  label.title = lastBuild.ms > 0
+    ? `Build ${lastBuild.buildId} · ${(lastBuild.ms / 1000).toFixed(2)} s`
+    : `Build ${lastBuild.buildId}`
 }
 
 let compiling = false
@@ -3320,7 +4186,7 @@ let compiling = false
 let pendingCompile = false
 function compileCurrent(): void {
   const { project, selected } = state
-  if (!project || !selected) { setText("#build-label", "Select a document first"); return }
+  if (!project || !selected) { status("Open a document first"); return }
   // Re-entrancy guard: a slow earlier build must not be superseded by a later
   // one's result landing out of order, and double-clicks shouldn't fan out two
   // concurrent server builds. If a compile is in flight, queue this one so the
@@ -3332,8 +4198,9 @@ function compileCurrent(): void {
   // user has switched documents while the compile was in flight — otherwise the
   // old document's diagnostics/PDF are applied to the new document's editor/preview.
   const documentId = selected.document.id
-  setText("#compile-button", "Compiling…")
-  setText("#build-label", "Compiling…")
+  setCompileButtonBusy(true)
+  setText("#build-label", "Building…")
+  const startedAt = Date.now()
   // Clear the previous result on EVERY attempt so a failing compile can never
   // leave a stale PDF (or stale kept pages) on the canvas — the pane must reflect
   // the source being compiled, not the last successful build. Revoking the blob
@@ -3368,15 +4235,16 @@ function compileCurrent(): void {
       mode: "document",
       view: state.view
     }).pipe(
-      Effect.tap(() => Effect.sync(() => { compiling = false; setText("#compile-button", "Compile"); drainPendingCompile() })),
-      Effect.tapError(() => Effect.sync(() => { compiling = false; setText("#compile-button", "Compile"); drainPendingCompile() }))
+      Effect.tap(() => Effect.sync(() => { compiling = false; setCompileButtonBusy(false); drainPendingCompile() })),
+      Effect.tapError(() => Effect.sync(() => { compiling = false; setCompileButtonBusy(false); drainPendingCompile() }))
     ),
     (result) => {
       // Document-switch guard: discard the result if the user has moved to a
       // different document while this compile was in flight.
       if (state.selected?.document.id !== documentId) return
-      setText("#build-label", `Build ${result.build_id}`)
       const diagnostics = result.diagnostics as readonly CompileDiagnostic[]
+      lastBuild = { buildId: result.build_id, at: Date.now(), ms: Date.now() - startedAt }
+      renderBuildLabel()
       renderDiagnostics(diagnostics)
       // The PDF only matches the source when the build is clean; a build with
       // errors (or no PDF) is shown as an empty/failure state, never the stale
@@ -3390,16 +4258,31 @@ function compileCurrent(): void {
           el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
           updateZoomLabel()
           el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
-          void pdfViewer.load(url).catch((error: unknown) => {
+          void pdfViewer.load(url).then(() => {
+            if (lastBuild) lastBuild.pages = pdfViewer.pageCount
+            renderPagePosition()
+            renderBuildHealth()
+          }).catch((error: unknown) => {
             console.error("PDF render failed", error)
-            showPreviewFailure(error instanceof Error ? error.message : "The PDF could not be rendered.")
+            showPreviewFailure(error instanceof Error ? error.message : "The pages could not be rendered.")
           })
         }
       } else {
-        showPreviewFailure(diagnostics.length > 0 ? "See diagnostics for details." : "The compile produced no PDF.")
+        showPreviewFailure(diagnostics.length > 0 ? "Fix the problems listed below and try again." : "The build produced no pages.")
       }
       const errors = diagnostics.filter((item) => item.severity !== "warning").length
-      status(errors > 0 ? `Compile failed with ${errors} error${errors === 1 ? "" : "s"}` : diagnostics.length > 0 ? `Compiled with ${diagnostics.length} warning${diagnostics.length === 1 ? "" : "s"}` : "Compiled")
+      const warnings = diagnostics.length - errors
+      // The drawer opens itself when a build fails: the writer needs the reason,
+      // and the reason is one click away from the line that caused it.
+      if (errors > 0) setDrawerOpen(true, "problems")
+      renderBuildHealth()
+      logBuild(
+        errors > 0 ? "err" : warnings > 0 ? "warn" : "ok",
+        `build ${result.build_id} — ${VIEW_LABELS[state.view].toLowerCase()} · ${((Date.now() - startedAt) / 1000).toFixed(2)} s${errors > 0 ? ` · ${errors} problem${errors === 1 ? "" : "s"}` : warnings > 0 ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : ""}`
+      )
+      status(errors > 0
+        ? `${errors} problem${errors === 1 ? "" : "s"} stopped the preview`
+        : warnings > 0 ? `Preview updated with ${warnings} warning${warnings === 1 ? "" : "s"}` : "Preview updated")
     },
     (error: unknown) => {
       // Document-switch guard: don't clobber the new document's preview with the
@@ -3407,8 +4290,11 @@ function compileCurrent(): void {
       if (state.selected?.document.id !== documentId) return
       // A thrown/transport error leaves the pane empty with the reason rather
       // than the last good PDF.
-      showPreviewFailure(error instanceof Error ? error.message : "The compile request failed")
-      status(error instanceof Error ? error.message : "The compile request failed")
+      const message = error instanceof Error ? error.message : "The preview could not be built"
+      showPreviewFailure(message)
+      logBuild("err", message)
+      renderBuildHealth()
+      status(message)
     }
   )
 }
@@ -3479,11 +4365,20 @@ function compileForDiagnostics(): void {
           el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
           updateZoomLabel()
           el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
-          void pdfViewer.load(url).catch((error: unknown) => {
+          lastBuild = { buildId: result.build_id, at: Date.now(), ms: 0 }
+          renderBuildLabel()
+          void pdfViewer.load(url).then(() => {
+            if (lastBuild) lastBuild.pages = pdfViewer.pageCount
+            renderPagePosition()
+            renderBuildHealth()
+          }).catch((error: unknown) => {
             console.error("PDF render failed", error)
           })
         }
       }
+      // The status bar must reflect what the background build just found, or a
+      // typo silently introduces problems the writer is never told about.
+      renderBuildHealth()
     },
     // A failed background compile is not surfaced as a preview failure (that
     // would clobber the last good PDF); the next manual compile reports it.
@@ -3562,61 +4457,140 @@ function completeSignIn(): Promise<void> {
 // Wiring
 // ---------------------------------------------------------------------------
 
-el("#new-project")?.addEventListener("click", () => {
-  // Context-aware: inside a project → add document; at the project list → create project.
-  if (state.project) addDocument()
-  else createProject()
-})
-el("#references-button")?.addEventListener("click", openReferences)
-el("#history-button")?.addEventListener("click", openHistory)
-el("#share-button")?.addEventListener("click", openShare)
-el("#export-button")?.addEventListener("click", openExport)
-// The Review button now toggles the docked sidebar (Overleaf-style) rather than
-// opening the modal overview. `openReview()` stays as a fallback for callers that
-// still want the modal (none in the shell today), but the button route is the
-// sidebar so review lives alongside the editor instead of over it.
+// Project-scope actions. Each toggles its dock: clicking the open one closes it,
+// which is what a person expects from a button that is visibly "on".
+el("#new-project")?.addEventListener("click", createProject)
+el("#add-document")?.addEventListener("click", addDocument)
+el("#add-demo")?.addEventListener("click", addDemoFile)
+el("#references-button")?.addEventListener("click", () => toggleDock("references", openReferences))
+el("#history-button")?.addEventListener("click", () => toggleDock("history", openHistory))
+el("#share-button")?.addEventListener("click", () => toggleDock("share", openShare))
+el("#export-button")?.addEventListener("click", () => toggleDock("export", openExport))
 el("#review-button")?.addEventListener("click", toggleReviewSidebar)
-el("#hide-review")?.addEventListener("click", toggleReviewSidebar)
+el("#dock-close")?.addEventListener("click", closeDock)
+el("#go-projects")?.addEventListener("click", () => { if (state.project) leaveProject() })
 el("#compile-button")?.addEventListener("click", compileCurrent)
-el("#suggesting-button")?.addEventListener("click", () => {
-  state.review = reviewReducer(state.review, { type: "toggle-suggesting" })
-  renderReviewBanner()
-  renderReviewSidebar()
-})
-// The toolbar toggle is the always-reachable copy of the banner toggle (see M1):
-// same behaviour, just not gated behind the hidden-on-clean-doc review banner.
-el("#toolbar-suggesting")?.addEventListener("click", () => {
-  state.review = reviewReducer(state.review, { type: "toggle-suggesting" })
-  renderReviewBanner()
-  renderReviewSidebar()
-})
-el<HTMLSelectElement>("#view-select")?.addEventListener("change", (event) => {
-  state.view = (event.target as HTMLSelectElement).value as CompileView
-  // Switching the projection view only changes the param sent on the NEXT compile,
-  // so without an explicit recompile the preview never reflects the new view. Treat
-  // the switch as the author asking to see that view: recompile immediately when a
-  // document is open. Skip while a compile is in flight (the button shows "Compiling…")
-  // so a view switch mid-compile does not stack a second concurrent request.
-  // Recompile on view switch if a document is open. If a compile is in flight,
-  // the pendingCompile flag in compileCurrent() queues this so the new view
-  // isn't lost (the old check used .includes("Compile") which matched
-  // "Compiling…" too, so the guard never fired).
-  if (state.document) compileCurrent()
+el("#suggesting-button")?.addEventListener("click", toggleSuggesting)
+el("#open-palette")?.addEventListener("click", () => palette.open())
+
+// Build drawer: the tabs, the close button, and the status-bar cell that opens it
+// at whichever tab explains the current state.
+for (const tab of document.querySelectorAll<HTMLElement>("[data-drawer-tab]")) {
+  tab.addEventListener("click", () => setDrawerOpen(true, tab.dataset.drawerTab === "log" ? "log" : "problems"))
+}
+el("#drawer-close")?.addEventListener("click", () => setDrawerOpen(false))
+el("#build-health")?.addEventListener("click", () => {
+  const hasProblems = state.diagnostics.length > 0
+  if (drawerOpen && ((hasProblems && drawerTab === "problems") || (!hasProblems && drawerTab === "log"))) setDrawerOpen(false)
+  else setDrawerOpen(true, hasProblems ? "problems" : "log")
 })
 
+// The preview bar's page readout follows the scroll position.
+el("#pdf-viewer")?.addEventListener("scroll", () => renderPagePosition(), { passive: true })
+
+// ---------------------------------------------------------------------------
+// Command palette
+//
+// Everything the interface can do is reachable here, which is what lets the
+// permanent chrome stay small. Candidates are rebuilt on every keystroke from
+// live state, so a file added a second ago is already findable.
+// ---------------------------------------------------------------------------
+
+const palette = createPalette((): readonly PaletteItem[] => {
+  const items: PaletteItem[] = []
+  for (const entry of state.outline) {
+    items.push({
+      id: `file:${entry.document.id}`,
+      group: "Files",
+      kind: "file",
+      label: entry.document.title,
+      hint: entry.document.path,
+      search: entry.document.path,
+      run: () => openDocument(entry)
+    })
+  }
+  for (const heading of currentHeadings) {
+    items.push({
+      id: `section:${heading.from}`,
+      group: "Sections",
+      kind: "§",
+      label: heading.title,
+      hint: `line ${editor.state.doc.lineAt(Math.min(heading.from, editor.state.doc.length)).number}`,
+      run: () => revealPosition(heading.from)
+    })
+  }
+  for (const reference of state.references) {
+    const authors = reference.metadata.authors.join(", ")
+    items.push({
+      id: `ref:${reference.id}`,
+      group: "References",
+      kind: "cite",
+      label: reference.metadata.title,
+      hint: [authors, reference.metadata.year].filter(Boolean).join(" · "),
+      search: `${authors} ${reference.metadata.doi ?? ""}`,
+      run: () => insertCitation(reference.id)
+    })
+  }
+  const command = (id: string, label: string, hint: string, runCommand: () => void): PaletteItem =>
+    ({ id: `cmd:${id}`, group: "Commands", kind: "run", label, hint, run: runCommand })
+  items.push(
+    command("compile", "Update preview", "⌘↵", compileCurrent),
+    command("review", "Review: comments and suggested changes", "⌘⇧R", toggleReviewSidebar),
+    command("track", `Track changes: turn ${state.review.suggesting ? "off" : "on"}`, "", toggleSuggesting),
+    command("comment", "Add a comment here", "", () => addCommentAtSelection()),
+    command("focus", focusMode ? "Leave focus mode" : "Focus mode: hide everything but the text", "⌘⇧F", toggleFocusMode),
+    command("sidebar", hiddenPanes.navigator ? "Show the sidebar" : "Hide the sidebar", "⌘B", () => togglePane("navigator")),
+    command("preview", hiddenPanes.preview ? "Show the preview" : "Hide the preview", "", () => togglePane("preview")),
+    command("problems", "Problems and build log", "", () => setDrawerOpen(!drawerOpen, state.diagnostics.length > 0 ? "problems" : "log")),
+    command("references", "References library", "", () => toggleDock("references", openReferences)),
+    command("history", "Earlier versions of this file", "", () => toggleDock("history", openHistory)),
+    command("share", "Share with people", "", () => toggleDock("share", openShare)),
+    command("export", "Export and download", "", () => toggleDock("export", openExport)),
+    command("newfile", "New file", "", addDocument),
+    command("projects", "All projects", "", leaveProject)
+  )
+  for (const view of VIEW_ORDER) {
+    items.push(command(`view:${view}`, `Preview: ${VIEW_LABELS[view]}`, VIEW_HINTS[view], () => {
+      state.view = view
+      renderViewSwitch()
+      renderBuildLabel()
+      if (state.document) compileCurrent()
+    }))
+  }
+  return items
+})
+
+/** Inserts a citation for a reference at the caret — the palette's cite action. */
+function insertCitation(referenceId: string): void {
+  const at = editor.state.selection.main.head
+  editor.dispatch({ changes: { from: at, insert: `#cite(<${referenceId}>)` }, selection: { anchor: at + referenceId.length + 9 } })
+  editor.focus()
+}
+
 document.addEventListener("keydown", (event) => {
-  // Skip all global shortcuts while a <dialog> is modal: keyboard events still
-  // bubble up to document even inside showModal()'s top layer, so Ctrl+Enter
-  // would fire compileCurrent() (or Ctrl+S would trigger a save) while the user
-  // is typing into a prompt. Letting the dialog handle its own keys is correct.
+  const modifier = event.metaKey || event.ctrlKey
+  // ⌘K reaches everything, including from inside a dialog-free overlay, so it is
+  // handled before the modal guard below.
+  if (modifier && event.key.toLowerCase() === "k") { event.preventDefault(); palette.open(); return }
+  // Skip the remaining global shortcuts while a <dialog> is modal: keyboard events
+  // still bubble to document inside showModal()'s top layer, so ⌘↵ would compile
+  // (or ⌘S save) while the user is typing into a prompt.
   if (el<HTMLDialogElement>("#workspace-panel")?.open) return
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); compileCurrent() }
-  // Ctrl/Cmd+S saves and then recompiles so the preview reflects the saved
-  // source immediately — the user expects Ctrl+S to produce a fresh build.
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); saveNow(); compileCurrent() }
-  // Ctrl/Cmd+= and Ctrl/Cmd+- zoom the PDF preview in and out.
-  if ((event.metaKey || event.ctrlKey) && (event.key === "=" || event.key === "+")) { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
-  if ((event.metaKey || event.ctrlKey) && event.key === "-") { event.preventDefault(); pdfViewer.zoomOut(); updateZoomLabel() }
+  if (modifier && event.key === "Enter") { event.preventDefault(); compileCurrent() }
+  // ⌘S saves and then updates the preview: a writer pressing save expects both.
+  if (modifier && !event.shiftKey && event.key.toLowerCase() === "s") { event.preventDefault(); saveNow(); compileCurrent() }
+  if (modifier && event.shiftKey && event.key.toLowerCase() === "f") { event.preventDefault(); toggleFocusMode() }
+  if (modifier && event.shiftKey && event.key.toLowerCase() === "r") { event.preventDefault(); toggleReviewSidebar() }
+  if (modifier && !event.shiftKey && event.key.toLowerCase() === "b") { event.preventDefault(); togglePane("navigator") }
+  // ⌘= / ⌘- zoom the preview.
+  if (modifier && (event.key === "=" || event.key === "+")) { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
+  if (modifier && event.key === "-") { event.preventDefault(); pdfViewer.zoomOut(); updateZoomLabel() }
+  // Esc backs out of the current surface, innermost first. The review popover
+  // handles its own Esc (capture phase), so by the time we get here it is closed.
+  if (event.key === "Escape" && !modifier) {
+    if (focusMode) { toggleFocusMode(); return }
+    if (dockTool !== undefined && document.activeElement?.closest("#dock")) { closeDock(); editor.focus() }
+  }
 })
 
 window.addEventListener("beforeunload", (event) => {
@@ -3695,6 +4669,12 @@ window.addEventListener("online", () => {
 
 renderAuth()
 renderReviewBanner()
+renderViewSwitch()
+renderBuildLabel()
+renderBuildHealth()
+renderBuildLog()
+renderSectionOutline()
+clearPreview()
 renderWorkspaceState()
 // Central 401 handling: any API call that comes back unauthorized drops the stored
 // token and returns the UI to the signed-out state so a dead session is surfaced
@@ -3714,6 +4694,8 @@ onAuthFailure(() => {
   state.selected = undefined
   state.document = undefined
   state.role = undefined
+  presencePeers = []
+  renderPresence()
   renderWorkspaceState()
   renderProjects()
 })

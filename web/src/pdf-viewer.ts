@@ -56,6 +56,9 @@ export class VirtualPdfViewer {
 
   get zoom(): number { return ZOOM_LEVELS[this.zoomIndex] ?? 1.25 }
   get zoomPercent(): string { return `${Math.round(this.zoom * 100)}%` }
+  /** Pages in the loaded document, or 0 when nothing is loaded. Drives the
+   *  "page 3 of 12" readout on the preview bar and the build log's page count. */
+  get pageCount(): number { return this.document?.numPages ?? 0 }
 
   zoomIn(): void {
     if (this.zoomIndex < ZOOM_LEVELS.length - 1) { this.zoomIndex++; this.rerenderVisible() }
