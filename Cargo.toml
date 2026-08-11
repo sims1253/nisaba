@@ -25,3 +25,11 @@ pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+# Patch the archived `im` crate (RUSTSEC-2026-0248) with a thin shim that
+# re-exports `imbl`, its maintained fork. This eliminates three unmaintained
+# transitive advisories at once: `im`, `sized-chunks`, and `bitmaps`.
+# Upstream loro-internal still depends on `im` 15.1.0; when it migrates to
+# `imbl` natively this patch can be removed.
+[patch.crates-io]
+im = { path = "vendor/im" }

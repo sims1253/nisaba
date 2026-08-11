@@ -37,6 +37,11 @@ ignore = [
   "RUSTSEC-2026-0206", # rustybuzz unmaintained (typst transitive dep)
   "RUSTSEC-2026-0192", # ttf-parser unmaintained (typst transitive dep)
   "RUSTSEC-2024-0320", # yaml-rust unmaintained (config parser transitive dep)
+  # Transitive dep of loro via imbl (the maintained fork of im). The original
+  # `im` and `sized-chunks` advisories were resolved by patching `im` → `imbl`
+  # (vendor/im shim in this workspace). `bitmaps` remains because imbl itself
+  # still depends on it — tracked upstream at jneem/imbl#170.
+  "RUSTSEC-2026-0247", # bitmaps unmaintained (loro → imbl transitive dep)
 ]
 
 [licenses]
