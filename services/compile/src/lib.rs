@@ -242,8 +242,9 @@ struct WorkerEntry {
     worker: Arc<StdMutex<Worker>>,
     last_used: Arc<std::sync::atomic::AtomicU64>,
     /// Set when a compile times out. The worker mutex is held by the abandoned
-    /// thread until `typst::compile` finishes. This flag is a diagnostic signal.
-    #[allow(dead_code)]
+    /// thread until `typst::compile` finishes. This flag tells subsequent
+    /// lookups to evict the worker and create a fresh one instead of blocking
+    /// on the stale lock.
     poisoned: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -331,6 +332,15 @@ async fn compile(
     let (new_entry, reused) = {
         let mut workers = state.workers.lock().await;
         evict_idle(&mut workers, &state.config);
+        // Evict a cached worker whose previous compile timed out: the
+        // underlying thread still holds the worker mutex, so reusing it
+        // would block the new request until the abandoned compile finishes.
+        // Removing it here forces a fresh worker (with its own mutex) below.
+        if workers.get(&project_id).is_some_and(|e| {
+            e.poisoned.load(std::sync::atomic::Ordering::Relaxed)
+        }) {
+            workers.remove(&project_id);
+        }
         if let Some(entry) = workers.get(&project_id) {
             entry.touch();
             (Arc::new(entry.clone()), true)
@@ -373,26 +383,23 @@ async fn compile(
     };
 
     // Bound concurrent blocking compiles process-wide so a burst of projects
-    // cannot exhaust the blocking pool. The permit is moved into the blocking
-    // task and released when it completes.
+    // cannot exhaust the blocking pool. The permit stays in this handler scope
+    // and is released when the handler returns (success or timeout).
     let Ok(permit) = state.semaphore.clone().acquire_owned().await else {
         return Err(internal_error("compile semaphore closed".into()));
     };
     // The global map lock is released before this task starts. The blocking task
     // takes only this project's lock, so unrelated projects compile concurrently.
     // Spawn the compile on a dedicated thread and use a
-    // channel to retrieve the result. On timeout the thread is abandoned (the
-    // worker is poisoned and will be recreated), and crucially the permit is
-    // released immediately so new compile requests are not blocked by a
-    // thread that nobody can stop.
+    // channel to retrieve the result. The semaphore permit stays in this
+    // handler scope (NOT in the thread) so it is dropped when the handler
+    // returns — including on timeout. Previously the permit was moved into
+    // the thread, so a timed-out compile held its slot until the thread
+    // eventually finished, and 8 such timeouts exhausted every slot,
+    // denying the service to all projects.
     let (tx, rx) = std::sync::mpsc::channel();
     let worker_arc = new_entry.worker.clone();
     std::thread::spawn(move || {
-        // The permit lives in this thread; it is released when the thread
-        // exits. If we time out, the caller has already moved on and this
-        // thread runs to completion in the background, releasing the permit
-        // when done.
-        let _permit = permit;
         let result = (|| -> Result<CompileResponse, String> {
             let mut worker = worker_arc
                 .lock()
@@ -417,7 +424,15 @@ async fn compile(
         Ok(Ok(Ok(Err(error)))) => Err(internal_error(error)),
         Ok(Ok(Err(error))) => Err(internal_error(format!("compile receiver error: {error}"))),
         Ok(Err(error)) => Err(internal_error(format!("compile receiver task: {error}"))),
-        Err(_) => Err(timeout_error()),
+        Err(_) => {
+            // Mark the cached worker as poisoned so the next request for this
+            // project creates a fresh one instead of blocking on the mutex
+            // held by the abandoned thread.
+            new_entry
+                .poisoned
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            Err(timeout_error())
+        }
     }
 }
 

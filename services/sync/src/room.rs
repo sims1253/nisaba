@@ -646,10 +646,12 @@ impl DocRoom {
             }
             return Ok(());
         }
-        // The binding's init-reconcile can produce a small text-touching echo
-        // (CM vs replica whitespace mismatch); allow small deltas that are
-        // clearly not a document overwrite (≤ 256 chars of net change).
-        let net_change = delta.text_after.len().abs_diff(delta.text_before.len());
+        // A reviewer may touch text only if the update also carries review
+        // state (a genuine suggestion mark) or the reviewer recently touched
+        // the review container (init-reconcile echo within the grace window).
+        // The previous ≤256-char net-change allowance was an attack surface
+        // that let a reviewer make small unauthorized text edits without a
+        // review record.
         let window_ok = {
             let touched = self.review_touched.lock().expect("review_touched poisoned");
             touched.get(&sender).is_some_and(|at| {
@@ -657,7 +659,7 @@ impl DocRoom {
                     <= Duration::from_millis(Self::REVIEWER_TEXT_WINDOW_MS)
             })
         };
-        if delta.touches_review || window_ok || net_change <= 256 {
+        if delta.touches_review || window_ok {
             return Ok(());
         }
         Err(SyncError::ReviewPolicy(

@@ -50,11 +50,13 @@ pub struct ReferenceEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReferenceMetadata {
     pub title: String,
+    #[serde(default)]
     pub authors: Vec<String>,
     pub year: Option<u16>,
     pub doi: Option<String>,
     pub pmid: Option<String>,
     pub journal: Option<String>,
+    #[serde(default)]
     pub extra: BTreeMap<String, String>,
 }
 
@@ -150,6 +152,12 @@ pub struct DocumentPatch {
     pub body: Option<String>,
     pub title: Option<String>,
     pub data: Option<BTreeMap<String, String>>,
+    /// Optimistic concurrency guard; a stale value returns 409. Accepts both
+    /// the canonical `expected_revision` key (used by the web client and
+    /// OpenAPI) and the commonly-guessed `revision` alias, so API clients that
+    /// send `revision` (as the public API reference documents) are not silently
+    /// routed past the guard into a blind overwrite.
+    #[serde(alias = "revision")]
     pub expected_revision: Option<u64>,
 }
 
