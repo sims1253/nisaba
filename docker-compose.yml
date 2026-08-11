@@ -3,7 +3,7 @@
 # =============================================================================
 # Two tiers:
 #
-#   1. Infrastructure (default profile): Postgres, MinIO, Keycloak, MinIO init.
+#   1. Infrastructure (default profile): Postgres, SeaweedFS, Keycloak, SeaweedFS init.
 #      `docker compose up -d`           — brings up the three infra services.
 #
 #   2. Application (profile `app`):      app, sync, compile, web.
@@ -83,47 +83,54 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   # ===========================================================================
-  # MinIO (S3-compatible object storage)
+  # SeaweedFS (S3-compatible object storage)
   # ===========================================================================
-  minio:
-    image: minio/minio:RELEASE.2024-10-13T13-34-11Z@sha256:9535594ad4122b7a78c6632788a989b96d9199b483d3bd71a5ceae73a922cdfa
+  # Replaces the archived MinIO (minio/minio is archived on GitHub as of
+  # 2026-04-24; no further security patches). SeaweedFS `server -s3` runs
+  # master + volume + filer + S3 gateway in a single process, which fits
+  # the one-machine self-hosting baseline. The app talks to it via the
+  # standard S3 API (aws-sdk-s3); no application code changes were needed.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.41@sha256:43b768cd62b00d132439cda881b93fd1adebf1b315e996e794087743821d771d
     <<: [*default-restart, *common-logging]
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nisaba-minio}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    command: >-
+      server -s3 -dir=/data
+      -s3.config=/etc/seaweedfs/s3.json
+      -s3.port=8333
+      -master.volumeSizeLimitMB=1024
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
+      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
-      # /minio/health/live for liveness, /ready for readiness (volume mounted).
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      # SeaweedFS exposes /healthz (liveness) and /readyz (readiness) on the
+      # S3 port (see seaweedfs #9736). The entrypoint runs as the non-root
+      # `seaweed` user; curl is available in the image.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8333/healthz"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 20s
     ports:
-      - "127.0.0.1:${MINIO_HOST_API_PORT:-9100}:9000"
-      - "127.0.0.1:${MINIO_HOST_CONSOLE_PORT:-9101}:9001"
+      - "127.0.0.1:${SEAWEEDFS_HOST_S3_PORT:-9100}:8333"
     networks: [obj-net]
     security_opt: ["no-new-privileges:true"]
 
-  # One-shot: create buckets + scoped service account. Idempotent.
-  minio-init:
-    image: minio/mc:RELEASE.2024-10-02T08-27-28Z@sha256:6284293efec74a9f1061c3bdfe30f0b99ffb90833096f3c5a6fb5f112ba80162
+  # One-shot: create buckets + enable versioning. Idempotent.
+  seaweedfs-init:
+    image: amazon/aws-cli:2.36.20@sha256:8af59c0d96b104000cce4f11e211c06385240d72c515198159041f13ebe459fa
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nisaba-minio}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
-      NISABA_S3_ACCESS_KEY: ${NISABA_S3_ACCESS_KEY:?NISABA_S3_ACCESS_KEY is required}
-      NISABA_S3_SECRET_KEY: ${NISABA_S3_SECRET_KEY:?NISABA_S3_SECRET_KEY is required}
+      NISABA_S3_ADMIN_KEY: ${NISABA_S3_ADMIN_KEY:-nisaba-admin}
+      NISABA_S3_ADMIN_SECRET: ${NISABA_S3_ADMIN_SECRET:?NISABA_S3_ADMIN_SECRET is required}
+      NISABA_S3_ENDPOINT: http://seaweedfs:8333
       NISABA_S3_BUCKET_BLOBS: ${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}
       NISABA_S3_BUCKET_OPLOG: ${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}
     entrypoint: /bin/sh
     command: ["/deploy/init-buckets.sh"]
     volumes:
-      - ./deploy/minio/init-buckets.sh:/deploy/init-buckets.sh:ro
+      - ./deploy/seaweedfs/init-buckets.sh:/deploy/init-buckets.sh:ro
     networks: [obj-net]
     restart: "no"
 
@@ -187,7 +194,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_healthy
       keycloak:
         condition: service_healthy
@@ -270,7 +277,7 @@ services:
       start_period: 15s
     ports:
       - "127.0.0.1:${SYNC_HOST_PORT:-8101}:8080"
-    # No obj-net: sync persists to its own volume, not to MinIO.
+    # No obj-net: sync persists to its own volume, not to SeaweedFS.
     networks: [oidc-net, svc-net]
     security_opt: ["no-new-privileges:true"]
 
@@ -324,7 +331,7 @@ networks:
   # Segmented bridges restrict lateral access by membership. These three cannot
   # use Docker's `internal: true`: recent Docker releases suppress published
   # localhost ports for containers attached only to internal networks, breaking
-  # the documented developer access to Postgres, MinIO, and Keycloak. Host
+  # the documented developer access to Postgres, SeaweedFS, and Keycloak. Host
   # exposure remains limited to the explicit 127.0.0.1 port bindings above.
   db-net:
     driver: bridge
@@ -341,6 +348,6 @@ networks:
 # ===========================================================================
 volumes:
   postgres-data:
-  minio-data:
+  seaweedfs-data:
   keycloak-data:
   sync-data:

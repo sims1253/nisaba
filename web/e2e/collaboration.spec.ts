@@ -62,11 +62,13 @@ test.describe("Reviewer suggestion workflow", () => {
       const status = (await statusEl.first().textContent()) ?? ""
       expect(status).not.toContain("Unsaved changes")
     }
-    // The review banner should now report an open review item.
-    const banner = page.locator("#review-banner")
-    if (await banner.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await expect(banner).toContainText("open review item")
-    }
+    // The suggestion must show up as an open review item. The old amber banner
+    // that used to carry this count is gone (it duplicated the Review button and
+    // the queue); the count now lives on the Review button only, so that is what
+    // this asserts.
+    await expect(page.locator("#review-count")).toHaveText(/[1-9]/, { timeout: 10_000 })
+    await page.locator("#review-button").click()
+    await expect(page.locator(".review-card").first()).toBeVisible({ timeout: 10_000 })
 
     await owner.close()
     await reviewer.close()

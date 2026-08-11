@@ -2,6 +2,23 @@
 
 Browser editor and paginated preview for the Nisaba app service.
 
+## Interface
+
+The workspace layout, the vocabulary it uses, and the reasoning behind each
+surface are documented in [`docs/ui-design.md`](../docs/ui-design.md). In source
+terms:
+
+| Module | Owns |
+|--------|------|
+| `shell.ts` | The static markup of every region (app bar, projects screen, navigator, document, dock, preview, build drawer, status bar) |
+| `styles.css` | The design tokens and every component style |
+| `main.ts` | State, rendering, and wiring |
+| `outline.ts` | The file tree and heading outline derivations (pure) |
+| `palette.ts` | The ⌘K command palette |
+| `presence.ts` | Presence payloads and the relay's roster encoding (pure) |
+| `decorations.ts` | In-editor review marks and Typst construct styling |
+| `pdf-viewer.ts` | The virtualised page preview |
+
 ## Resource model
 
 The client uses a flat project-to-document model. A document is available at

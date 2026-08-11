@@ -4,7 +4,7 @@
 #
 # What it checks (the integration the infra tier alone cannot prove):
 #   * `docker compose --profile app up -d --build` brings ALL seven services
-#     (postgres, minio, keycloak, app, sync, compile, web) to healthy.
+#     (postgres, seaweedfs, keycloak, app, sync, compile, web) to healthy.
 #   * The OIDC path is real, not stubbed: deploy/dev-token.py mints an RSA key +
 #     JWKS + JWT; the JWKS is injected as NISABA_OIDC_JWKS_JSON and the app
 #     verifies the dev token BY SIGNATURE (iss/aud/kid/alg), not a client secret.
@@ -115,9 +115,9 @@ wait_healthy() {
     return 1
 }
 
-echo "[e2e] waiting for health (postgres/minio/keycloak/app/sync/compile/web)"
+echo "[e2e] waiting for health (postgres/seaweedfs/keycloak/app/sync/compile/web)"
 wait_healthy postgres 60
-wait_healthy minio 60
+wait_healthy seaweedfs 60
 wait_healthy keycloak 120
 wait_healthy app 150
 wait_healthy sync 120

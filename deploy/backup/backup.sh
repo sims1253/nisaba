@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Back up the Nisaba data plane: Postgres (logical dump) + MinIO (object mirror).
+# Back up the Nisaba data plane: Postgres (logical dump) + SeaweedFS (object sync).
 #
 #   - Postgres : pg_dump of the `nisaba` database as the least-privilege role.
-#   - MinIO    : mc mirror of the nisaba-* buckets (versioned) to a local dir.
+#   - SeaweedFS: aws s3 sync of the nisaba-* buckets to a local dir.
 #
 # Tolerant by design: if a dependency (a bucket, the DB, the compose stack) is
 # absent, that step is skipped with a clear message rather than aborting the
@@ -20,7 +20,7 @@ OUT_DIR="${BACKUP_LOCAL_DIR:-./artifacts/backups}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="${OUT_DIR}/${TS}"
 
-mkdir -p "${DEST}/postgres" "${DEST}/minio" "${DEST}/sync"
+mkdir -p "${DEST}/postgres" "${DEST}/seaweedfs" "${DEST}/sync"
 echo "[backup] -> ${DEST}"
 
 # ---- Postgres ----
@@ -36,34 +36,27 @@ else
     echo "[backup] postgres container not running; skipping database dump."
 fi
 
-# ---- MinIO ----
-if docker compose ps minio 2>/dev/null | grep -q "minio"; then
-    echo "[backup] mirroring MinIO buckets..."
-    obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q minio)" 2>/dev/null | awk '{print $1}')"
+# ---- SeaweedFS ----
+if docker compose ps seaweedfs 2>/dev/null | grep -q "seaweedfs"; then
+    echo "[backup] syncing SeaweedFS buckets..."
+    obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q seaweedfs)" 2>/dev/null | awk '{print $1}')"
     obj_net="${obj_net:-nisaba_obj-net}"
-    # The mc image's ENTRYPOINT is `mc`, so `sh -c` must be reached via
-    # `--entrypoint /bin/sh`; without it, `sh` is parsed as an mc subcommand
-    # ("sh is not a recognized command") and the mirror silently never runs,
-    # leaving every snapshot without object storage.
-    if ! docker run --rm -i --network "$obj_net" --entrypoint /bin/sh \
-        -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-        -v "${DEST}/minio:/out:rw" \
-        minio/mc:RELEASE.2024-10-02T08-27-28Z -c '
-            mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+    if ! docker run --rm -i --network "$obj_net" --entrypoint /bin/sh         -e AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}"         -e AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}"         -v "${DEST}/seaweedfs:/out:rw"         amazon/aws-cli:2.36.20 -c '
+            export AWS_ENDPOINT_URL=http://seaweedfs:8333
             failed=0
             for b in '"${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}"' '"${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}"'; do
-                if ! mc mirror --overwrite --watch=false "local/${b}" "/out/${b}"; then
-                    echo "[backup] ERROR: mirror of ${b} failed" >&2
+                if ! aws s3 sync --no-progress "s3://${b}" "/out/${b}"; then
+                    echo "[backup] ERROR: sync of ${b} failed" >&2
                     failed=1
                 fi
             done
             exit $failed
         '; then
-        echo "[backup] ERROR: MinIO mirror step failed; snapshot is INCOMPLETE (no object storage)." >&2
+        echo "[backup] ERROR: SeaweedFS sync step failed; snapshot is INCOMPLETE (no object storage)." >&2
         exit 1
     fi
 else
-    echo "[backup] minio container not running; skipping object mirror."
+    echo "[backup] seaweedfs container not running; skipping object sync."
 fi
 
 # ---- sync filesystem (op-log + snapshots) ----

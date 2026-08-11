@@ -33,8 +33,8 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
 | `postgres` (superuser) | bootstrap + migrations only; never used by app | Compose `POSTGRES_USER`             |
 | `nisaba_app`           | owns `nisaba` DB; no SUPERUSER/CREATEDB       | `deploy/postgres/init/10-init-databases.sh` |
 | `keycloak`             | owns `keycloak` DB only                       | same init script                    |
-| MinIO root             | bootstrap + admin only; never used by app     | Compose `MINIO_ROOT_*`              |
-| `nisaba-app` S3 account| read/write on `nisaba-*` buckets only         | `deploy/minio/init-buckets.sh`      |
+| SeaweedFS admin (`nisaba-admin`) | bootstrap + admin only; never used by app | `deploy/seaweedfs/s3.json` (static identity) |
+| `nisaba-app` S3 account| read/write/list/tag on `nisaba-*` buckets only | `deploy/seaweedfs/s3.json` (static identity) |
 | Keycloak demo users    | local dev only (`demo`/`reviewer`/`reader`)   | `deploy/keycloak/nisaba-realm.json` |
 
 - OIDC roles `author` / `reviewer` / `read-only` are mapped into access tokens
@@ -128,19 +128,19 @@ token) before leaving a shared computer.
 Four segmented Compose bridge networks restrict lateral access through explicit
 membership. They are not marked `internal: true`: Docker 29 suppresses published
 host ports for containers attached only to internal networks, which would make the
-documented loopback-only Postgres, MinIO, and browser OIDC endpoints unreachable.
+documented loopback-only Postgres, SeaweedFS, and browser OIDC endpoints unreachable.
 
 | Network     | Members                         | Purpose                              |
 |-------------|---------------------------------|--------------------------------------|
 | `db-net`    | postgres, keycloak, app         | SQL traffic                          |
-| `obj-net`   | minio, minio-init, app          | S3-compatible object traffic         |
+| `obj-net`   | seaweedfs, seaweedfs-init, app  | S3-compatible object traffic         |
 | `oidc-net`  | keycloak, app                   | app ↔ Keycloak backchannel           |
 | `svc-net`   | app, sync, compile, web         | application service mesh             |
 
 Consequences:
 
-- **Postgres and MinIO are unreachable from `web`** (web is only on `svc-net`).
-  A browser compromise cannot talk to the data stores directly.
+- **Postgres and SeaweedFS are unreachable from `web`** (web is only on
+  `svc-net`). A browser compromise cannot talk to the data stores directly.
 - **`compile` is on `svc-net` only** — it has no route to Postgres (not on
   `db-net`), no route to Keycloak (not on `oidc-net`), and no S3 credentials or
   `obj-net` membership. It is a pure function of the sources `app` sends it,
@@ -158,7 +158,7 @@ the only ingress (see `operations.md`).
 | Published (host)    | Bound to     | Purpose                     |
 |---------------------|--------------|-----------------------------|
 | `127.0.0.1:5433`    | postgres     | dev DB access               |
-| `127.0.0.1:9100/9101` | minio      | S3 API / console            |
+| `127.0.0.1:9100`    | seaweedfs    | S3 API (no console port)    |
 | `127.0.0.1:8090`    | keycloak     | browser OIDC + admin        |
 | `127.0.0.1:8100/8101/8103` | app/sync/web | dev access to services |
 
@@ -231,9 +231,9 @@ as a hardening task; not MVP-blocking.
 
 ## 7. Data protection & integrity
 
-- Full-text PDFs and op-log snapshots are stored in **versioned** MinIO buckets,
-  so an accidental overwrite/delete is recoverable — important because export
-  filenames are derived from reference entries and must remain stable.
+- Full-text PDFs and op-log snapshots are stored in **versioned** SeaweedFS
+  buckets, so an accidental overwrite/delete is recoverable — important because
+  export filenames are derived from reference entries and must remain stable.
 - Backups are local-only for dev (`deploy/backup/`); production backup/restore
   is in [`operations.md`](operations.md).
 - **Privacy note (out of scope for infra):** Nisaba may process unpublished

@@ -35,7 +35,7 @@ logic, which is covered by layer 1.
 
 | Script | What it checks | When it runs |
 |--------|----------------|--------------|
-| `deploy/smoke.sh` | Infra tier: Postgres `pg_isready`, MinIO liveness, Keycloak realm import | CI: only when infra files change (`deploy/**`, `docker-compose.yml`, `.env.example`) or on schedule/dispatch/main. Local: `just smoke`. |
+| `deploy/smoke.sh` | Infra tier: Postgres `pg_isready`, SeaweedFS liveness, Keycloak realm import | CI: only when infra files change (`deploy/**`, `docker-compose.yml`, `.env.example`) or on schedule/dispatch/main. Local: `just smoke`. |
 | `deploy/e2e-app.sh` | Full stack: builds all 7 images, mints dev OIDC token, compile→PDF round trip, sync WS handshake, app authorize loop | Local only (`just e2e`) — too heavy for per-PR CI. |
 
 **Rationale:** smoke tests are slow (2–3 min for `smoke.sh`, 10+ min for

@@ -14,11 +14,12 @@ deploy/
   Dockerfile.web.dockerignore
   web/nginx.conf                       # non-root nginx: SPA + /api→app + /sync→sync + /healthz
   postgres/init/10-init-databases.sh   # least-privilege roles + databases
-  minio/init-buckets.sh                # buckets + scoped S3 service account (one-shot)
+  seaweedfs/s3.json                    # static S3 identities (access keys + actions)
+  seaweedfs/init-buckets.sh            # buckets + versioning (one-shot)
   keycloak/nisaba-realm.json           # OIDC realm (DEV-ONLY): client, roles, demo users
   keycloak/README.md                   # incl. production replacement checklist
   keycloak/healthcheck.sh              # /health/ready probe (bash /dev/tcp; no curl in image)
-  backup/backup.sh                     # pg_dump + mc mirror + sync-fs tar (local)
+  backup/backup.sh                     # pg_dump + aws s3 sync + sync-fs tar (local)
   backup/restore.sh                    # restore a snapshot (overwrites data)
   backup/verify.sh                     # structural check of a snapshot (no restore)
   validate-compose.sh                  # `docker compose config` against .env.example (temp env)
@@ -31,8 +32,8 @@ deploy/
 ## Two tiers
 
 1. **Infrastructure** — brought up by `docker compose up` (default profile):
-   Postgres, MinIO, Keycloak, and the one-shot `minio-init`. This is what the
-   task "local Postgres + S3-compatible MinIO + OIDC Keycloak" delivers.
+   Postgres, SeaweedFS, Keycloak, and the one-shot `seaweedfs-init`. This is what the
+   task "local Postgres + S3-compatible SeaweedFS + OIDC Keycloak" delivers.
 2. **Application** — brought up by `docker compose --profile app up --build`:
    `app`, `sync`, `compile`, `web`. These build from `Dockerfile.rust` /
    `Dockerfile.web`.
@@ -82,7 +83,7 @@ The `web` nginx reverse-proxies two internal services and **nothing else**:
 ## Network model & least privilege
 
 See [`docs/security.md`](../docs/security.md). Short version: four Compose
-networks, three `internal: true`; Postgres/MinIO/Keycloak never reachable from
+networks, three `internal: true`; Postgres/SeaweedFS/Keycloak never reachable from
 `web`; `compile` has no route to Postgres or Keycloak.
 
 ## Conventions

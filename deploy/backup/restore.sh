@@ -5,7 +5,7 @@
 #          (or)  ./deploy/backup/restore.sh path/to/snapshot
 #
 #   - Postgres : restores the gzip'd SQL dump (drop+recreate via --clean).
-#   - MinIO    : mirrors the local bucket copies back into MinIO.
+#   - SeaweedFS: syncs the local bucket copies back into SeaweedFS.
 #   - sync fs  : extracts the op-log + snapshot tar back into the sync-data volume.
 #
 # This OVERWRITES current data. It is intended for local/dev recovery and
@@ -42,21 +42,17 @@ else
     echo "[restore] no Postgres dump at ${DUMP}; skipping database."
 fi
 
-# ---- MinIO ----
-if [ -d "${SRC}/minio" ]; then
-    echo "[restore] restoring MinIO buckets..."
-    obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q minio)" 2>/dev/null | awk '{print $1}')"
+# ---- SeaweedFS ----
+if [ -d "${SRC}/seaweedfs" ]; then
+    echo "[restore] restoring SeaweedFS buckets..."
+    obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q seaweedfs)" 2>/dev/null | awk '{print $1}')"
     obj_net="${obj_net:-nisaba_obj-net}"
-    # Same --entrypoint fix as backup.sh (mc image ENTRYPOINT is `mc`).
-    if ! docker run --rm -i --network "$obj_net" --entrypoint /bin/sh \
-        -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-        -v "${SRC}/minio:/in:ro" \
-        minio/mc:RELEASE.2024-10-02T08-27-28Z -c '
-            mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+    if ! docker run --rm -i --network "$obj_net" --entrypoint /bin/sh         -e AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}"         -e AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}"         -v "${SRC}/seaweedfs:/in:ro"         amazon/aws-cli:2.36.20 -c '
+            export AWS_ENDPOINT_URL=http://seaweedfs:8333
             failed=0
             for b in '"${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}"' '"${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}"'; do
                 if [ -d "/in/${b}" ]; then
-                    if ! mc mirror --overwrite --watch=false "/in/${b}" "local/${b}"; then
+                    if ! aws s3 sync --no-progress "/in/${b}" "s3://${b}"; then
                         echo "[restore] ERROR: restore of ${b} failed" >&2
                         failed=1
                     fi
@@ -64,11 +60,11 @@ if [ -d "${SRC}/minio" ]; then
             done
             exit $failed
         '; then
-        echo "[restore] ERROR: MinIO restore step failed." >&2
+        echo "[restore] ERROR: SeaweedFS restore step failed." >&2
         exit 1
     fi
 else
-    echo "[restore] no MinIO snapshot at ${SRC}/minio; skipping objects."
+    echo "[restore] no SeaweedFS snapshot at ${SRC}/seaweedfs; skipping objects."
 fi
 
 # ---- sync filesystem ----

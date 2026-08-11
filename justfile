@@ -15,7 +15,7 @@ default:
 
 # ---------- Infra (Docker Compose) -----------------------------------------
 
-# Bring up the local infrastructure tier (Postgres + MinIO + Keycloak + init).
+# Bring up the local infrastructure tier (Postgres + SeaweedFS + Keycloak + init).
 up:
     docker compose up -d
 
@@ -27,7 +27,7 @@ up-all:
 down:
     docker compose --profile app down
 
-# Stop and remove containers AND named volumes (postgres/minio/keycloak data).
+# Stop and remove containers AND named volumes (postgres/seaweedfs/keycloak data).
 down-volumes:
     docker compose --profile app down -v
 
@@ -45,7 +45,7 @@ compose-check:
 compose-validate:
     ./deploy/validate-compose.sh
 
-# Bring up the infra tier (Postgres+MinIO+Keycloak) against a throwaway project,
+# Bring up the infra tier (Postgres+SeaweedFS+Keycloak) against a throwaway project,
 # probe health + the Keycloak realm import, then tear down. See deploy/smoke.sh.
 smoke:
     ./deploy/smoke.sh
@@ -84,12 +84,14 @@ migrate dir='migrations':
         exit 1
     fi
 
-# Open the MinIO client shell (mc) against the local instance.
-mc *ARGS:
+# Open an AWS CLI shell against the local SeaweedFS S3 endpoint.
+# Usage: just s3 ls, just s3 ls s3://nisaba-blobs, etc.
+s3 *ARGS:
     docker run --rm -i --network nisaba_obj-net \
-        -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-        minio/mc:RELEASE.2024-10-02T08-27-28Z@sha256:6284293efec74a9f1061c3bdfe30f0b99ffb90833096f3c5a6fb5f112ba80162 sh -c \
-        'mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mc {{ARGS}}'
+        -e AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}" \
+        -e AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}" \
+        -e AWS_ENDPOINT_URL=http://seaweedfs:8333 \
+        amazon/aws-cli:2.36.20 s3 {{ARGS}}
 
 # ---------- Rust workspace -------------------------------------------------
 

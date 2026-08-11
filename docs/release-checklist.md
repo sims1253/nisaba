@@ -10,7 +10,7 @@ capabilities.
 ### Fresh install
 - [ ] Clean host: `docker compose up -d` brings up all infrastructure
 - [ ] Migrations run successfully against a fresh database
-- [ ] MinIO buckets are created and accessible
+- [ ] SeaweedFS buckets are created and accessible
 - [ ] Keycloak realm imports and the test user can authenticate
 - [ ] App service healthcheck passes (`/health/ready`)
 - [ ] Compile service healthcheck passes (`/healthz`)
