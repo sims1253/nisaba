@@ -37,6 +37,11 @@ ignore = [
   "RUSTSEC-2026-0206", # rustybuzz unmaintained (typst transitive dep)
   "RUSTSEC-2026-0192", # ttf-parser unmaintained (typst transitive dep)
   "RUSTSEC-2024-0320", # yaml-rust unmaintained (config parser transitive dep)
+  # Transitive deps of loro (CRDT library) — all from the archived im-rs crate.
+  # No safe upgrade exists; tracked for remediation when loro migrates to imbl.
+  "RUSTSEC-2026-0247", # bitmaps unmaintained (loro → im transitive dep)
+  "RUSTSEC-2026-0248", # im unmaintained (loro transitive dep)
+  "RUSTSEC-2026-0251", # sized-chunks unmaintained (loro → im transitive dep)
 ]
 
 [licenses]
