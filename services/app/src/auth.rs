@@ -240,12 +240,18 @@ pub(crate) async fn project_acl(
     // existing data — no mutation. Reviewers need it to export review copies.
     // The handler additionally enforces Permission::Document.
     let is_export = path.ends_with("/exports") && request.method() == http::Method::POST;
+    // Self-service leave: a member removing their own membership is allowed
+    // regardless of role. The path is /projects/{id}/members/{subject}.
+    let is_self_leave = request.method() == http::Method::DELETE
+        && path.contains("/members/")
+        && path.rsplit('/').next() == Some(&principal.subject);
     let can_write = match request.method() {
         &http::Method::GET | &http::Method::HEAD => true,
         _ if is_export => matches!(
             membership.role,
             MembershipRole::Owner | MembershipRole::Author | MembershipRole::Reviewer
         ),
+        _ if is_self_leave => true,
         // Reviewers propose changes through the review layer, never by writing
         // the baseline directly (PATCH/DELETE would let them bypass track
         // changes and destroy author work). The sync relay still lets

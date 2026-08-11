@@ -728,10 +728,13 @@ async fn live_redeem_upgrades_existing_membership_role() {
         .await,
     )
     .await;
+    // The granted role must be clamped to the user's IdP token role. Carol's
+    // JWT role is read-only, so even an author share link cannot elevate her
+    // project membership above read-only.
     assert_eq!(
         membership["role"].as_str().unwrap(),
-        "author",
-        "redeeming an author link must upgrade an existing lower membership"
+        "read-only",
+        "redeeming an author link must not elevate a read-only IdP user above read-only"
     );
 }
 

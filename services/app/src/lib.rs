@@ -22,6 +22,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode, header},
     middleware,
+    response::IntoResponse,
     routing::{delete, get, post},
 };
 use base64::Engine as _;
@@ -999,6 +1000,15 @@ async fn security_headers(
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-store"),
     );
+    // Normalize 422 (axum/serde deserialization) responses to structured JSON
+    // errors so Rust/serde internals are not leaked to API consumers.
+    if response.status() == StatusCode::UNPROCESSABLE_ENTITY {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": {"code": "bad_request", "message": "invalid request body"}})),
+        )
+            .into_response();
+    }
     response
 }
 
@@ -1013,12 +1023,13 @@ async fn create_project(
     if r.name.trim().is_empty() {
         return Err(AppError::BadRequest("name is required".into()));
     }
-    validate_text(&r.name, "name", 1024)?;
+    let name = r.name.trim().to_string();
+    validate_text(&name, "name", 1024)?;
     let now = Utc::now();
     let id = Uuid::new_v4();
     let value = Project {
         id,
-        name: r.name,
+        name,
         created_at: now,
         updated_at: now,
     };
@@ -1041,11 +1052,19 @@ async fn list_projects(
     let principal = permitted(&s, &h, Permission::Read).await?;
     let mut projects = Vec::new();
     for project in s.repo.list_projects().await? {
-        if s.repo
+        // Match the same sub-then-preferred_username resolution used by
+        // project_access so project lists agree with per-project access.
+        let member = s
+            .repo
             .get_membership(project.id, &principal.subject)
             .await
             .is_ok()
-        {
+            || if let Some(ref username) = principal.preferred_username {
+                s.repo.get_membership(project.id, username).await.is_ok()
+            } else {
+                false
+            };
+        if member {
             projects.push(project);
         }
     }
@@ -1070,7 +1089,8 @@ async fn patch_project(
     let mut v = project_for(&s, &pid).await?;
     project_access(&s, &h, v.id, Permission::Manage).await?;
     if let Some(name) = r.name {
-        if name.trim().is_empty() {
+        let name = name.trim().to_string();
+        if name.is_empty() {
             return Err(AppError::BadRequest("name is required".into()));
         }
         validate_text(&name, "name", 1024)?;
@@ -1136,12 +1156,18 @@ fn validate_text(value: &str, field: &str, max_len: usize) -> Result<(), AppErro
 }
 
 /// Document bodies are free-form text: tabs/newlines are legitimate, only NUL
-/// is unstorable by Postgres.
+/// is unstorable by Postgres. A generous cap prevents unbounded storage abuse.
+const MAX_DOCUMENT_BODY_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 fn validate_body(value: &str) -> Result<(), AppError> {
     if value.contains('\0') {
         return Err(AppError::BadRequest(
             "document body contains NUL bytes".into(),
         ));
+    }
+    if value.len() > MAX_DOCUMENT_BODY_BYTES {
+        return Err(AppError::BadRequest(format!(
+            "document body exceeds {MAX_DOCUMENT_BODY_BYTES} bytes"
+        )));
     }
     Ok(())
 }
@@ -1200,6 +1226,18 @@ async fn create_document(
             Some(event),
         )
         .await?;
+    // Save the initial revision (0) so the original content is preserved in
+    // the document history timeline.
+    s.repo
+        .save_document_revision(
+            out.id,
+            out.project_id,
+            out.body.clone(),
+            0,
+            Some(p.subject.clone()),
+        )
+        .await
+        .ok();
     Ok((StatusCode::CREATED, Json(out)))
 }
 async fn list_documents(
@@ -1331,11 +1369,26 @@ async fn get_my_membership(
 ) -> Result<Json<ProjectMembership>, AppError> {
     let project = project_for(&state, &project_raw).await?;
     let principal = project_access(&state, &headers, project.id, Permission::Read).await?;
-    let membership = state
+    let membership = if let Ok(m) = state
         .repo
         .get_membership(project.id, &principal.subject)
         .await
-        .map_err(|_| AppError::Forbidden)?;
+    {
+        m
+    } else {
+        // Fall back to preferred_username so that memberships created
+        // through the UI sharing flow (which sends the human-typed
+        // username) also resolve.
+        let username = principal
+            .preferred_username
+            .as_ref()
+            .ok_or(AppError::Forbidden)?;
+        state
+            .repo
+            .get_membership(project.id, username)
+            .await
+            .map_err(|_| AppError::Forbidden)?
+    };
     Ok(Json(membership))
 }
 async fn add_member(
@@ -1385,7 +1438,14 @@ async fn remove_member(
     Path((project_raw, subject)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
     let project = project_for(&state, &project_raw).await?;
-    let principal = project_access(&state, &headers, project.id, Permission::Manage).await?;
+    // Any member may remove their own membership (self-service leave); only
+    // managers may remove others.
+    let permission = if subject == state.auth.authenticate(&headers).await?.subject {
+        Permission::Read
+    } else {
+        Permission::Manage
+    };
+    let principal = project_access(&state, &headers, project.id, permission).await?;
     let membership = state
         .repo
         .get_membership(project.id, &subject)
@@ -1459,7 +1519,13 @@ async fn create_reference(
 ) -> Result<(StatusCode, Json<ReferenceEntry>), AppError> {
     let p = permitted(&s, &h, Permission::Manage).await?;
     let project = project_for(&s, &pid).await?;
-    validate_reference_metadata(&r.metadata)?;
+    // Normalize DOI: trim whitespace so leading/trailing spaces don't bypass
+    // the case-insensitive uniqueness check.
+    let mut metadata = r.metadata;
+    if let Some(ref mut doi) = metadata.doi {
+        *doi = doi.trim().to_string();
+    }
+    validate_reference_metadata(&metadata)?;
     let now = Utc::now();
     let id = Uuid::new_v4();
     let event = build_audit(&p, project.id, "created", "reference", id, json!({}));
@@ -1469,7 +1535,7 @@ async fn create_reference(
             ReferenceEntry {
                 id,
                 project_id: project.id,
-                metadata: r.metadata,
+                metadata,
                 provenance: r.provenance,
                 created_at: now,
                 updated_at: now,
@@ -1519,7 +1585,7 @@ async fn patch_reference(
             merged.year = year;
         }
         if let Some(doi) = patch.doi {
-            merged.doi = doi;
+            merged.doi = doi.map(|d| d.trim().to_string());
         }
         if let Some(pmid) = patch.pmid {
             merged.pmid = pmid;
@@ -2060,6 +2126,37 @@ fn decode_compile_pdf(compile: &CompileResponse) -> Result<Vec<u8>, AppError> {
         .map_err(|error| AppError::Conflict(format!("compile PDF was not base64: {error}")))
 }
 
+/// Convert markdown-style ATX headings (`#`, `##`, `###`...) to Typst heading
+/// syntax (`=`, `==`, `===`...) so that document bodies authored as markdown
+/// compile correctly under Typst. Only leading `#` sequences that look like
+/// headings (optional spaces + text) are converted; `#` used as Typst code
+/// syntax (followed by a letter/function name with no space) is left alone.
+fn markdown_headings_to_typst(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| {
+            let trimmed_start = line.trim_start_matches(' ');
+            let hashes = trimmed_start.chars().take_while(|&c| c == '#').count();
+            if (1..=6).contains(&hashes)
+                && trimmed_start.chars().nth(hashes).is_some_and(|c| c == ' ')
+            {
+                // Markdown heading: convert `### Title` → `=== Title`
+                let leading_spaces = line.len() - trimmed_start.len();
+                let rest = &trimmed_start[hashes + 1..];
+                format!(
+                    "{}{} {}",
+                    " ".repeat(leading_spaces),
+                    "=".repeat(hashes),
+                    rest
+                )
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn export_project(
     State(s): State<AppState>,
     h: HeaderMap,
@@ -2105,6 +2202,10 @@ async fn export_project(
         // not stored in the document's data field, so the mark list is empty;
         // once marks are persisted they will flow through here automatically.
         let projected = projected_source(&doc.body, &[], &r.view)?;
+        // Convert markdown-style headings to Typst syntax so document bodies
+        // compile correctly. Markdown `#`/`##`/`###` headings are misread by
+        // Typst as code-mode expressions, causing compile errors.
+        let projected = markdown_headings_to_typst(&projected);
         sources.insert(doc.path.clone(), projected);
         doc_yaml.insert(doc.path.clone(), doc.yaml.clone());
     }
@@ -2282,11 +2383,30 @@ async fn redeem_share_link(
     {
         return Err(AppError::BadRequest("share link has expired".into()));
     }
-    let role = match link.role.as_str() {
+    let link_role = match link.role.as_str() {
         "author" => MembershipRole::Author,
         "reviewer" => MembershipRole::Reviewer,
         "read-only" => MembershipRole::ReadOnly,
         _ => return Err(AppError::BadRequest("invalid share link role".into())),
+    };
+    // Clamp the granted role to the user's IdP token role: a reviewer or
+    // read-only user redeeming an author share link must not gain author
+    // capabilities. The granted role is min(link_role, max_idp_role).
+    let idp_rank = if principal.roles.contains(&Role::Author) {
+        membership_role_rank(&MembershipRole::Author)
+    } else if principal.roles.contains(&Role::Reviewer) {
+        membership_role_rank(&MembershipRole::Reviewer)
+    } else {
+        membership_role_rank(&MembershipRole::ReadOnly)
+    };
+    let role = if membership_role_rank(&link_role) <= idp_rank {
+        link_role
+    } else {
+        match idp_rank {
+            r if r >= membership_role_rank(&MembershipRole::Author) => MembershipRole::Author,
+            r if r >= membership_role_rank(&MembershipRole::Reviewer) => MembershipRole::Reviewer,
+            _ => MembershipRole::ReadOnly,
+        }
     };
     let existing = s
         .repo
