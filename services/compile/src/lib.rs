@@ -336,9 +336,10 @@ async fn compile(
         // underlying thread still holds the worker mutex, so reusing it
         // would block the new request until the abandoned compile finishes.
         // Removing it here forces a fresh worker (with its own mutex) below.
-        if workers.get(&project_id).is_some_and(|e| {
-            e.poisoned.load(std::sync::atomic::Ordering::Relaxed)
-        }) {
+        if workers
+            .get(&project_id)
+            .is_some_and(|e| e.poisoned.load(std::sync::atomic::Ordering::Relaxed))
+        {
             workers.remove(&project_id);
         }
         if let Some(entry) = workers.get(&project_id) {
@@ -385,7 +386,7 @@ async fn compile(
     // Bound concurrent blocking compiles process-wide so a burst of projects
     // cannot exhaust the blocking pool. The permit stays in this handler scope
     // and is released when the handler returns (success or timeout).
-    let Ok(permit) = state.semaphore.clone().acquire_owned().await else {
+    let Ok(_permit) = state.semaphore.clone().acquire_owned().await else {
         return Err(internal_error("compile semaphore closed".into()));
     };
     // The global map lock is released before this task starts. The blocking task

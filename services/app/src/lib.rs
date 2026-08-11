@@ -884,15 +884,16 @@ async fn materialize_document_body(
         at: Utc::now(),
         details: json!({"revision": doc.revision, "source": "crdt_sync"}),
     };
-    s.repo.save_document_revision(
-        doc.id,
-        doc.project_id,
-        doc.body.clone(),
-        doc.revision,
-        Some("sync".to_string()),
-    )
-    .await
-    .ok();
+    s.repo
+        .save_document_revision(
+            doc.id,
+            doc.project_id,
+            doc.body.clone(),
+            doc.revision,
+            Some("sync".to_string()),
+        )
+        .await
+        .ok();
     s.repo
         .update_document(doc, old_revision, Some(audit_event))
         .await?;
@@ -1344,8 +1345,7 @@ async fn add_member(
     Json(request): Json<ProjectMemberCreate>,
 ) -> Result<(StatusCode, Json<ProjectMembership>), AppError> {
     let project = project_for(&state, &project_raw).await?;
-    let principal =
-        project_access(&state, &headers, project.id, Permission::Manage).await?;
+    let principal = project_access(&state, &headers, project.id, Permission::Manage).await?;
     if request.subject.trim().is_empty() {
         return Err(AppError::BadRequest("subject is required".into()));
     }

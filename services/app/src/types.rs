@@ -154,7 +154,7 @@ pub struct DocumentPatch {
     pub data: Option<BTreeMap<String, String>>,
     /// Optimistic concurrency guard; a stale value returns 409. Accepts both
     /// the canonical `expected_revision` key (used by the web client and
-    /// OpenAPI) and the commonly-guessed `revision` alias, so API clients that
+    /// `OpenAPI`) and the commonly-guessed `revision` alias, so API clients that
     /// send `revision` (as the public API reference documents) are not silently
     /// routed past the guard into a blind overwrite.
     #[serde(alias = "revision")]
