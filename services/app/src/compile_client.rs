@@ -43,7 +43,8 @@ impl CompileClient for HttpCompileClient {
     async fn compile(&self, request: CompileRequest) -> Result<CompileResponse, AppError> {
         let view = match request.view {
             CompileView::Baseline => "baseline",
-            CompileView::Proposed | CompileView::Public => "proposed",
+            CompileView::Proposed => "proposed",
+            CompileView::Public => "public",
             CompileView::Redline => "redline",
         };
         let payload = json!({

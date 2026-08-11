@@ -46,7 +46,11 @@ use uuid::Uuid;
 const REFS_SOURCE_PATH: &str = "refs.yml";
 
 /// Reserved review support-file path.
-const MIN_SNAPSHOT_INTERVAL_SECS: i64 = 60;
+/// Minimum seconds between revision snapshots. Set low enough that normal
+/// interactive editing cadence (one save every few seconds) produces a
+/// recoverable history entry, while still coalescing rapid-fire saves
+/// (e.g. autosave every 1 s) into a single snapshot.
+const MIN_SNAPSHOT_INTERVAL_SECS: i64 = 10;
 const REVIEW_SUPPORT_PATH: &str = "review.typ";
 
 /// The review support-file body.
@@ -863,11 +867,36 @@ async fn materialize_document_body(
     }
     let doc_id = id(&document_id)?;
     let mut doc = s.repo.get_document_by_id(doc_id).await?;
+    validate_body(&body)?;
     doc.body = body;
     doc.updated_at = Utc::now();
     let old_revision = doc.revision;
     doc.revision += 1;
-    s.repo.update_document(doc, old_revision, None).await?;
+    // Record the sync-originated materialization in the audit trail and save
+    // a revision snapshot so the edit history reflects CRDT-materialized text.
+    let audit_event = AuditEvent {
+        id: Uuid::new_v4(),
+        project_id: doc.project_id,
+        actor: "sync".to_string(),
+        action: "materialized".to_string(),
+        resource_type: "document".to_string(),
+        resource_id: doc.id,
+        at: Utc::now(),
+        details: json!({"revision": doc.revision, "source": "crdt_sync"}),
+    };
+    s.repo
+        .save_document_revision(
+            doc.id,
+            doc.project_id,
+            doc.body.clone(),
+            doc.revision,
+            Some("sync".to_string()),
+        )
+        .await
+        .ok();
+    s.repo
+        .update_document(doc, old_revision, Some(audit_event))
+        .await?;
     Ok(StatusCode::OK)
 }
 
@@ -945,6 +974,32 @@ pub fn router(state: AppState) -> Router {
         .route("/share/{token}/redeem", post(redeem_share_link))
         .with_state(state)
         .layer(middleware::from_fn_with_state(acl_state, project_acl))
+        .layer(middleware::from_fn(security_headers))
+}
+
+/// Injects common security response headers on every response. These are
+/// defense-in-depth measures; they do not replace input validation or
+/// output encoding but make the API surface harder to abuse (e.g. MIME
+/// sniffing attacks, clickjacking, legacy XSS filters).
+async fn security_headers(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::X_FRAME_OPTIONS,
+        header::HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 // --- Project handlers ---
@@ -1290,7 +1345,7 @@ async fn add_member(
     Json(request): Json<ProjectMemberCreate>,
 ) -> Result<(StatusCode, Json<ProjectMembership>), AppError> {
     let project = project_for(&state, &project_raw).await?;
-    project_access(&state, &headers, project.id, Permission::Manage).await?;
+    let principal = project_access(&state, &headers, project.id, Permission::Manage).await?;
     if request.subject.trim().is_empty() {
         return Err(AppError::BadRequest("subject is required".into()));
     }
@@ -1300,15 +1355,28 @@ async fn add_member(
             "owner access is assigned to the creator".into(),
         ));
     }
+    let role_value = serde_json::to_value(&request.role).unwrap_or_default();
     let membership = state
         .repo
         .create_membership(ProjectMembership {
             project_id: project.id,
-            subject: request.subject,
+            subject: request.subject.clone(),
             role: request.role,
             created_at: Utc::now(),
         })
         .await?;
+    // Granting project access is security-sensitive: record who added whom and
+    // with what role (remove_member already audits removals).
+    audit(
+        &state,
+        &principal,
+        project.id,
+        "added",
+        "membership",
+        project.id,
+        json!({"subject": request.subject, "role": role_value}),
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(membership)))
 }
 async fn remove_member(
@@ -1639,12 +1707,17 @@ async fn list_document_history(
 async fn get_document_revision(
     State(s): State<AppState>,
     h: HeaderMap,
-    Path((pid, _did, rid)): Path<(String, String, String)>,
+    Path((pid, did, rid)): Path<(String, String, String)>,
 ) -> Result<Json<DocumentRevision>, AppError> {
     permitted(&s, &h, Permission::Read).await?;
     let project = project_for(&s, &pid).await?;
+    // Scope the revision to the document named in the path. Previously the
+    // document id was discarded (`_did`), so a caller could fetch document B's
+    // revision body by placing B's revision UUID under document A's path as
+    // long as both lived in the same project.
+    let document = document_for_project(&s, &pid, &did).await?;
     let rev = s.repo.get_document_revision(id(&rid)?).await?;
-    if rev.project_id != project.id {
+    if rev.project_id != project.id || rev.document_id != document.id {
         return Err(AppError::NotFound);
     }
     Ok(Json(rev))
@@ -1782,14 +1855,16 @@ fn inject_redline_review(request: &mut CompileRequest) {
     if !matches!(request.view, CompileView::Redline) {
         return;
     }
-    let Some(entry_source) = request.sources.get(&request.entry) else {
-        return;
-    };
-    let has_markers = ["#review.add[", "#review.del["]
-        .iter()
-        .any(|marker| entry_source.contains(marker))
-        || entry_source.contains("#review.rep-open[]")
-        || entry_source.contains("#review.rep-close[]");
+    // Check ALL sources for review markers, not just the entry. In a multi-file
+    // project the marks may live on an included file (e.g. chapters/intro.typ)
+    // while the entry only #includes it.
+    let has_markers = request.sources.values().any(|src| {
+        ["#review.add[", "#review.del["]
+            .iter()
+            .any(|marker| src.contains(marker))
+            || src.contains("#review.rep-open[]")
+            || src.contains("#review.rep-close[]")
+    });
     if !has_markers {
         return;
     }
@@ -2024,7 +2099,13 @@ async fn export_project(
     let mut sources = BTreeMap::new();
     let mut doc_yaml = BTreeMap::new();
     for doc in &docs {
-        sources.insert(doc.path.clone(), doc.body.clone());
+        // Apply view-based projection so that exported content respects the
+        // requested view (baseline/proposed/redline/public), matching the
+        // behaviour of the interactive compile endpoint. Marks are currently
+        // not stored in the document's data field, so the mark list is empty;
+        // once marks are persisted they will flow through here automatically.
+        let projected = projected_source(&doc.body, &[], &r.view)?;
+        sources.insert(doc.path.clone(), projected);
         doc_yaml.insert(doc.path.clone(), doc.yaml.clone());
     }
     // The generated master lives at the project root and includes each
@@ -2122,6 +2203,18 @@ async fn create_share_link(
         .repo
         .create_share_link(project.id, &r.role, &p.subject, r.label)
         .await?;
+    // Creating a share link grants project access at the chosen role: record
+    // who created it and with what role so the audit trail is complete.
+    audit(
+        &s,
+        &p,
+        project.id,
+        "created",
+        "share_link",
+        project.id,
+        json!({"role": r.role, "label": link.label, "token_hash": link.token_hash}),
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(link)))
 }
 async fn list_share_links(
@@ -2138,7 +2231,7 @@ async fn delete_share_link(
     h: HeaderMap,
     Path((pid, token)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    permitted(&s, &h, Permission::Manage).await?;
+    let p = permitted(&s, &h, Permission::Manage).await?;
     let project = project_for(&s, &pid).await?;
     // Only the token hash is persisted (migration 0004), so revocation has to
     // resolve by hashing the raw token — comparing against the listed rows is
@@ -2152,6 +2245,18 @@ async fn delete_share_link(
         return Err(AppError::NotFound);
     }
     s.repo.delete_share_link(&token).await?;
+    // Revoking a share link removes a project access path: record who revoked it
+    // and which link was removed so the audit trail is complete.
+    audit(
+        &s,
+        &p,
+        project.id,
+        "deleted",
+        "share_link",
+        project.id,
+        json!({"token_hash": link.token_hash, "role": link.role}),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 /// Ordering used to decide whether a share link upgrades an existing
@@ -2187,6 +2292,10 @@ async fn redeem_share_link(
         .repo
         .get_membership(link.project_id, &principal.subject)
         .await;
+    // Redeeming a share link grants (or upgrades) project access — record it so
+    // the audit trail shows who gained access through which link. The role is
+    // serialized before it is moved into the membership below.
+    let granted_role = serde_json::to_value(&role).unwrap_or_default();
     match existing {
         Err(_) => {
             s.repo
@@ -2197,6 +2306,16 @@ async fn redeem_share_link(
                     created_at: Utc::now(),
                 })
                 .await?;
+            audit(
+                &s,
+                &principal,
+                link.project_id,
+                "redeemed",
+                "share_link",
+                link.project_id,
+                json!({"subject": principal.subject, "role": granted_role, "via": "share_link"}),
+            )
+            .await?;
         }
         Ok(existing) if membership_role_rank(&existing.role) < membership_role_rank(&role) => {
             // A link grants access at its chosen role: redeeming it upgrades an
@@ -2210,6 +2329,16 @@ async fn redeem_share_link(
                     created_at: existing.created_at,
                 })
                 .await?;
+            audit(
+                &s,
+                &principal,
+                link.project_id,
+                "redeemed",
+                "share_link",
+                link.project_id,
+                json!({"subject": principal.subject, "role": granted_role, "via": "share_link", "upgraded_from": serde_json::to_value(&existing.role).unwrap_or_default()}),
+            )
+            .await?;
         }
         Ok(_) => {}
     }

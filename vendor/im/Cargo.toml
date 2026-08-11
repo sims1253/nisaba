@@ -1,0 +1,18 @@
+[package]
+name = "im"
+version = "15.1.0"
+edition = "2021"
+description = "Shim that re-exports imbl, a maintained fork of im"
+license = "MPL-2.0+"
+
+[dependencies]
+imbl = { version = "2.0", default-features = false }
+
+[features]
+default = ["serde"]
+serde = ["imbl/serde"]
+arbitrary = ["imbl/arbitrary"]
+quickcheck = ["imbl/quickcheck"]
+proptest = ["imbl/proptest"]
+rayon = ["imbl/rayon"]
+debug = ["imbl/debug"]

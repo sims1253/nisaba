@@ -235,17 +235,21 @@ pub(crate) async fn project_acl(
     } else {
         return AppError::Forbidden.into_response();
     };
-    let is_document = request.uri().path().contains("/document");
+    let path = request.uri().path();
+    // Export is a read-only operation that generates a project archive from
+    // existing data — no mutation. Reviewers need it to export review copies.
+    // The handler additionally enforces Permission::Document.
+    let is_export = path.ends_with("/exports") && request.method() == http::Method::POST;
     let can_write = match request.method() {
         &http::Method::GET | &http::Method::HEAD => true,
+        _ if is_export => matches!(
+            membership.role,
+            MembershipRole::Owner | MembershipRole::Author | MembershipRole::Reviewer
+        ),
         // Reviewers propose changes through the review layer, never by writing
         // the baseline directly (PATCH/DELETE would let them bypass track
-        // changes and destroy author work). Document writes are owner/author
-        // only; the sync relay still lets reviewers push suggestions.
-        _ if is_document => matches!(
-            membership.role,
-            MembershipRole::Owner | MembershipRole::Author
-        ),
+        // changes and destroy author work). The sync relay still lets
+        // reviewers push suggestions.
         _ => matches!(
             membership.role,
             MembershipRole::Owner | MembershipRole::Author
