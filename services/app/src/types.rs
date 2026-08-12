@@ -99,6 +99,7 @@ pub struct DocumentRevision {
 pub struct ShareLink {
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub token: String,
+    #[serde(skip)]
     pub token_hash: String,
     pub project_id: Uuid,
     pub role: String,
