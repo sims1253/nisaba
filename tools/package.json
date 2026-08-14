@@ -6,7 +6,7 @@
   "description": "Repeatable DOCX→Typst template pipeline, visual-diff, and PDF compliance tooling for general document projects.",
   "license": "AGPL-3.0-only",
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.3"
   },
   "bin": {
     "nisaba-tools": "bin/nisaba-tools.ts"
