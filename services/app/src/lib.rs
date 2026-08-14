@@ -1943,21 +1943,25 @@ async fn api_compile(
                 request.marks.get(&path).map_or(&[], Vec::as_slice),
                 &request.view,
             )?;
-            Ok((path, projected))
+            // Convert markdown-style headings to Typst syntax at compile time
+            // (never mutating the stored body), matching the export path so a
+            // document that exports successfully also previews successfully.
+            Ok((path, markdown_headings_to_typst(&projected)))
         })
         .collect::<Result<_, AppError>>()?;
     request.marks.clear();
     let yaml = references_bibliography_yaml(&state.repo.list_references(request.project_id).await?);
     inject_bibliography(&mut request, yaml);
     inject_redline_review(&mut request);
-    let response = state.compile.compile(request.clone()).await?;
+    let project_id = request.project_id;
+    let response = state.compile.compile(request).await?;
     audit(
         &state,
         &principal,
-        request.project_id,
+        project_id,
         "compiled",
         "compile",
-        request.project_id,
+        project_id,
         json!({"build_id": response.build_id}),
     )
     .await?;

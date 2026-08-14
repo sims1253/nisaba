@@ -334,6 +334,57 @@ impl CompileClient for RecordingCompile {
 }
 
 #[tokio::test]
+async fn compile_proxy_converts_markdown_headings_like_export() {
+    // A document written with markdown `#` headings must compile the same way
+    // in the editor preview as it does in the export path (which already
+    // converts them); previously the same body failed only in the preview.
+    let repository = Arc::new(MemoryRepository::new());
+    let now = Utc::now();
+    let project = repository
+        .create_project(
+            Project {
+                id: Uuid::new_v4(),
+                name: "Headings".into(),
+                created_at: now,
+                updated_at: now,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    repository
+        .create_membership(ProjectMembership {
+            project_id: project.id,
+            subject: "alice".into(),
+            role: MembershipRole::Owner,
+            created_at: now,
+        })
+        .await
+        .unwrap();
+    let recorder = Arc::new(RecordingCompile(std::sync::Mutex::new(None)));
+    let state = AppState::new(repository, auth())
+        .with_exporters(recorder.clone(), Arc::new(UnconfiguredReferences));
+    let response = request(
+        router(state),
+        "POST",
+        "/api/compile",
+        "alice",
+        "author",
+        Some(json!({
+            "project_id": project.id,
+            "entry": "main.typ",
+            "sources": {"main.typ": "# Hello\n### Sub"},
+            "mode": "document",
+            "view": "baseline"
+        })),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+    assert_eq!(forwarded.sources["main.typ"], "= Hello\n=== Sub");
+}
+
+#[tokio::test]
 async fn compile_proxy_projects_review_marks_before_forwarding() {
     let repository = Arc::new(MemoryRepository::new());
     let now = Utc::now();
