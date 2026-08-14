@@ -1,6 +1,6 @@
 # DOCX-to-Typst template pipeline
 
-The `tools/` workspace contains deterministic utilities for learning the structure of a DOCX
+The `tools/` workspace contains deterministic utilities for inspecting the structure of a DOCX
 file, generating a Typst starting point, and comparing rendered output. This is an optional
 import aid for general document projects; DOCX is not part of the core storage model.
 
@@ -19,7 +19,7 @@ exercise the pipeline. It is not a claim of visual parity with third-party templ
 ## Commands
 
 The CLI entry point is `bin/nisaba-tools.ts` (the `nisaba-tools` bin declared
-in `tools/package.json`; there is no `cli` script). From `tools/`:
+in `tools/package.json`). From `tools/`:
 
 ```bash
 bun install --frozen-lockfile

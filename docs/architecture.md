@@ -98,8 +98,8 @@ policy where egress restriction is required.
    in the configured filesystem data directory. Convergence is a CRDT property; syntactic
    validity is not, so the editor reparses on every keystroke.
 3. **Project (app).** `app` owns path-addressed documents and references in Postgres,
-   and authorises the request
-   against the OIDC token, and orchestrates compiles and exports.
+   authorizes the request against the OIDC token, and orchestrates compiles and
+   exports.
 4. **Compile (compile).** `app` sends the **projection** of the document to `compile` as plain Typst sources. `compile` knows nothing
    about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, span
    map, and (opt-in) page frames. Warm state is keyed by `project_id`.
@@ -238,7 +238,7 @@ browser ──(4) code → app (or direct token exchange) ─────▶ tok
 browser ──(5) GET /api/... Authorization: Bearer <access> ─▶ app (validates, routes by role)
 ```
 
-- Realm `nisaba`, client `nisaba-web` (**public**, authorisation-code +
+- Realm `nisaba`, client `nisaba-web` (**public**, authorization-code +
   PKCE `S256` — no client secret is exposed to the browser), roles `author` /
   `reviewer` / `read-only`.
 - Roles are mapped into the access token as a **top-level `roles`** claim.
@@ -262,7 +262,7 @@ Capabilities come from the **IdP role claim** (`author` / `reviewer` /
 | Edit baseline (PATCH body) | ✓ | ✓ | — (suggest only) | — |
 | Create / rename / delete documents | ✓ | ✓ | — | — |
 | Accept / reject / comment (review layer) | ✓ | ✓ | ✓ | — |
-| Compile / see diagnostics | ✓ | ✓ | ✓ | — |
+| Compile / see diagnostics | ✓ | ✓ | ✓ | ✓ |
 | Manage members / share links / export / delete project | ✓ | ✓ | — | — |
 
 Reviewers are locked into suggesting mode: their edits become tracked

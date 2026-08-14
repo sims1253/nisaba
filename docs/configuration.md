@@ -115,7 +115,7 @@ Tuning variables (`NISABA_SYNC_OIDC_ALGORITHMS`, `..._LEEWAY_SECS`,
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `NISABA_COMPILE_ADDR` / `PORT` | `0.0.0.0:8080` | Bind address (no published host port) |
-| `NISABA_COMPILE_MODE` | `production` | `development`/`test` additionally disable auth — never use there |
+| `NISABA_COMPILE_MODE` | `production` | `development`/`test` additionally disable auth — never use these modes in production |
 | `NISABA_COMPILE_TOKEN` | — **required** in production | Bearer secret enforced on `POST /compile` |
 | `NISABA_COMPILE_TIMEOUT_MS` | `120000` | Request compile timeout |
 | `NISABA_COMPILE_MAX_BODY_BYTES` | `8388608` | Request body limit |

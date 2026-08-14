@@ -15,8 +15,8 @@ visual-diff harness, and PDF compatibility checks.
   platforms; fixtures and golden files are byte-stable.
 
 See [`../docs/template-pipeline.md`](../docs/template-pipeline.md) for the full
-contract, and [`../fixtures/templates`](../fixtures/templates) for fixtures and
-synthetic fixtures and golden manifest/skeleton outputs.
+contract, and [`../fixtures/templates`](../fixtures/templates) for the sample DOCX
+fixtures and the golden manifest/skeleton outputs.
 
 ## Quick start
 

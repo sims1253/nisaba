@@ -24,6 +24,7 @@ just up                        # Postgres + SeaweedFS + Keycloak (+ seaweedfs-in
 just compose-validate          # validate compose against .env.example (temp env)
 just smoke                     # bring up infra, probe health + realm, tear down
 docker compose ps
+open http://127.0.0.1:8103     # Nisaba web (sign in: demo / demo)
 open http://127.0.0.1:8090     # Keycloak admin (admin / <KEYCLOAK_ADMIN_PASSWORD>)
 open http://127.0.0.1:9100     # SeaweedFS S3 endpoint (<NISABA_S3_ADMIN_KEY>)
 
@@ -59,8 +60,8 @@ Every HTTP service exposes **`GET /healthz` → `200 ok`** (the Compose
 
 `/healthz` is a **liveness** probe. The app readiness endpoint performs a PostgreSQL
 check, while sync verifies that its configured persistence directory is writable. App readiness
-does not currently probe S3, and compile exposes liveness only; production orchestration should
-not infer those untested dependencies are healthy.
+does not currently probe S3, and compile exposes liveness only; a passing readiness check does not show
+that S3 is healthy (app) or anything beyond liveness (compile).
 
 For the app/sync collaboration path, configure the same non-empty
 `NISABA_SYNC_AUTHZ_TOKEN` in both containers. Production app startup rejects a
@@ -211,8 +212,8 @@ mode is gradual and visible, not sudden.
 
 ## 7. Things deliberately deferred (do not regress into building them)
 
-The complexity budget freed by the proportional performance bar
-goes to references, review and templates — **not** to these:
+The complexity budget freed by the quality bar in
+[`PLAN.md`](../PLAN.md) goes to references, review and templates — **not** to these:
 
 - Cached cross-reference index + staleness flag for document previews.
 - Local WASM browser preview (a latency optimisation against Word, the baseline).

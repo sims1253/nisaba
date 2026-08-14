@@ -14,7 +14,7 @@ label on mobile so it cannot cover the sign-in controls.
 
 ## Realm: `nisaba`
 
-- **Client:** `nisaba-web` — **public** client, authorisation-code flow + PKCE
+- **Client:** `nisaba-web` — **public** client, authorization code flow + PKCE
   (`S256`). There is **no client secret** exposed to the browser and none is
   read by the app. `directAccessGrantsEnabled` (the password grant) is **off**.
 - **Token claims:** roles are mapped into a **top-level `roles`** claim (the app
@@ -38,7 +38,7 @@ label on mobile so it cannot cover the sign-in controls.
 ## Web client — public + PKCE (no secret)
 
 `nisaba-web` is a **public** OIDC client. The browser performs the
-authorisation-code flow with a PKCE code challenge (`S256`), so **no client
+authorization code flow with a PKCE code challenge (`S256`), so **no client
 secret is ever shipped to the browser** and none is configured in `.env`.
 
 The **app service verifies tokens by signature, not by client secret.** It reads
@@ -90,7 +90,7 @@ MUST:
       accounts, strong passwords, and MFA for `reviewer`).
 - [ ] Set `sslRequired` to `"external"` or `"all"` (dev is `"none"`).
 - [ ] Keep `directAccessGrantsEnabled` off (the password grant); prefer the
-      authorisation-code + PKCE flow. (The dev realm already disables it.)
+      authorization code + PKCE flow. (The dev realm already disables it.)
 - [ ] Run Keycloak with `start --optimized` behind a TLS-terminating reverse
       proxy on a single hostname, collapsing `NISABA_OIDC_ISSUER` and
       `NISABA_OIDC_DISCOVERY_URL` into one URL.

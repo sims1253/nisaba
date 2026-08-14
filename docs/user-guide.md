@@ -42,7 +42,7 @@ Opening a project gives you five regions:
   into).
 - Inside a project, **Files** lists the documents at their paths
   (`chapters/01-intro.typ`). Folders come from the paths, so creating a document
-  with a nested path organises it. The file the preview builds from carries a
+  with a nested path organizes it. The file the preview builds from carries a
   **MAIN** tag.
 - **＋** in the Files header adds a file; click a file to open it; double-click
   it to rename it.

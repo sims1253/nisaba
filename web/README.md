@@ -39,7 +39,7 @@ resource URL. Conditional saves send `expected_revision` to prevent stale edits
 from overwriting concurrent changes.
 
 References, full-text attachments, membership, sharing, history, review, and
-collaborative sync remain available. Project export remains the generic
+collaborative sync are available. Project export remains the generic
 `POST /projects/{project_id}/exports` endpoint. Compile requests use `document`
 for a single document or `full` for a full project build.
 

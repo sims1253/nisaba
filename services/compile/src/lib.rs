@@ -652,8 +652,8 @@ impl Worker {
         let world = self.universe.snapshot();
         // A single `typst::compile` call: Typst runs its own internal
         // convergence loop (up to 5 passes via comemo constraints), so an outer
-        // loop with full-document hashing here is pure waste — it multiplied
-        // compile time by up to 5x for `full` mode without changing the output.
+        // loop with full-document hashing here is pure waste — an earlier version
+        // multiplied compile time by up to 5x without changing the output.
         let compiled = typst::compile::<PagedDocument>(&world);
         let diagnostics = compiled
             .warnings

@@ -48,6 +48,9 @@ cp .env.example .env
 just up-all
 ```
 
+When the build finishes, open http://127.0.0.1:8103 and sign in with `demo`/`demo`
+(the other demo accounts are listed in the user guide).
+
 The default Compose configuration binds published ports to `127.0.0.1` only. It includes a
 **development-only** Keycloak realm with documented demo accounts; never import that realm into
 a production identity provider. See [`docs/operations.md`](docs/operations.md) for service URLs,
@@ -66,8 +69,9 @@ bun run --cwd tools test
 formatting, clippy, and tests, dependency-policy (`cargo deny`) and advisory
 (`cargo audit`) checks, the tools verification suite, and the web install, lint,
 test, and build steps. Some operational and external-tool checks require Docker,
-LibreOffice, Poppler, qpdf, ImageMagick, or Typst;
-[`docs/testing.md`](docs/testing.md) lists the suites and prerequisites.
+LibreOffice, Poppler, qpdf, ImageMagick, or Typst; [`docs/testing.md`](docs/testing.md)
+lists the suites and [`tools/README.md`](tools/README.md) lists the external-tool
+prerequisites.
 
 ## Documentation
 

@@ -24,7 +24,7 @@ bun run --cwd tools test
 ```
 
 `just ci-local` also runs dependency-policy and advisory checks. The external PDF test suite has
-additional system prerequisites documented in [`docs/testing.md`](docs/testing.md).
+additional system prerequisites documented in [`tools/README.md`](tools/README.md).
 
 ## Change guidelines
 
@@ -37,7 +37,7 @@ additional system prerequisites documented in [`docs/testing.md`](docs/testing.m
   change in the pull request.
 - Never commit credentials, `.env` files, build output, editor state, QA transcripts, or generated
   reports outside their documented fixture/output directories.
-- Keep public documentation factual. Planned behavior must be labelled as planned.
+- Keep public documentation factual. Planned behavior must be labeled as planned.
 
 ## Licensing
 

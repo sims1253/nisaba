@@ -2,7 +2,7 @@
 
 Deployment definitions, templates, and bootstrap scripts for Nisaba. These are
 root-level **developer-experience / operations** files; application source lives
-in `crates/`, `services/`, `web/`, `tools/` (owned by other streams).
+in `crates/`, `services/`, `web/`, `tools/` (owned by those workspaces).
 
 ## Layout
 
@@ -34,8 +34,7 @@ deploy/
 ## Two tiers
 
 1. **Infrastructure** — brought up by `docker compose up` (default profile):
-   Postgres, SeaweedFS, Keycloak, and the one-shot `seaweedfs-init`. This is what the
-   task "local Postgres + S3-compatible SeaweedFS + OIDC Keycloak" delivers.
+   Postgres, SeaweedFS, Keycloak, and the one-shot `seaweedfs-init`.
 2. **Application** — brought up by `docker compose --profile app up --build`:
    `app`, `sync`, `compile`, `web`. These build from `Dockerfile.rust` /
    `Dockerfile.web`.

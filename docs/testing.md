@@ -77,7 +77,7 @@ Docker smoke test would never surface.
 
 3. **Smoke scripts are for infra config only.** Use them to verify that a
    Dockerfile, compose service, or healthcheck change works. Do not use them
-   to test API endpoints, CRDT behaviour, or rendering — those belong in the
+   to test API endpoints, CRDT behavior, or rendering — those belong in the
    integration test layer (or the Playwright tier for browser flows).
 
 4. **`just ci-local`** runs the full integration test suite locally and
