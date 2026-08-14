@@ -2,8 +2,10 @@
 
 Day-2 operations for the Nisaba stack: bring-up, health, observability,
 backup/restore, and the production deltas. Pairs with
-[`security.md`](security.md) (least privilege) and [`architecture.md`](architecture.md)
-(service contracts).
+[`security.md`](security.md) (least privilege), [`architecture.md`](architecture.md)
+(service contracts), [`deployment.md`](deployment.md) (the self-hosting
+walkthrough built on the §5 deltas), and
+[`configuration.md`](configuration.md) (the environment-variable reference).
 
 > **Status:** the local infrastructure and application tiers, health probes, and
 > backup scripts run today. Metrics/OTLP export, high-availability deployment, and the
@@ -34,7 +36,8 @@ just e2e                        # full app-profile smoke: build images, dev toke
 Run the local CI-equivalent checks:
 
 ```bash
-just ci-local     # fmt-check, clippy, test, deny, audit, verify, web-test
+just ci-local     # fmt-check, clippy, test (incl. doctests), deny, audit,
+                  # verify, web-install, web-test, web-lint, web-build
 ```
 
 ---
@@ -68,8 +71,9 @@ but the internal authorization endpoint remains deny-all.
 
 ## 3. Observability plan
 
-Three signals, all opt-in via environment (wired in `.env.example`; exporters
-ship with the services, not the infra):
+Three signals. Logging is implemented today; metrics and tracing are planned.
+The `OTEL_*` variables in `.env.example` are **reserved** — no service ships an
+OTLP exporter or a `/metrics` endpoint yet:
 
 ### Logs
 - Structured (`tracing`/`tracing-subscriber` in Rust; `RUST_LOG` controls
@@ -153,7 +157,9 @@ checks row/object counts — schedule it as part of release acceptance.
 
 ## 5. Production deployment deltas
 
-The local Compose stack is deliberately close to production shape; the deltas:
+The local Compose stack is deliberately close to production shape; the deltas
+below are turned into a step-by-step self-hosting guide (TLS, secrets,
+Keycloak, upgrade/rollback) in [`deployment.md`](deployment.md):
 
 | Concern            | Local                                   | Production                          |
 |--------------------|-----------------------------------------|-------------------------------------|
