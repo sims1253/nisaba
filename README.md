@@ -62,9 +62,12 @@ bun run --cwd web test
 bun run --cwd tools test
 ```
 
-`just ci-local` runs the broader formatting, linting, dependency, build, and test suite. Some
-operational and external-tool checks require Docker, LibreOffice, Poppler, qpdf, ImageMagick, or
-Typst; [`docs/testing.md`](docs/testing.md) lists the suites and prerequisites.
+`just ci-local` runs the full local check set that CI runs on pull requests: Rust
+formatting, clippy, and tests, dependency-policy (`cargo deny`) and advisory
+(`cargo audit`) checks, the tools verification suite, and the web install, lint,
+test, and build steps. Some operational and external-tool checks require Docker,
+LibreOffice, Poppler, qpdf, ImageMagick, or Typst;
+[`docs/testing.md`](docs/testing.md) lists the suites and prerequisites.
 
 ## Documentation
 
@@ -72,8 +75,15 @@ Typst; [`docs/testing.md`](docs/testing.md) lists the suites and prerequisites.
 - [Domain vocabulary](CONTEXT.md)
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)
+- [Deployment (self-hosting)](docs/deployment.md)
+- [Configuration reference](docs/configuration.md)
 - [Security model](docs/security.md)
 - [Testing](docs/testing.md)
+- [Template pipeline](docs/template-pipeline.md)
+- [UI design](docs/ui-design.md)
+- [Dependency security](docs/dependency-security.md)
+- [Tech stack review](docs/tech-stack-review.md)
+- [Deploy definitions](deploy/README.md)
 - [Roadmap](ROADMAP.md)
 - [Product direction](PLAN.md)
 
@@ -81,6 +91,13 @@ Typst; [`docs/testing.md`](docs/testing.md) lists the suites and prerequisites.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a change. Please report security issues
 privately as described in [`SECURITY.md`](SECURITY.md), not in a public issue.
+
+## Support
+
+Questions and usage problems are welcome in GitHub Discussions and the issue
+tracker — this is a small project, so there is no support SLA. Security reports
+go through the private channel in [`SECURITY.md`](SECURITY.md), never a public
+issue.
 
 ## License
 
