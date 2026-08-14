@@ -18,26 +18,30 @@ exercise the pipeline. It is not a claim of visual parity with third-party templ
 
 ## Commands
 
-From `tools/`:
+The CLI entry point is `bin/nisaba-tools.ts` (the `nisaba-tools` bin declared
+in `tools/package.json`; there is no `cli` script). From `tools/`:
 
 ```bash
 bun install --frozen-lockfile
-bun run cli -- capabilities
-bun run cli -- docx-introspect \
+bun bin/nisaba-tools.ts capabilities
+bun bin/nisaba-tools.ts docx-introspect \
   --input ../fixtures/templates/sample-document.docx \
   --output /tmp/manifest.json
-bun run cli -- typst-skeleton \
+bun bin/nisaba-tools.ts typst-skeleton \
   --manifest /tmp/manifest.json \
   --output /tmp/template.typ
-bun run cli -- validate-schema \
+bun bin/nisaba-tools.ts validate-schema \
   --manifest /tmp/manifest.json \
   --typst /tmp/template.typ
 ```
 
+From the repository root, use `bun tools/bin/nisaba-tools.ts <command>` (see
+[`fixtures/templates/README.md`](../fixtures/templates/README.md)).
+
 For a visual comparison:
 
 ```bash
-bun run cli -- visual-diff \
+bun bin/nisaba-tools.ts visual-diff \
   --reference reference.pdf \
   --candidate candidate.pdf \
   --workdir /tmp/visual-diff
