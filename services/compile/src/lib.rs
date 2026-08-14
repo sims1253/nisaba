@@ -74,6 +74,26 @@ pub struct ServiceConfig {
     pub max_concurrent_compiles: usize,
 }
 
+impl Default for ServiceConfig {
+    /// The canonical limits, matching `from_env`'s production-mode defaults
+    /// (`NISABA_COMPILE_MODE` unset ⇒ `require_auth: true`, no token). Wiring
+    /// this into a binary fails loudly: `run()` asserts that required auth has
+    /// a token.
+    fn default() -> Self {
+        Self {
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            max_sources: DEFAULT_MAX_SOURCES,
+            max_source_bytes: DEFAULT_MAX_SOURCE_BYTES,
+            compile_timeout: DEFAULT_TIMEOUT,
+            bearer_token: None,
+            require_auth: true,
+            max_workers: DEFAULT_MAX_WORKERS,
+            worker_idle_ttl: DEFAULT_WORKER_IDLE_TTL,
+            max_concurrent_compiles: DEFAULT_MAX_CONCURRENT_COMPILES,
+        }
+    }
+}
+
 impl ServiceConfig {
     pub fn from_env() -> Result<Self, String> {
         let mode = std::env::var("NISABA_COMPILE_MODE").unwrap_or_else(|_| "production".to_owned());
@@ -108,18 +128,14 @@ impl ServiceConfig {
         })
     }
 
+    /// Test configuration: the defaults plus the intended test delta only (a
+    /// bearer token), so this cannot drift from `ServiceConfig::default()` the
+    /// way the previous field-by-field restatement did.
     #[cfg(test)]
     fn test() -> Self {
         Self {
-            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
-            max_sources: DEFAULT_MAX_SOURCES,
-            max_source_bytes: DEFAULT_MAX_SOURCE_BYTES,
-            compile_timeout: DEFAULT_TIMEOUT,
             bearer_token: Some("test-token".into()),
-            require_auth: true,
-            max_workers: DEFAULT_MAX_WORKERS,
-            worker_idle_ttl: DEFAULT_WORKER_IDLE_TTL,
-            max_concurrent_compiles: DEFAULT_MAX_CONCURRENT_COMPILES,
+            ..ServiceConfig::default()
         }
     }
 }
@@ -473,20 +489,10 @@ fn authorized(headers: &HeaderMap, token: Option<&str>) -> bool {
 
 #[cfg(test)]
 fn validate_request(request: &CompileRequest) -> Result<(), String> {
-    validate_request_with_limits(
-        request,
-        &ServiceConfig {
-            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
-            max_sources: DEFAULT_MAX_SOURCES,
-            max_source_bytes: DEFAULT_MAX_SOURCE_BYTES,
-            compile_timeout: DEFAULT_TIMEOUT,
-            bearer_token: None,
-            require_auth: false,
-            max_workers: DEFAULT_MAX_WORKERS,
-            worker_idle_ttl: DEFAULT_WORKER_IDLE_TTL,
-            max_concurrent_compiles: DEFAULT_MAX_CONCURRENT_COMPILES,
-        },
-    )
+    // Only the limit fields matter to validation; the defaults are the
+    // canonical values (previously restated field-by-field, drifting from
+    // ServiceConfig::default()).
+    validate_request_with_limits(request, &ServiceConfig::default())
 }
 
 fn validate_request_with_limits(
