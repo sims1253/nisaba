@@ -1,14 +1,26 @@
-import type { PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist"
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist"
 
 // pdfjs-dist worker: the `new URL(..., import.meta.url)` pattern does not
 // resolve reliably under all bundler/nginx combinations. Importing the worker
 // entry directly lets Vite emit it as a hashed asset and wire the URL.
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker"
 
-async function loadPdfDocument(data: Uint8Array): Promise<PDFDocumentProxy> {
+// ONE worker port for the whole session, created lazily on first load.
+// loadPdfDocument used to assign `GlobalWorkerOptions.workerPort = new
+// PdfWorker()` per call: every assignment handed pdfjs a brand-new Worker that
+// nothing ever terminated, and since compileForDiagnostics reloads the preview
+// after every typing pause, a long session accumulated one dead worker (plus
+// its message channel) per 2s-debounced recompile. Reusing a single port is
+// the supported pattern: pdfjs caches one PDFWorker wrapper per port
+// (PDFWorker.#workerPorts) and the underlying Worker stays alive across
+// documents.
+let pdfWorkerPort: Worker | undefined
+
+async function loadPdfDocument(data: Uint8Array): Promise<PDFDocumentLoadingTask> {
   const { GlobalWorkerOptions, getDocument } = await import("pdfjs-dist")
-  GlobalWorkerOptions.workerPort = new PdfWorker()
-  return getDocument({ data }).promise
+  pdfWorkerPort ??= new PdfWorker()
+  GlobalWorkerOptions.workerPort = pdfWorkerPort
+  return getDocument({ data })
 }
 
 const ZOOM_LEVELS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
@@ -30,6 +42,8 @@ const DEFAULT_ZOOM_INDEX = 3
  */
 export class VirtualPdfViewer {
   private document?: PDFDocumentProxy
+  /** The in-flight/completed loading task behind `document`; destroyed on the next load. */
+  private loadingTask?: PDFDocumentLoadingTask
   private observer?: IntersectionObserver
   private generation = 0
   private zoomIndex = DEFAULT_ZOOM_INDEX
@@ -105,8 +119,40 @@ export class VirtualPdfViewer {
     this.activeTextLayers.forEach((layer) => layer.cancel())
     this.activeTextLayers.clear()
     this.clearHighlight()
-    const pdf = await loadPdfDocument(data)
-    if (generation !== this.generation) return
+    // Tear down the PREVIOUS loading task/document before starting the next
+    // one. load() used to replace this.document without destroying it, so every
+    // recompile leaked the old PDFDocumentProxy and its transport. destroy()
+    // must also SETTLE before the shared worker port can serve the next
+    // document (pdfjs marks the port's worker _pendingDestroy until teardown
+    // finishes and refuses new documents in that window), so it is awaited
+    // rather than fire-and-forgotten; its errors are swallowed because a
+    // half-dead document must not fail the fresh load.
+    const previousTask = this.loadingTask
+    this.loadingTask = undefined
+    this.document = undefined
+    try { await previousTask?.destroy() } catch { /* teardown of an already-dead document */ }
+    const task = await loadPdfDocument(data)
+    if (generation !== this.generation) {
+      void task.destroy().catch(() => undefined)
+      return
+    }
+    this.loadingTask = task
+    let pdf: PDFDocumentProxy
+    try {
+      pdf = await task.promise
+    } catch (error) {
+      // A destroy issued by a newer load() rejects an in-flight promise
+      // ("Worker was destroyed"); that is supersession, not a render failure,
+      // so it bails silently instead of surfacing a bogus preview error.
+      if (generation !== this.generation) return
+      throw error
+    }
+    if (generation !== this.generation) {
+      // pdfjs v6 dropped PDFDocumentProxy.destroy(); teardown goes through the
+      // loading task (pdf.loadingTask.destroy()).
+      void pdf.loadingTask.destroy().catch(() => undefined)
+      return
+    }
     this.document = pdf
     const pages = Array.from({ length: pdf.numPages }, (_, index) => {
       const page = document.createElement("article")

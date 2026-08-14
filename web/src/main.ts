@@ -25,6 +25,7 @@ import * as api from "./api"
 import type { CompileView, Fulltext, MarkInput, MembershipRole, NisabaDocument, Project, Reference } from "./api"
 import { AuthTokenLive, OidcClient, OidcClientLive, onAuthFailure, readStoredAccessToken, currentUserDisplayName, decodedTokenPayload, isOidcCallback, oidcConfigFromEnv, scheduleTokenRefresh } from "./auth"
 import { emptyReviewState, reviewReducer, type ReviewItem, type ReviewState } from "./review"
+import { mergeReviewItems, readReviewItemsFromMap, writeReviewItemsToMap } from "./review-persistence"
 import { createCursorAt, resolveCursor } from "./cursor"
 import { SHELL_HTML } from "./shell"
 import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount, type Heading, type TreeNode } from "./outline"
@@ -1213,16 +1214,33 @@ function openProject(project: Project): void {
   persistLastOpen({ projectId: project.id })
   renderWorkspaceState()
   loadOutline()
-  run(api.listReferences(project.id), (references) => { state.references = references; renderProjectFacts() })
-  run(api.listFulltexts(project.id), (fulltexts) => { state.fulltexts = new Map(fulltexts.map((item) => [item.reference_id, item])); renderProjectFacts() })
+  // Each of these callbacks writes project-scoped state (references, fulltexts,
+  // role). Rapidly opening project A then B delivers responses out of order, so
+  // without the same still-open guard loadOutline uses, a late response for A
+  // would hand B the wrong citation completer entries or — worse for the
+  // reviewer UX — the wrong role.
+  run(api.listReferences(project.id), (references) => {
+    if (state.project?.id !== project.id) return
+    state.references = references
+    renderProjectFacts()
+  })
+  run(api.listFulltexts(project.id), (fulltexts) => {
+    if (state.project?.id !== project.id) return
+    state.fulltexts = new Map(fulltexts.map((item) => [item.reference_id, item]))
+    renderProjectFacts()
+  })
   // Fetch the caller's project-scoped role to gate reviewer UX: a reviewer is
   // locked into suggesting mode (H1) and has Export hidden (M4). On failure,
   // default to read-only (least privilege) so a transient error does not grant
-  // author-level UI powers to non-authors.
+  // author-level UI powers to non-authors. The failure path needs the guard
+  // too: A's failed membership resolving after B opened would lock B's UI to
+  // read-only on A's behalf.
   run(api.getMembership(project.id), (membership) => {
+    if (state.project?.id !== project.id) return
     state.role = membership.role
     applyRoleGates()
   }, () => {
+    if (state.project?.id !== project.id) return
     state.role = "read-only"
     applyRoleGates()
   })
@@ -1282,243 +1300,46 @@ function addDocument(): void {
   }, { placeholder: "chapters/introduction.typ" })
 }
 
-/** Adds a demo document with substantial Typst content. */
+/**
+ * Adds a demo document with substantial Typst content. The seeded references
+ * and the generated body live in ./demo-content, pulled via dynamic import()
+ * so ~250 lines of demo material stay out of the critical bundle and load only
+ * when the (role-gated) button is clicked.
+ */
 function addDemoFile(): void {
   const project = state.project
   if (!project) return
-  const refTitles = [
-    "Honeywell, B. (2023). Observational Evidence of Mustelid-Fey Synchronization at Subterranean Frequency Events.",
-    "Glimmerwick, T. (2022). Spectral Analysis of Bioluminescent Dance Floors in the Fairy Underground.",
-    "Badgerton, M. (2024). Aggression and Rhythm: Behavioral Correlates in Mellivora capensis at Rave Sites.",
-    "Sparkletoes, P. (2023). Echolocation Interference by Fairy Folk During High-BPM Audio Playback.",
-    "Hufflepaw, D. (2024). Dietary Shifts in Honey Badgers Attending Nocturnal Fairy Gatherings: A Pilot Study.",
-    "Moonwhisper, L. (2022). The Underground Sound: Acoustic Architecture of Fairy Rave Caverns.",
-    "Clawson, R. (2023). Territorial Marking Behavior Overlaid with Glitter Residue: A Forensic Approach.",
-    "Twinkleburst, F. (2024). Effects of Sustained 140 BPM Exposure on Mustelid Heart Rate and Fairy Wing Beat Frequency."
-  ]
-  const refIds: string[] = []
-  run(
-    Effect.forEach(refTitles, (title) => api.createReference(project.id, {
-      title,
-      authors: [title.split(",")[0] ?? "Unknown"],
-      year: 2024,
-      doi: `10.1000/demo-${Math.random().toString(36).slice(2, 8)}`,
-      journal: "Journal of Interdisciplinary Crypto-Zoological Acoustics",
-      extra: {}
-    }).pipe(Effect.map((ref) => { refIds.push(ref.id); return ref }))),
-    () => {
-      const body = generateDemoBody(refIds)
-      run(api.createDocument(project.id, {
-        path: "honey-badger-rave-study.typ",
-        title: "Honey Badger Rave Study",
-        body
-      }), () => {
-        status("Demo document added")
-        loadOutline()
-        run(api.listReferences(project.id), (references) => { state.references = references })
-      })
-    }
-  )
+  void import("./demo-content").then(({ DEMO_REFERENCE_TITLES: refTitles, generateDemoBody }) => {
+    const refIds: string[] = []
+    run(
+      Effect.forEach(refTitles, (title) => api.createReference(project.id, {
+        title,
+        authors: [title.split(",")[0] ?? "Unknown"],
+        year: 2024,
+        doi: `10.1000/demo-${Math.random().toString(36).slice(2, 8)}`,
+        journal: "Journal of Interdisciplinary Crypto-Zoological Acoustics",
+        extra: {}
+      }).pipe(Effect.map((ref) => { refIds.push(ref.id); return ref }))),
+      () => {
+        const body = generateDemoBody(refIds)
+        run(api.createDocument(project.id, {
+          path: "honey-badger-rave-study.typ",
+          title: "Honey Badger Rave Study",
+          body
+        }), () => {
+          status("Demo document added")
+          loadOutline()
+          run(api.listReferences(project.id), (references) => { state.references = references })
+        })
+      }
+    )
+    // A failed chunk load (offline first click, cache eviction) should tell the
+    // user something rather than die as an unhandled rejection.
+  })
+    .catch(() => status("The demo document could not be loaded"))
 }
 
-/** Generates a substantial Typst document about honey badgers and fairy raves. */
-function generateDemoBody(refIds: string[]): string {
-  const L: string[] = []
-  L.push('#set page(paper: "a4", margin: (x: 2cm, y: 2.5cm))')
-  L.push('#set text(size: 10pt)')
-  L.push('#set par(justify: true)')
-  L.push("")
-  L.push("= Honey Badgers and the Fairy Underground Rave Scene: A Comprehensive Investigation")
-  L.push("")
-  L.push("_By the Institute for Interdisciplinary Crypto-Zoological Acoustics_")
-  L.push("")
-  L.push("== Abstract")
-  L.push("")
-  L.push("This study presents the first systematic investigation into the observed relationship between the honey badger (*Mellivora capensis*) and the previously undocumented fairy underground rave scene. Over a period of 18 months, our research team deployed motion-activated cameras, acoustic sensors, and enchanted monitoring equipment across 47 suspected fairy rave sites in the Welsh countryside. Our findings reveal a startling pattern of honey badger attendance at these events, characterized by sustained rhythmic head-bobbing, aggressive dance floor territoriality, and an unexplained tolerance for glitter. See @fig-attendance for the spatial distribution of observed encounters.")
-  L.push("")
-  if (refIds[0]) L.push(`The phenomenon was first reported by ${"Honeywell"} #cite(<${refIds[0]}>) and initially dismissed as a statistical artifact.`)
-  if (refIds[1]) L.push(`However, subsequent spectral analysis of the bioluminescent dance floors #cite(<${refIds[1]}>) confirmed that the acoustic signatures were consistent across all sites.`)
-  L.push("")
 
-  L.push("== Introduction")
-  L.push("")
-  L.push("=== Background")
-  L.push("The honey badger, long renowned for its fearlessness and general indifference to consequences, has not previously been associated with subterranean recreational activities. Fairy folk, conversely, are well-documented in their preference for underground gatherings featuring synchronized bioluminescent light displays and rhythmic audio at tempos exceeding 130 BPM. The intersection of these two populations was first noted during a routine badger-tracking expedition in 2022, when field researcher Dr. B. Honeywell observed what she described as 'a large mustelid displaying unmistakable rhythmic coordination with a pulsating wall of fairy lights approximately 40 meters below a Welsh hillside.'")
-  L.push("")
-  L.push("=== Research Questions")
-  L.push("This study addresses three primary questions:")
-  L.push("+ Are honey badgers genuinely attending fairy raves, or is the observed proximity coincidental?")
-  L.push("+ If attending, what behavioral modifications do honey badgers exhibit in the rave environment?")
-  L.push("+ What is the ecological significance of this interspecies interaction?")
-  L.push("")
-  if (refIds[2]) L.push(`Preliminary behavioral analysis #cite(<${refIds[2]}>) suggests the attendance is deliberate and sustained.`)
-  L.push("")
-
-  L.push("== Methods")
-  L.push("")
-  L.push("=== Study Sites")
-  L.push("We identified 47 candidate fairy rave sites based on surface indicators (unusual concentrations of toadstools in geometric patterns, faint bass vibrations detectable at ground level, and intermittent glitter deposits on nearby vegetation). Of these, 31 sites showed confirmed activity during the study period. The geographic distribution of confirmed sites is shown in @fig-attendance.")
-  L.push("")
-  L.push("=== Monitoring Equipment")
-  L.push("Each site was instrumented with:")
-  L.push("+ Motion-activated infrared cameras (Reconyx HyperFire 2) modified for subterranean deployment")
-  L.push("+ Acoustic sensors capable of capturing frequencies from 10 Hz to 80 kHz, covering both the fairy audio range and the full honey badger vocalization spectrum")
-  L.push("+ Enchanted monitoring crystals (for bioluminescent intensity and fairy-aura detection), provided by our Department of Fey Engineering")
-  L.push("+ Glitter-spectroscopy collection pads placed at 5-meter intervals along suspected badger transit tunnels")
-  L.push("")
-
-  // Table 1: Study sites
-  L.push("=== Site Characteristics")
-  L.push("")
-  L.push("#figure(table(")
-  L.push("  columns: 4,")
-  L.push("  [*Site*], [*Depth (m)*], [*Avg BPM*], [*Badger Visits*],")
-  const sites = [
-    ["Cwm Derwen", "38", "142", "17"],
-    ["Tywyn Hollow", "52", "138", "23"],
-    ["Blaenau Cavern", "41", "145", "9"],
-    ["Ystrad Tunnel", "67", "150", "31"],
-    ["Pen-y-Fawr Sink", "29", "135", "12"],
-    ["Coed Ystlum", "44", "148", "8"],
-    ["Nant Gwrhyd", "55", "141", "19"],
-    ["Ogof Tinker", "33", "139", "25"],
-    ["Ffos-y-Ffridd", "48", "146", "14"],
-    ["Bwlch Glas", "61", "152", "7"],
-  ]
-  for (const [name, depth, bpm, visits] of sites) {
-    L.push(`  [${name}], [${depth}], [${bpm}], [${visits}],`)
-  }
-  L.push(`), caption: [Site characteristics across all 10 primary monitoring locations. Average BPM measured at peak activity (midnight to 3 AM). Badger visits counted over the 18-month study period.])`)
-  L.push("<tbl-sites>")
-  L.push("The complete site data is presented in @tbl-sites. Note the positive correlation between site depth and average BPM (Pearson r = 0.72, p < 0.01), suggesting that deeper fairy venues favor faster tempos.")
-  L.push("")
-
-  // Figure 1
-  L.push("=== Spatial Distribution")
-  L.push("")
-  L.push("#figure(rect(width: 100%, height: 8cm, fill: luma(240), stroke: 0.5pt, align(center + horizon, text(10pt, gray)[Map of confirmed fairy rave sites with honey badger attendance overlay. Each dot represents a confirmed site; dot size proportional to badger visit frequency.])), caption: [Geographic distribution of confirmed fairy rave sites (n=31) and honey badger encounter frequency. Sites concentrated in upland Wales, with a secondary cluster in the Brecon Beacons.])")
-  L.push("<fig-attendance>")
-  L.push("")
-
-  L.push("== Results")
-  L.push("")
-  L.push("=== Honey Badger Attendance Patterns")
-  L.push("")
-  const behaviors = [
-    ["Rhythmic head-bobbing", "94%", "Sustained bobbing at the dominant BPM for periods exceeding 15 minutes"],
-    ["Territorial dance-floor marking", "78%", "Scent-marking posts adjacent to the primary bioluminescent wall"],
-    ["Glitter tolerance", "100%", "No adverse reactions observed despite heavy glitter accumulation on fur"],
-    ["Interspecies proximity tolerance", "88%", "Honey badgers remained within 2m of fairy folk without aggression"],
-    ["Bioluminescent interaction", "67%", "Direct contact with fairy light displays (nose-touching, pawing)"],
-    ["Sustained stillness during breakdowns", "91%", "Complete immobility during musical 'drops' followed by explosive activity"],
-    ["Vocalization synchronization", "45%", "Growling patterns that coincided with bass drops on 45% of observed occasions"],
-    ["Post-event napping", "82%", "Badgers remained at the site for an average of 47 minutes after music ceased"],
-  ]
-  L.push("#figure(table(")
-  L.push("  columns: 3,")
-  L.push("  [*Behavior*], [*Frequency*], [*Description*],")
-  for (const [beh, freq, desc] of behaviors) {
-    L.push(`  [${beh}], [${freq}], [${desc}],`)
-  }
-  L.push(`), caption: [Observed honey badger behaviors at fairy rave sites (n=165 encounters across 31 sites). Frequency represents the percentage of encounters in which the behavior was observed at least once.])`)
-  L.push("<tbl-behaviors>")
-  L.push("")
-  L.push("The behavioral data summarized in @tbl-behaviors reveals that honey badgers exhibit a remarkably consistent suite of rave-related behaviors. The 100% glitter tolerance rate is particularly noteworthy, as honey badgers are typically averse to foreign substances on their fur.")
-  L.push("")
-  if (refIds[4]) L.push(`Hufflepaw's dietary analysis #cite(<${refIds[4]}>) further revealed that attending badgers showed a 34% increase in caloric intake in the 24 hours following a rave event, suggesting substantial energy expenditure.`)
-  L.push("")
-
-  // Figure 2
-  L.push("=== Bioluminescent Interaction Analysis")
-  L.push("")
-  L.push("#figure(rect(width: 100%, height: 7cm, fill: luma(245), stroke: 0.5pt, align(center + horizon, text(10pt, gray)[Bioluminescent intensity (lux) over a typical 3-hour fairy rave event, with honey badger proximity events marked as vertical lines. Note the clustering of badger approaches during peak luminescence.])), caption: [Temporal relationship between bioluminescent intensity and honey badger proximity events during a representative rave event at Ystrad Tunnel (Site 4). Peak intensity events consistently attracted badger approach within 30 seconds.])")
-  L.push("<fig-bioluminescence>")
-  L.push("")
-  L.push("As shown in @fig-bioluminescence, honey badgers demonstrated a clear attraction to peak bioluminescent events. The mean approach latency was 22.4 seconds (SD = 8.1), suggesting a rapid response to visual stimuli rather than acoustic cues alone.")
-  L.push("")
-
-  // Table 3
-  L.push("=== Acoustic Analysis")
-  L.push("")
-  L.push("Acoustic recordings revealed an unexpected finding: honey badgers at rave sites produced vocalizations in the 40-60 Hz range that were phase-locked to the dominant bass frequency of the fairy audio system. This synchronization was observed at 74% of encounters and is unprecedented in the mustelid acoustic literature.")
-  L.push("")
-  if (refIds[7]) L.push(`The sustained 140+ BPM exposure documented by Twinkleburst #cite(<${refIds[7]}>) may explain the elevated heart rates observed in attending badgers (mean: 142 BPM vs. baseline 78 BPM).`)
-  L.push("")
-  const acoustic = [
-    ["Site 1 (Cwm Derwen)", "142", "48 Hz", "Yes", "0.91"],
-    ["Site 2 (Tywyn Hollow)", "138", "45 Hz", "Yes", "0.88"],
-    ["Site 4 (Ystrad Tunnel)", "150", "52 Hz", "Yes", "0.95"],
-    ["Site 8 (Ogof Tinker)", "139", "44 Hz", "No", "—"],
-    ["Site 10 (Bwlch Glas)", "152", "55 Hz", "Yes", "0.97"],
-  ]
-  L.push("#figure(table(")
-  L.push("  columns: 5,")
-  L.push("  [*Site*], [*BPM*], [*Badger vocal freq*], [*Phase-locked*], [*Coherence*],")
-  for (const [site, bpm, freq, locked, coh] of acoustic) {
-    L.push(`  [${site}], [${bpm}], [${freq}], [${locked}], [${coh}],`)
-  }
-  L.push(`), caption: [Acoustic analysis of honey badger vocalizations at fairy rave sites. Phase-locking assessed via cross-correlation of badger vocalization envelopes with the fairy audio bass frequency. Coherence values >0.8 indicate strong synchronization.])`)
-  L.push("<tbl-acoustic>")
-  L.push("")
-
-  L.push("== Discussion")
-  L.push("")
-  L.push("=== Why Do Honey Badgers Attend Fairy Raves?")
-  L.push("")
-  L.push("Several hypotheses may explain this unprecedented interspecies interaction:")
-  L.push("")
-  L.push("1. _Acoustic attraction_: The low-frequency bass characteristic of fairy rave music falls within the honey badger's peak hearing sensitivity. The sustained rhythm may produce a entrainment effect analogous to the 'groove response' documented in humans.")
-  L.push("")
-  L.push("2. _Thermoregulatory benefit_: Underground sites maintain a stable 12-15 degrees Celsius year-round, providing thermal refuge. The combination of stable temperature and rhythmic stimulation may create an optimal resting environment.")
-  L.push("")
-  if (refIds[3]) L.push(`3. _Fairy aura interaction_: Sparkletoes' work on echolocation interference #cite(<${refIds[3]}>) suggests fairy folk emit a subtle electromagnetic field. Honey badgers, with their large sinus cavities, may be uniquely positioned to detect and find this field pleasant.`)
-  L.push("")
-  L.push("4. _Glitter as a tracking mechanism_: The observation that honey badgers accumulate significant glitter without distress raises the possibility that glitter serves as a visual marker system. Honey badgers may use glitter trails to navigate between rave sites, effectively creating a glitter-based geographic information system.")
-  L.push("")
-
-  L.push("=== Ecological Implications")
-  L.push("")
-  L.push("The presence of an apex mustelid at fairy social events has potential implications for both populations:")
-  L.push("")
-  L.push("+ For fairy folk: the honey badger's territorial behavior may influence dance floor layout and crowd dynamics. Observations of fairies voluntarily yielding space to approaching badgers suggest a established interspecies social hierarchy.")
-  L.push("+ For honey badgers: sustained exposure to high-BPM environments and bioluminescent stimuli may have long-term physiological effects. The elevated heart rates documented during events warrant further investigation.")
-  L.push("+ For the ecosystem: the glitter deposition patterns associated with badger transit between sites may affect soil composition and plant growth along transit corridors.")
-  L.push("")
-  if (refIds[5]) L.push(`The acoustic architecture of the fairy caverns #cite(<${refIds[5]}>) creates natural amplification chambers that may extend the effective range of the rave signal, attracting badgers from distances exceeding 5 km.`)
-  if (refIds[6]) L.push(`Clawson's forensic analysis of territorial markings #cite(<${refIds[6]}>) confirmed that 89% of marked posts within rave sites contained both badger scent compounds and fairy glitter particles, providing physical evidence of sustained co-occupation.`)
-  L.push("")
-
-  // Figure 3
-  L.push("#figure(rect(width: 100%, height: 6cm, fill: luma(242), stroke: 0.5pt, align(center + horizon, text(10pt, gray)[Hypothesized model of honey badger-fairy rave interaction. Arrows indicate proposed causal relationships. Dashed lines represent uncertain pathways requiring further investigation.])), caption: [Conceptual model integrating acoustic attraction, thermoregulatory benefit, fairy-aura detection, and glitter-based navigation into a unified framework for understanding the honey badger-fairy rave phenomenon.])")
-  L.push("<fig-model>")
-  L.push("The integrated model proposed in @fig-model suggests that the interaction is maintained by positive feedback loops rather than a single attractor.")
-  L.push("")
-
-  L.push("== Limitations")
-  L.push("")
-  L.push("This study has several limitations that should be addressed in future research:")
-  L.push("")
-  L.push("- The enchanted monitoring crystals have not been independently calibrated against non-enchanted references.")
-  L.push("- Glitter-spectroscopy is an emerging methodology with no established protocols for mustelid-associated glitter analysis.")
-  L.push("- The geographic scope was limited to Wales; fairy rave sites in other regions (Cornwall, the Scottish Highlands, the Isle of Man) may exhibit different patterns.")
-  L.push("- Observer bias may exist, as all field researchers reported finding the observations 'absolutely delightful' and may have unconsciously sought confirming evidence.")
-  L.push("- The sample size of 165 encounters, while substantial, is insufficient for robust population-level inference.")
-  L.push("")
-
-  L.push("== Conclusions")
-  L.push("")
-  L.push("This study provides the first systematic evidence that honey badgers deliberately attend and actively participate in the fairy underground rave scene. The observed behaviors — rhythmic synchronization, bioluminescent interaction, glitter tolerance, and territorial dance-floor marking — constitute a coherent behavioral syndrome that warrants recognition as a distinct ecological phenomenon. We propose the term _Mellivora rava_ (rave badger syndrome) to describe this behavioral pattern.")
-  L.push("")
-  L.push("Future research should focus on: (1) physiological monitoring of attending badgers via non-invasive biotelemetry, (2) experimental manipulation of BPM and bioluminescent intensity to establish causal relationships, and (3) genetic analysis to determine whether rave attendance has a heritable component.")
-  L.push("")
-
-  L.push("== Acknowledgments")
-  L.push("")
-  L.push("We thank the Welsh Fairy Council for permitting access to monitoring sites, the Badger Watch volunteer network for field assistance, and the Department of Fey Engineering for the enchanted monitoring crystals. This research was supported by a grant from the Institute for Interdisciplinary Crypto-Zoological Acoustics (Grant No. HBFR-2023-007). No honey badgers or fairy folk were harmed during this study, though three cameras were destroyed by enthusiastic badger interactions.")
-  L.push("")
-
-  return L.join("\n")
-}
 
 // ---------------------------------------------------------------------------
 // Document loading, sync, autosave
@@ -1801,6 +1622,21 @@ let browserOffline = false
 let lastSyncStatus: SyncStatus | undefined
 let lastSyncDetail: string | undefined
 
+/**
+ * The short status word for the sync cell. One mapping shared by setSyncStatus
+ * and renderPresence — the two previously re-derived it independently and their
+ * fallbacks drifted ("Local" vs "No document"). `status` is undefined before the
+ * first relay callback: with no document open the label stays "No document"
+ * (the shell's initial text); with one open, the editor works locally.
+ */
+function syncShortLabel(status: SyncStatus | undefined): string {
+  if (browserOffline) return "Offline"
+  if (status === "connected") return "Live"
+  if (status === "connecting") return "Connecting…"
+  if (status === "unsupported") return "Sync off"
+  return state.document ? "Local" : "No document"
+}
+
 function setSyncStatus(value: SyncStatus, detail?: string): void {
   // Remember the latest relay status so the offline listener can restore it on
   // reconnect without a redundant status callback.
@@ -1814,11 +1650,7 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
   // the tooltip so the bar stays scannable. "Live" is only ever claimed when the
   // relay says so — going offline dims it immediately, without waiting for the
   // WebSocket to notice.
-  const short = browserOffline ? "Offline"
-    : value === "connected" ? "Live"
-      : value === "connecting" ? "Connecting…"
-        : value === "unsupported" ? "Sync off"
-          : "Local"
+  const short = syncShortLabel(value)
   const explanation = browserOffline ? "You are offline — your work is still saved to this device and syncs when you reconnect"
     : value === "connected" ? "Connected: other people see your edits as you type"
       : value === "connecting" ? "Reconnecting to the collaboration server…"
@@ -1865,13 +1697,9 @@ function renderPresence(): void {
     more.textContent = `+${presencePeers.length - shown.length}`
     host.append(more)
   }
-  setText("#sync-label", presenceSuffix(
-    browserOffline ? "Offline"
-      : lastSyncStatus === "connected" ? "Live"
-        : lastSyncStatus === "connecting" ? "Connecting…"
-          : lastSyncStatus === "unsupported" ? "Sync off"
-            : state.document ? "Local" : "No document"
-  ))
+  // Re-rendering the avatar row also refreshes the "N here" suffix on the sync
+  // label, using the same shared short-word mapping as setSyncStatus.
+  setText("#sync-label", presenceSuffix(syncShortLabel(lastSyncStatus)))
 }
 
 /**
@@ -2346,7 +2174,11 @@ const editor = new EditorView({
             editor.state.selection.main.to
           ).trim()
           if (selected.length > 0) {
-            void pdfViewer.searchAndScroll(selected)
+            // searchAndScroll awaits page loads that reject when the document
+            // is replaced mid-search (a rapid double-click during a recompile);
+            // swallow it like the load() call sites rather than surface an
+            // unhandled rejection.
+            void pdfViewer.searchAndScroll(selected).catch(() => undefined)
           }
         }
       }),
@@ -2457,9 +2289,6 @@ let isLoadingDocument = false
  * write feedback loop. Cleared as soon as the remote apply finishes.
  */
 let applyingRemoteReview = false
-
-/** Loro container key that holds the serialised review state (JSON-in-LoroMap). */
-const REVIEW_CONTAINER = "review"
 
 /**
  * Unsubscribe handle for the active document's review-container subscription.
@@ -2585,20 +2414,12 @@ function renderReviewUpdate(update: ViewUpdate): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Writes the current review items into the active replica's "review" LoroMap as a
- * single JSON string, so they survive reload and sync to every collaborator through
- * the existing WebSocket relay (the same path the text CRDT uses — no new endpoints).
+ * Writes the current review items into the active replica's "review" LoroMap
+ * (per-item schema v2 — see review-persistence.ts for the layout and why it
+ * replaced the single-blob v1 write), so they survive reload and sync to every
+ * collaborator through the existing WebSocket relay.
  *
- * The whole item list is one value keyed "items". Loro maps are last-writer-wins per
- * key, so a peer that writes a STALE or EMPTY list (e.g. a fresh session whose
- * catch-up has not arrived yet, or a reload racing the WELCOME) would clobber the
- * shared items — the 2026-08-09 collaboration finding: reviewer suggestions lost,
- * snapshots showed the review container reset to []. The write therefore MERGES the
- * current map value with the local list (union by id, local wins per id) instead of
- * replacing it.
- *
- * The map.set() is a no-op when the value is unchanged (Loro dedups it), so calling
- * this after every review mutation is cheap. It is guarded so it does NOT run while:
+ * It is guarded so it does NOT run while:
  *   * applying a remote review update (applyingRemoteReview) — would echo back;
  *   * seeding a document (isLoadingDocument) — the seed dispatch, not a real change;
  *   * importing remote text (isImportingRemote) — peer edits, not local review edits;
@@ -2607,36 +2428,11 @@ function renderReviewUpdate(update: ViewUpdate): void {
 function persistReview(commit = true): void {
   if (applyingRemoteReview || isLoadingDocument || isImportingRemote()) return
   const doc = activeLoro
-  const json = JSON.stringify(mergeReviewItems(readReviewItemsFromMap(doc), state.review.items))
   try {
-    const map = doc.getMap(REVIEW_CONTAINER)
-    if (map.get("items") !== json) {
-      map.set("items", json)
-      if (commit) doc.commit({ origin: "review" })
+    if (writeReviewItemsToMap(doc, state.review.items) && commit) {
+      doc.commit({ origin: "review" })
     }
   } catch { /* replica torn down mid-document-switch: silently skip */ }
-}
-
-/**
- * Union of two review item lists by id, with `local` winning for duplicate ids
- * (the local session is authoritative for items it created or just acted on).
- * Prevents a stale/empty session from clobbering shared review state.
- */
-function mergeReviewItems(remote: readonly ReviewItem[], local: readonly ReviewItem[]): ReviewItem[] {
-  const byId = new Map<string, ReviewItem>()
-  for (const item of remote) byId.set(item.id, item)
-  for (const item of local) byId.set(item.id, item) // local wins
-  return [...byId.values()]
-}
-
-/** Reads the persisted review items JSON from the active replica's review map. */
-function readReviewItemsFromMap(doc: LoroDoc): ReviewItem[] {
-  try {
-    const value = doc.getMap(REVIEW_CONTAINER).get("items")
-    if (value === undefined) return []
-    const parsed = JSON.parse(String(value))
-    return Array.isArray(parsed) ? (parsed as ReviewItem[]) : []
-  } catch { return [] }
 }
 
 /**
@@ -2676,11 +2472,8 @@ function loadPersistedReview(doc: LoroDoc = activeLoro): readonly ReviewItem[] |
     // LOW #10: Read from the passed-in doc, not the file-level activeLoro, so the
     // subscribe handler always reads the replica it subscribed to (activeLoro may
     // have been reassigned to a newer document's replica by the time the callback fires).
-    const json = doc.getMap(REVIEW_CONTAINER).get("items")
-    if (typeof json !== "string" || json.length === 0) return undefined
-    const items = JSON.parse(json) as readonly ReviewItem[]
-    if (!Array.isArray(items)) return undefined
-    return items
+    const items = readReviewItemsFromMap(doc)
+    return items.length > 0 ? items : undefined
   } catch { return undefined }
 }
 

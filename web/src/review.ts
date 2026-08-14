@@ -77,4 +77,3 @@ export function isOrphaned(item: ReviewItem, textLength: number): boolean {
 }
 
 export const emptyReviewState: ReviewState = { items: [], suggesting: false, capability: "unsupported" }
-export function activeReviewItems(state: ReviewState): readonly ReviewItem[] { return state.items.filter((item) => item.status === "open") }
