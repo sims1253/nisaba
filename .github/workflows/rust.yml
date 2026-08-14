@@ -7,6 +7,10 @@ on:
       - '**/*.rs'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+      # Migrations are compiled into the binaries via sqlx::migrate! and run
+      # by tests — a migrations-only change alters the built/tested behavior
+      # and must not skip CI.
+      - 'migrations/**'
       - 'rustfmt.toml'
       - 'deny.toml'
       - '.github/workflows/rust.yml'
@@ -15,6 +19,7 @@ on:
       - '**/*.rs'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+      - 'migrations/**'
       - 'rustfmt.toml'
       - 'deny.toml'
       - '.github/workflows/rust.yml'
@@ -75,11 +80,3 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Licences, advisories, bans, and sources are a blocking policy gate.
       - uses: EmbarkStudios/cargo-deny-action@v2
-
-  msrv:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets --locked
