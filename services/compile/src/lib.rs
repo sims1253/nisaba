@@ -6,7 +6,6 @@
 
 use std::{
     collections::HashMap,
-    hash::Hash,
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex as StdMutex},
@@ -53,25 +52,10 @@ pub struct CompileRequest {
     project_id: String,
     entry: String,
     sources: HashMap<String, String>,
-    mode: CompileMode,
-    /// An open projection label. The compile service does not interpret it;
-    /// projection happens before this boundary.
+    /// An open projection label. The compile service does not interpret it
+    /// beyond folding it into the per-worker fingerprint; projection happens
+    /// before this boundary.
     view: String,
-    /// Opt-in SVG page frames. Defaults to false because frames are computed
-    /// eagerly for every page and consumed by nobody today.
-    #[serde(default)]
-    include_frames: bool,
-    /// PDF standards to enforce. Defaults to PDF/A-2b when empty.
-    /// This should become a per-project/per-profile lock before production use.
-    #[serde(default)]
-    pdf_standards: Vec<typst_pdf::PdfStandard>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Hash)]
-#[serde(rename_all = "lowercase")]
-enum CompileMode {
-    Document,
-    Full,
 }
 
 #[derive(Debug, Clone)]
@@ -693,15 +677,11 @@ impl Worker {
         };
         let compile_ms = started.elapsed().as_millis();
         let pdf_started = Instant::now();
-        // Set an explicit PDF standard. Defaults to PDF/A-2b
-        // when no standards are specified by the request.
-        let standards = if request.pdf_standards.is_empty() {
-            typst_pdf::PdfStandards::new(&[typst_pdf::PdfStandard::A_2b])
-                .map_err(|e| format!("invalid PDF standards combination: {e:?}"))?
-        } else {
-            typst_pdf::PdfStandards::new(&request.pdf_standards)
-                .map_err(|e| format!("invalid PDF standards combination: {e:?}"))?
-        };
+        // The service always emits PDF/A-2b (the archival profile the export
+        // contract requires). Making this per-project/per-profile is future
+        // work; the old request field for it was never sent by any client.
+        let standards = typst_pdf::PdfStandards::new(&[typst_pdf::PdfStandard::A_2b])
+            .map_err(|e| format!("invalid PDF standards combination: {e:?}"))?;
         let pdf = match typst_pdf::pdf(
             &document,
             &typst_pdf::PdfOptions {
@@ -738,21 +718,12 @@ impl Worker {
             }
         };
         let pdf_ms = pdf_started.elapsed().as_millis();
-        let svg_started = Instant::now();
-        let frames = if request.include_frames {
-            document
-                .pages()
-                .iter()
-                .enumerate()
-                .map(|(page, page_data)| Frame {
-                    page: page + 1,
-                    svg: typst_svg::svg(page_data, &typst_svg::SvgOptions::default()),
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let svg_ms = svg_started.elapsed().as_millis();
+        // SVG page frames are not computed: they were eagerly rendered for
+        // every page and consumed by no client (the old opt-in request flag
+        // defaulted off everywhere). The response field stays for schema
+        // compatibility and is always empty.
+        let svg_ms = 0u128;
+        let frames = Vec::new();
         let mut result = CompileResponse {
             pdf: Some(BASE64.encode(pdf)),
             frames,
@@ -780,7 +751,6 @@ impl Worker {
             worker_reused = reused,
             "compile completed"
         );
-        let _ = request.view;
         Ok(result)
     }
 }
@@ -987,7 +957,6 @@ fn fingerprint(request: &CompileRequest) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     request.entry.hash(&mut hasher);
-    request.mode.hash(&mut hasher);
     request.view.hash(&mut hasher);
     let mut sources = request.sources.iter().collect::<Vec<_>>();
     sources.sort_by(|a, b| a.0.cmp(b.0));
@@ -1060,10 +1029,7 @@ mod tests {
             project_id: "p".into(),
             entry: "main.typ".into(),
             sources: HashMap::from([(String::from("main.typ"), source.into())]),
-            mode: CompileMode::Document,
             view: "public".into(),
-            include_frames: true,
-            pdf_standards: vec![],
         }
     }
 
@@ -1083,68 +1049,14 @@ mod tests {
             .expect("compile");
         let pdf = BASE64.decode(response.pdf.expect("pdf")).expect("base64");
         assert!(pdf.starts_with(b"%PDF-"));
-        assert_eq!(response.frames.len(), 1);
+        assert!(response.frames.is_empty());
         assert!(response.outline.iter().any(|entry| entry.title == "Hello"));
     }
 
     #[test]
-    fn frames_are_empty_by_default() {
-        let mut worker = Worker::new(&CompileRequest {
-            project_id: "p".into(),
-            entry: "main.typ".into(),
-            sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-            mode: CompileMode::Document,
-            view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
-        })
-        .expect("worker");
-        let response = worker
-            .compile(
-                &CompileRequest {
-                    project_id: "p".into(),
-                    entry: "main.typ".into(),
-                    sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-                    mode: CompileMode::Document,
-                    view: "public".into(),
-                    include_frames: false,
-                    pdf_standards: vec![],
-                },
-                false,
-            )
-            .expect("compile");
-        assert!(
-            response.frames.is_empty(),
-            "frames should be empty when include_frames is false"
-        );
-    }
-
-    #[test]
     fn pdf_defaults_to_a2b_standard() {
-        let mut worker = Worker::new(&CompileRequest {
-            project_id: "p".into(),
-            entry: "main.typ".into(),
-            sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-            mode: CompileMode::Document,
-            view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
-        })
-        .expect("worker");
-        let response = worker
-            .compile(
-                &CompileRequest {
-                    project_id: "p".into(),
-                    entry: "main.typ".into(),
-                    sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-                    mode: CompileMode::Document,
-                    view: "public".into(),
-                    include_frames: false,
-                    pdf_standards: vec![],
-                },
-                false,
-            )
-            .expect("compile");
+        let mut worker = Worker::new(&request("= Hello")).expect("worker");
+        let response = worker.compile(&request("= Hello"), false).expect("compile");
         let pdf = BASE64.decode(response.pdf.expect("pdf")).expect("base64");
         assert!(pdf.starts_with(b"%PDF-"));
     }
@@ -1155,36 +1067,9 @@ mod tests {
     /// dictionary entries.
     #[test]
     fn pdf_embeds_fonts() {
-        let mut worker = Worker::new(&CompileRequest {
-            project_id: "p".into(),
-            entry: "main.typ".into(),
-            sources: HashMap::from([(
-                String::from("main.typ"),
-                "= Font Embedding Test\nThis text requires a font.".into(),
-            )]),
-            mode: CompileMode::Document,
-            view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
-        })
-        .expect("worker");
-        let response = worker
-            .compile(
-                &CompileRequest {
-                    project_id: "p".into(),
-                    entry: "main.typ".into(),
-                    sources: HashMap::from([(
-                        String::from("main.typ"),
-                        "= Font Embedding Test\nThis text requires a font.".into(),
-                    )]),
-                    mode: CompileMode::Document,
-                    view: "public".into(),
-                    include_frames: false,
-                    pdf_standards: vec![],
-                },
-                false,
-            )
-            .expect("compile");
+        let source = "= Font Embedding Test\nThis text requires a font.";
+        let mut worker = Worker::new(&request(source)).expect("worker");
+        let response = worker.compile(&request(source), false).expect("compile");
         let pdf = BASE64.decode(response.pdf.expect("pdf")).expect("base64");
 
         // A valid PDF with embedded fonts contains font resource entries.
@@ -1328,20 +1213,14 @@ mod tests {
             project_id: "p".into(),
             entry: "documents/a.typ".into(),
             sources: HashMap::from([(String::from("documents/a.typ"), "= Document A".into())]),
-            mode: CompileMode::Document,
             view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
         })
         .expect("worker");
         let second = CompileRequest {
             project_id: "p".into(),
             entry: "documents/b.typ".into(),
             sources: HashMap::from([(String::from("documents/b.typ"), "= Document B".into())]),
-            mode: CompileMode::Document,
             view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
         };
         worker.update_sources(&second).expect("re-root");
         assert_eq!(worker.known_entry, "documents/b.typ");
@@ -1410,7 +1289,6 @@ mod tests {
             "project_id": project_id,
             "entry": "main.typ",
             "sources": {"main.typ": source},
-            "mode": "document",
             "view": view
         })
     }
@@ -1532,7 +1410,6 @@ mod tests {
             "project_id": "limits",
             "entry": "main.typ",
             "sources": {"main.typ": "ok", "other.typ": "x"},
-            "mode": "document",
             "view": "public"
         });
         assert_eq!(

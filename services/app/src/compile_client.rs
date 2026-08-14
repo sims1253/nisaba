@@ -8,8 +8,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 use crate::types::{
-    AppError, CompileMode, CompileRequest, CompileResponse, CompileView, ExportFile, Project,
-    ReferenceExport,
+    AppError, CompileRequest, CompileResponse, CompileView, ExportFile, Project, ReferenceExport,
 };
 
 #[async_trait]
@@ -45,11 +44,13 @@ impl CompileClient for HttpCompileClient {
             CompileView::Public => "public",
             CompileView::Redline => "redline",
         };
+        // `mode` is intentionally not forwarded: the compile service removed
+        // the field (it never changed behaviour), and serde ignores unknown
+        // fields there, so old and new services interoperate either way.
         let payload = json!({
             "project_id": request.project_id.to_string(),
             "entry": request.entry,
             "sources": request.sources,
-            "mode": match request.mode { CompileMode::Document => "document", CompileMode::Full => "full" },
             "view": view,
         });
         let response = self
