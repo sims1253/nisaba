@@ -152,7 +152,7 @@ describe("hybrid allowlist", () => {
       // construct covering a position must be the outermost one.
       const found = findConstructs("#figure(table(columns: 2, [a], [b]))")
       expect(found[0]?.kind).toBe("figure")
-      expect(found.map((item) => item.from)).toEqual([...found.map((item) => item.from)].sort((a, b) => a - b))
+      expect(found.map((item) => item.from)).toEqual(found.map((item) => item.from).sort((a, b) => a - b))
     })
   })
 

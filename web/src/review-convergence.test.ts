@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from "vitest"
 import { LoroDoc } from "loro-crdt"
-import type { Comment, ReviewItem } from "./review"
+import type { Comment } from "./review"
 import { readReviewItemsFromMap, writeReviewItemsToMap } from "./review-persistence"
 
 const REVIEW_CONTAINER = "review"

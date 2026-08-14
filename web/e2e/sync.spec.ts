@@ -7,7 +7,7 @@
  */
 
 import { test, expect } from "@playwright/test"
-import { signIn, createProject, openFirstProject, BASE_URL } from "./helpers"
+import { signIn, createProject, openFirstProject } from "./helpers"
 
 test.describe("Sync WebSocket", () => {
   test("sync connection establishes and shows live status", async ({ page }) => {
