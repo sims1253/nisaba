@@ -27,6 +27,7 @@ use axum::{
 };
 use base64::Engine as _;
 use chrono::Utc;
+use nisaba_core::prelude::RedlineStyle;
 use nisaba_core::{Document as CoreDocument, View as CoreView};
 use nisaba_export::{PdfCompliance, ProjectArchiveInput, build_project_archive, write_zip};
 use nisaba_references::{
@@ -1954,13 +1955,17 @@ fn inject_redline_review(request: &mut CompileRequest) {
     }
     // Check ALL sources for review markers, not just the entry. In a multi-file
     // project the marks may live on an included file (e.g. chapters/intro.typ)
-    // while the entry only #includes it.
+    // while the entry only #includes it. The marker strings come from the
+    // redline style's defaults so they cannot drift from what projection emits.
     let has_markers = request.sources.values().any(|src| {
-        ["#review.add[", "#review.del["]
-            .iter()
-            .any(|marker| src.contains(marker))
-            || src.contains("#review.rep-open[]")
-            || src.contains("#review.rep-close[]")
+        [
+            RedlineStyle::DEFAULT_INSERT_OPEN,
+            RedlineStyle::DEFAULT_DELETE_OPEN,
+            RedlineStyle::DEFAULT_REPLACED_OPEN,
+            RedlineStyle::DEFAULT_REPLACED_CLOSE,
+        ]
+        .iter()
+        .any(|marker| src.contains(marker))
     });
     if !has_markers {
         return;
