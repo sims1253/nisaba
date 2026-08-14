@@ -24,7 +24,7 @@ pub const MAX_PEERS_PER_DOC: usize = 64;
 pub const MAX_UPDATE_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum size of an encoded version vector sent in a HELLO, in bytes.
 /// Enforced after HELLO decode in the session handshake: a larger vector is
-/// rejected with a TOO_LARGE error frame before it reaches the authority.
+/// rejected with a `TOO_LARGE` error frame before it reaches the authority.
 pub const MAX_VV_BYTES: usize = 64 * 1024;
 /// Maximum size of a presence payload, in bytes.
 pub const MAX_PRESENCE_BYTES: usize = 16 * 1024;
@@ -145,7 +145,6 @@ pub fn validate_doc_id(id: &str) -> Result<&str, SyncError> {
             return Err(SyncError::InvalidDocId(id.to_string()));
         }
     }
-    let _ = id;
     Ok(id)
 }
 
@@ -154,8 +153,9 @@ const fn is_allowed_doc_id_byte(b: u8) -> bool {
     matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-')
 }
 
-/// Bounded configuration. All fields have safe defaults; production overrides via
-/// [`Config::from_env`] (kept minimal for M2 — full config management is app's job).
+/// Bounded configuration. All fields have safe defaults; the binary runs
+/// [`Config::default`] (tuning happens in this crate or via its constructor —
+/// there is no env-var override surface, unlike the app service).
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Max inbound update size.

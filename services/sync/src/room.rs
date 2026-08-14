@@ -165,6 +165,19 @@ pub struct DocRoom {
 }
 
 impl DocRoom {
+    /// Lock the presence gate.
+    ///
+    /// Poisoning is unreachable: no code path taken while the gate is held
+    /// panics (fallible work — decode, import, awaits — happens before or
+    /// after the critical section), so the `expect` documents that invariant
+    /// once instead of repeating it at every call site. If it ever fires, the
+    /// panic unwinds only the connection task that hit it.
+    fn lock_gate(&self) -> std::sync::MutexGuard<'_, Presence> {
+        self.gate
+            .lock()
+            .expect("room gate poisoned (invariant: no gate-held section panics)")
+    }
+
     /// Build a room. If a prior snapshot + op log exist for `doc_id`, the
     /// authority is hydrated from them; otherwise it starts empty.
     pub async fn open(
@@ -331,7 +344,7 @@ impl DocRoom {
         tx: mpsc::Sender<Frame>,
         close: CloseSignal,
     ) -> SyncResult<JoinOutcome> {
-        let mut presence = self.gate.lock().expect("room gate poisoned");
+        let mut presence = self.lock_gate();
 
         // Atomic admission: capacity + duplicate check + insert all under the
         // gate, so concurrent joins cannot exceed the peer cap or double-admit.
@@ -430,7 +443,7 @@ impl DocRoom {
     /// is a no-op and cannot evict the replacement. Returns whether the removal
     /// actually happened.
     pub fn leave(&self, peer: PeerId, generation: u64) -> bool {
-        let mut presence = self.gate.lock().expect("room gate poisoned");
+        let mut presence = self.lock_gate();
         let mine = self
             .sessions
             .get(&peer)
@@ -475,7 +488,7 @@ impl DocRoom {
         // is ordered relative to any concurrent join.
         let advanced = self.import_and_persist(bytes).await?;
         if advanced {
-            let mut presence = self.gate.lock().expect("room gate poisoned");
+            let mut presence = self.lock_gate();
             self.fanout_except(&mut presence, &Frame::Update(bytes.to_vec()), sender);
             self.touch();
         }
@@ -490,7 +503,7 @@ impl DocRoom {
                 state.len()
             )));
         }
-        let mut presence = self.gate.lock().expect("room gate poisoned");
+        let mut presence = self.lock_gate();
         presence.upsert(sender, state);
         // Coalesce roster re-broadcasts: a burst of presence frames must not
         // re-encode + fan the full roster per frame. The latest roster is kept
@@ -533,7 +546,7 @@ impl DocRoom {
         if !broadcast_now {
             return false;
         }
-        let mut presence = self.gate.lock().expect("room gate poisoned");
+        let mut presence = self.lock_gate();
         let roster = encode_roster(&presence.roster());
         self.fanout(&mut presence, &Frame::Presence(roster));
         true
@@ -541,7 +554,7 @@ impl DocRoom {
 
     /// Record a heartbeat from `sender`.
     pub fn handle_heartbeat(&self, sender: PeerId) -> SyncResult<()> {
-        let mut presence = self.gate.lock().expect("room gate poisoned");
+        let mut presence = self.lock_gate();
         presence.heartbeat(sender);
         self.touch();
         drop(presence);
@@ -553,7 +566,7 @@ impl DocRoom {
     /// rather than silently losing sync. Returns a sync error (or the empty
     /// result) so the session can log which peer was evicted.
     pub fn evict_for_rate_limit(&self, peer: PeerId) -> SyncResult<()> {
-        let mut presence = self.gate.lock().expect("room gate poisoned");
+        let mut presence = self.lock_gate();
         if self.sessions.contains_key(&peer) {
             self.evict_failed(&mut presence, &[peer], true);
         }
@@ -565,7 +578,7 @@ impl DocRoom {
     /// disconnects their sessions (resync-required) and broadcasts an updated
     /// roster.
     pub fn sweep_presence(&self) -> Vec<PeerId> {
-        let mut presence = self.gate.lock().expect("room gate poisoned");
+        let mut presence = self.lock_gate();
         let evicted = presence.sweep();
         if evicted.is_empty() {
             return evicted;

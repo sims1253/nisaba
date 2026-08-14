@@ -57,8 +57,7 @@ async fn oversized_hello_token_and_version_vector_are_rejected() {
             }
         }
         match reply {
-            Some(Frame::Error { code, .. })
-                if code == nisaba_sync::session::codes::TOO_LARGE => {}
+            Some(Frame::Error { code, .. }) if code == nisaba_sync::session::codes::TOO_LARGE => {}
             other => panic!("expected TOO_LARGE error frame, got {other:?}"),
         }
     }
@@ -454,4 +453,72 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     let mut buf = Vec::new();
     s.read_to_end(&mut buf).await.unwrap();
     String::from_utf8_lossy(&buf).to_string()
+}
+
+/// Spawn a server with real readiness probes wired (see `server::Readiness`).
+async fn spawn_server_with_readiness(
+    readiness: nisaba_sync::server::Readiness,
+) -> std::net::SocketAddr {
+    let registry = DocRegistry::new(
+        Arc::new(MemoryOpLogStore::default()),
+        Arc::new(MemorySnapshotStore::default()),
+        Arc::new(Config::default()),
+        Arc::new(SystemClock),
+        Arc::new(StaticAccessResolver::new()),
+    );
+    let router =
+        nisaba_sync::server::build_with_readiness(registry, Arc::new(Config::default()), readiness);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    addr
+}
+
+#[tokio::test]
+async fn readiness_fails_while_jwks_cache_is_stale() {
+    // An empty JWKS cache fails closed: every token would be denied, so the
+    // endpoint must report 503 until the background refresher lands keys.
+    let jwks = Arc::new(nisaba_sync::JwksCache::empty(
+        std::time::Duration::from_secs(3600),
+        Arc::new(SystemClock),
+    ));
+    let addr = spawn_server_with_readiness(nisaba_sync::server::Readiness {
+        jwks: Some(jwks),
+        data_dir: None,
+    })
+    .await;
+    let body = http_get(addr, "/health/ready").await;
+    assert!(body.contains("503"), "{body}");
+    assert!(body.contains("jwks"), "{body}");
+}
+
+#[tokio::test]
+async fn readiness_fails_when_data_dir_is_not_writable() {
+    // A path under a regular file can never be created, so the probe fails
+    // without depending on filesystem permissions (which root ignores).
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let blocked = file.path().join("subdir");
+    let addr = spawn_server_with_readiness(nisaba_sync::server::Readiness {
+        jwks: None,
+        data_dir: Some(blocked),
+    })
+    .await;
+    let body = http_get(addr, "/health/ready").await;
+    assert!(body.contains("503"), "{body}");
+    assert!(body.contains("not writable"), "{body}");
+}
+
+#[tokio::test]
+async fn readiness_passes_when_probes_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let addr = spawn_server_with_readiness(nisaba_sync::server::Readiness {
+        jwks: None,
+        data_dir: Some(dir.path().to_path_buf()),
+    })
+    .await;
+    let body = http_get(addr, "/health/ready").await;
+    assert!(body.contains("200"), "{body}");
+    assert!(body.contains("\"status\":\"ready\""), "{body}");
 }

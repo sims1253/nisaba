@@ -40,6 +40,8 @@ use crate::room::{CLOSE_NORMAL, CLOSE_RESYNC_REQUIRED, CloseSignal, DocRoom, clo
 pub struct SessionState {
     pub registry: DocRegistry,
     pub config: Arc<Config>,
+    /// Readiness probes served by `GET /health/ready` (see `server::Readiness`).
+    pub readiness: crate::server::Readiness,
 }
 
 /// Application-level close codes (WS 4000–4999 are safe for apps to define).
@@ -292,12 +294,13 @@ async fn handshake(
     // resolver while the vv is fed to the authority.
     for (kind, len, max) in [
         ("HELLO token", token.len(), crate::config::MAX_TOKEN_BYTES),
-        ("HELLO version vector", last_vv.len(), crate::config::MAX_VV_BYTES),
+        (
+            "HELLO version vector",
+            last_vv.len(),
+            crate::config::MAX_VV_BYTES,
+        ),
     ] {
-        if let Err(e) = state
-            .config
-            .check_hello_field_size(kind, len, max)
-        {
+        if let Err(e) = state.config.check_hello_field_size(kind, len, max) {
             let _ = send_error(socket, codes::TOO_LARGE, &e.to_string()).await;
             return None;
         }
