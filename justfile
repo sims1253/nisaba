@@ -31,9 +31,12 @@ down:
 down-volumes:
     docker compose --profile app down -v
 
-# Tail logs (all services). Usage: just logs [service]
-logs svc='':
-    docker compose --profile app logs -f {{ if svc != '' { svc } else { '' } }}
+# Tail all services, or follow specific ones: `just logs`, `just logs app`,
+# `just logs app sync`. Uses a splat parameter so no argument expands to
+# nothing — an interpolated empty string would make compose fail with
+# "no such service".
+logs *svc:
+    docker compose --profile app logs -f {{svc}}
 
 # Validate the resolved compose config against the current .env.
 compose-check:
@@ -86,12 +89,14 @@ migrate dir='migrations':
 
 # Open an AWS CLI shell against the local SeaweedFS S3 endpoint.
 # Usage: just s3 ls, just s3 ls s3://nisaba-blobs, etc.
+# Digest-pinned to match docker-compose.yml (seaweedfs-init service).
 s3 *ARGS:
     docker run --rm -i --network nisaba_obj-net \
         -e AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}" \
         -e AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}" \
         -e AWS_ENDPOINT_URL=http://seaweedfs:8333 \
-        amazon/aws-cli:2.36.20 s3 {{ARGS}}
+        amazon/aws-cli:2.36.20@sha256:8af59c0d96b104000cce4f11e211c06385240d72c515198159041f13ebe459fa \
+        s3 {{ARGS}}
 
 # ---------- Rust workspace -------------------------------------------------
 
@@ -175,19 +180,25 @@ e2e-up:
         echo "[e2e] .env not found. Copy .env.example and generate secrets first." >&2
         exit 1
     fi
+    # Read KEYCLOAK_HTTP_PORT from .env (the same file compose interpolates), so
+    # a non-default port works here too. just does not export .env itself.
+    # shellcheck disable=SC1091
+    set -a && . ./.env && set +a
+    KC_PORT="${KEYCLOAK_HTTP_PORT:-8090}"
+    CERTS_URL="http://127.0.0.1:${KC_PORT}/realms/nisaba/protocol/openid-connect/certs"
     # Fetch JWKS from the running Keycloak (or start infra first).
-    if ! curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs >/dev/null 2>&1; then
+    if ! curl -fsS "$CERTS_URL" >/dev/null 2>&1; then
         docker compose up -d
-        echo "[e2e] waiting for Keycloak..."
+        echo "[e2e] waiting for Keycloak on port ${KC_PORT}..."
         for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs >/dev/null 2>&1; then
+            if curl -fsS "$CERTS_URL" >/dev/null 2>&1; then
                 break
             fi
             sleep 5
         done
     fi
-    JWKS="$$(curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs)"
-    NISABA_OIDC_JWKS_JSON="$$JWKS" docker compose --profile app up -d --build
+    JWKS="$(curl -fsS "$CERTS_URL")"
+    NISABA_OIDC_JWKS_JSON="$JWKS" docker compose --profile app up -d --build
 
 # Run Playwright e2e tests against a running stack.
 e2e-test:
@@ -203,14 +214,14 @@ e2e-suite: e2e-up
     # Wait for all services to be healthy (helper lives in scripts/ because the
     # justfile template parser rejects the quoting needed inline).
     for svc in app sync compile web; do
-        echo "[e2e] waiting for $$svc..."
-        ./scripts/wait-healthy.sh "$$svc" || true
+        echo "[e2e] waiting for ${svc}..."
+        ./scripts/wait-healthy.sh "$svc" || true
     done
     just e2e-test
 
 # ---------- Tools (tolerant) -----------------------------------------------
 
-# Run the tools verification suite if present (owned by the tools stream).
+# Run the tools verification suite (owned by the tools stream).
 verify:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -219,7 +230,7 @@ verify:
     elif [ -f ./tools/verify.sh ]; then
         bash ./tools/verify.sh
     else
-        echo "[verify] tools/verify.sh not present yet (owned by the tools stream); nothing to do."
+        echo "[verify] tools/verify.sh not found; nothing to do."
     fi
 
 # ---------- Images ---------------------------------------------------------

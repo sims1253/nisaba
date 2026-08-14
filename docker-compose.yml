@@ -93,14 +93,33 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.41@sha256:43b768cd62b00d132439cda881b93fd1adebf1b315e996e794087743821d771d
     <<: [*default-restart, *common-logging]
-    command: >-
-      server -s3 -dir=/data
-      -s3.config=/etc/seaweedfs/s3.json
-      -s3.port=8333
-      -master.volumeSizeLimitMB=1024
+    # S3 identities are generated at container start from the NISABA_S3_*
+    # variables below (deploy/seaweedfs/generate-s3-identities.sh) and written
+    # to /tmp inside the container — the repository contains no working
+    # credentials, and rotating a secret only requires editing .env and
+    # recreating the container. There is deliberately NO anonymous identity:
+    # every S3 request must be signed (the gateway is published on the host,
+    # so anonymous read would expose every blob — incl. full-text PDFs).
+    environment:
+      NISABA_S3_ACCESS_KEY: ${NISABA_S3_ACCESS_KEY:-nisaba-app}
+      NISABA_S3_SECRET_KEY: ${NISABA_S3_SECRET_KEY:?NISABA_S3_SECRET_KEY is required}
+      NISABA_S3_ADMIN_KEY: ${NISABA_S3_ADMIN_KEY:-nisaba-admin}
+      NISABA_S3_ADMIN_SECRET: ${NISABA_S3_ADMIN_SECRET:?NISABA_S3_ADMIN_SECRET is required}
+    # Render the identity config, then hand off to the image's own
+    # /entrypoint.sh (which fixes /data ownership and drops to the non-root
+    # `seaweed` user before exec'ing `weed server`).
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - >-
+        /bin/sh /deploy/generate-s3-identities.sh /tmp/nisaba-s3-identities.json &&
+        exec /entrypoint.sh server -s3 -dir=/data
+        -s3.config=/tmp/nisaba-s3-identities.json
+        -s3.port=8333
+        -master.volumeSizeLimitMB=1024
     volumes:
       - seaweedfs-data:/data
-      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - ./deploy/seaweedfs/generate-s3-identities.sh:/deploy/generate-s3-identities.sh:ro
     healthcheck:
       # SeaweedFS exposes /healthz (liveness) and /readyz (readiness) on the
       # S3 port (see seaweedfs #9736). The entrypoint runs as the non-root
@@ -263,6 +282,15 @@ services:
       # Reviewer seed verification: app endpoint returning the authoritative
       # document body (empty → deny-all, fail-closed).
       NISABA_SYNC_SEED_VERIFY_URL: ${NISABA_SYNC_SEED_VERIFY_URL:-}
+      # SECURITY (dev default): this makes sync's shared outbound HTTP client
+      # (services/sync/src/http.rs) accept plain http:// for EVERY outbound
+      # call it makes — both the per-document authz call (http://app:8080,
+      # in-cluster and unavoidable without TLS inside Docker) AND the JWKS
+      # refresh from NISABA_SYNC_OIDC_JWKS_URL (http://keycloak:8090). Without
+      # the flag the client is https-only, which is the production posture.
+      # The downgraded traffic never leaves the private Docker networks, but a
+      # real deployment should terminate TLS (e.g. an https issuer + authz URL
+      # behind the reverse proxy) and UNSET this.
       NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME: ${NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:-1}
       # Roles claim path in the JWT. Keycloak's realm-roles mapper emits a
       # top-level "roles" claim; the sync default ("realm_access.roles") will
@@ -318,8 +346,10 @@ services:
         VITE_OIDC_SCOPE: openid profile email
     <<: *common-logging
     depends_on:
-      - app
-      - sync
+      app:
+        condition: service_healthy
+      sync:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-8103}:8080"
     networks: [svc-net]

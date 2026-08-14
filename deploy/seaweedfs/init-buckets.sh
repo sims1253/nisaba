@@ -6,13 +6,16 @@
 # command tolerates "already exists" so the stack can be re-upped.
 #
 # Privilege model (see docs/security.md):
-#   - nisaba-admin credentials : bootstrap + admin only (s3.json).
+#   - nisaba-admin credentials : bootstrap + admin only (generated identity).
 #   - NISABA_S3_ACCESS_KEY      : scoped to Read/Write/List actions; used by
 #                                 app. Never admin.
 #
 # Unlike MinIO (which created service accounts at runtime via `mc admin`),
-# SeaweedFS identities are declared statically in deploy/seaweedfs/s3.json.
-# This script only creates buckets and enables versioning.
+# SeaweedFS identities are static — but they are GENERATED at container start
+# from the NISABA_S3_* env vars (deploy/seaweedfs/generate-s3-identities.sh),
+# not committed. There is no anonymous identity: every request below is signed
+# with the admin credentials. This script only creates buckets and enables
+# versioning.
 set -eu
 
 : "${NISABA_S3_ADMIN_KEY:?NISABA_S3_ADMIN_KEY must be set}"
@@ -23,8 +26,8 @@ set -eu
 ENDPOINT="${NISABA_S3_ENDPOINT:-http://seaweedfs:8333}"
 
 # SeaweedFS supports the standard S3 API, so we use aws-cli instead of mc.
-# --no-sign-request falls back to the anonymous identity when the bucket does
-# not exist yet; after creation we use admin creds for versioning config.
+# Every call below is signed with the admin credentials exported here; the
+# gateway rejects unauthenticated requests (no anonymous identity exists).
 
 export AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}"
 export AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}"
@@ -39,7 +42,8 @@ for bucket in "${NISABA_S3_BUCKET_BLOBS}" "${NISABA_S3_BUCKET_OPLOG}"; do
     aws s3api put-bucket-versioning \
         --bucket "${bucket}" \
         --versioning-configuration Status=Enabled 2>/dev/null || true
-    # Block public access (defense-in-depth alongside the anonymous Read-only identity).
+    # Block public access (defense-in-depth; the S3 gateway has no anonymous
+    # identity, so there should be nothing public to block in the first place).
     aws s3api put-public-access-block \
         --bucket "${bucket}" \
         --public-access-block-configuration \

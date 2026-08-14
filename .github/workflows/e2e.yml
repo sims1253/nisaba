@@ -48,14 +48,27 @@ jobs:
 
       - name: Wait for services
         run: |
+          failed=""
           for svc in postgres seaweedfs keycloak app sync compile web; do
             echo "waiting for $svc..."
+            ok=""
             for i in $(seq 1 60); do
               status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' nisaba-$svc-1 2>/dev/null || echo none)
-              if [ "$status" = healthy ]; then echo "$svc healthy"; break; fi
+              if [ "$status" = healthy ]; then echo "$svc healthy"; ok=1; break; fi
               sleep 3
             done
+            if [ -z "$ok" ]; then
+              echo "::error::$svc did not become healthy within 180s (last status: ${status:-none})"
+              docker logs --tail 50 "nisaba-$svc-1" 2>&1 || true
+              failed="$failed $svc"
+            fi
           done
+          # Assert AFTER the loop: without this a timeout would fall through
+          # and the run would only fail later (and confusingly) inside Playwright.
+          if [ -n "$failed" ]; then
+            echo "::error::services failed to become healthy:$failed"
+            exit 1
+          fi
 
       - name: Run e2e tests
         run: bunx playwright test --config e2e/
@@ -74,4 +87,15 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose --profile app down -v --remove-orphans || true
+        run: |
+          # Recreate the env file used at bring-up: compose interpolation needs
+          # it (several variables are :?-required), so calling `down` without
+          # it would fail before removing anything — and the || fallback below
+          # would hide that. Teardown still never masks test failures: it only
+          # warns when it cannot clean up.
+          tmp="$(mktemp)"
+          cp .env.example "$tmp"
+          echo "Tearing down compose stack (profile app, volumes + orphans)"
+          docker compose --env-file "$tmp" --profile app down -v --remove-orphans \
+            || echo "::warning::compose teardown failed; containers left running for inspection"
+          rm -f "$tmp"
