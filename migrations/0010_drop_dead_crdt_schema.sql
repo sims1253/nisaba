@@ -18,7 +18,10 @@
 -- the single-column index is pure write overhead.
 --
 -- No backfill needed anywhere in this migration: both changes only remove
--- unused objects.
+-- unused objects. (Historical note, kept here because applied migrations are
+-- immutable: 0004's rename of token -> token_hash stored a SHA-256 digest for
+-- new rows but never backfilled pre-existing plaintext tokens; pre-release
+-- databases have been replaced rather than migrated.)
 DROP TABLE IF EXISTS checkpoint;
 DROP TABLE IF EXISTS document_lease;
 DROP TABLE IF EXISTS crdt_frontier;
