@@ -5,10 +5,8 @@ use base64::Engine as _;
 use nisaba_references::{Bibliography, ExportManifest};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use crate::BlobStore;
-use crate::Repository;
 use crate::types::{
     AppError, CompileMode, CompileRequest, CompileResponse, CompileView, ExportFile, Project,
     ReferenceExport,
@@ -57,8 +55,9 @@ impl CompileClient for HttpCompileClient {
         let response = self
             .client
             .post(format!("{}/compile", self.endpoint))
+            // The compile service authenticates the hop with the standard
+            // Authorization: Bearer header (see its `authorized()`).
             .bearer_auth(&self.internal_token)
-            .header("x-nisaba-internal-token", &self.internal_token)
             .json(&payload)
             .send()
             .await
@@ -135,16 +134,9 @@ impl ReferenceExporter for UnconfiguredReferences {
 /// and full-text files, and validates the tree. PDF bytes come in already attached to
 /// cited entries (the caller fetched them from the blob store), so uncited references
 /// without attachments never block packaging — the inverted gate lived in the old caller.
-///
-/// The `repo`/`blobs` fields are retained for construction compatibility with the
-/// binary entry point and are intentionally unused here: the per-document bibliographies
-/// arrive with fulltext already attached, so this adapter needs no I/O of its own.
-pub struct NisabaReferencesExporter {
-    #[allow(dead_code)]
-    pub repo: Arc<dyn Repository>,
-    #[allow(dead_code)]
-    pub blobs: Arc<dyn BlobStore>,
-}
+/// The per-document bibliographies arrive with fulltext already attached, so this
+/// adapter performs no I/O of its own and holds no handles.
+pub struct NisabaReferencesExporter;
 #[async_trait]
 impl ReferenceExporter for NisabaReferencesExporter {
     async fn export(

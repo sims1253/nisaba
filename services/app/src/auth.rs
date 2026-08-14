@@ -26,7 +26,6 @@ pub struct Principal {
     pub roles: HashSet<Role>,
     /// The `preferred_username` claim (e.g. "demo"), used for membership
     /// lookups when the sharing UI invited by username rather than OIDC sub.
-    #[allow(dead_code)]
     pub preferred_username: Option<String>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -135,6 +134,10 @@ impl Authenticator {
         })
     }
 }
+// `exp`/`iss`/`aud` are never read from the decoded claims: requiring them
+// makes deserialization structurally reject tokens that lack them, while
+// `jsonwebtoken`'s own validation enforces their values. That is why the
+// dead-code allow below is intentional (mirrors services/sync/src/oidc.rs).
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Claims {
