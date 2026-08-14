@@ -288,6 +288,33 @@ impl Repository for PostgresRepository {
             })
             .collect()
     }
+    async fn list_memberships_for_subjects(
+        &self,
+        subjects: &[&str],
+    ) -> Result<Vec<ProjectMembership>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT project_id, subject, role, created_at FROM project_memberships WHERE subject = ANY($1) ORDER BY subject",
+        )
+        .bind(
+            subjects
+                .iter()
+                .map(|subject| subject.to_string())
+                .collect::<Vec<String>>(),
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        rows.iter()
+            .map(|r| {
+                Ok(ProjectMembership {
+                    project_id: r.try_get("project_id").map_err(db_error)?,
+                    subject: r.try_get("subject").map_err(db_error)?,
+                    role: role(r.try_get::<String, _>("role").map_err(db_error)?.as_str())?,
+                    created_at: r.try_get("created_at").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
     async fn update_project(
         &self,
         v: Project,
