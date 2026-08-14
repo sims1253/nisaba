@@ -54,12 +54,15 @@ Opening a project gives you five regions:
 
 ## Roles
 
-What you can do depends on your **project role** (set by the owner in the Share
-panel):
+What you can do depends on two things: your **identity-provider role**
+(`author`, `reviewer`, or `read-only`, from your sign-in) and your **project
+role** (set by the owner in the Share panel) — both must allow an action. The
+table below is the plain-language summary; [`architecture.md`](architecture.md)
+§6.1 is the normative role model.
 
 | Action | Owner | Author | Reviewer | Read-only |
 |--------|:-----:|:------:|:--------:|:---------:|
-| Read and compile | ✓ | ✓ | ✓ | ✓ |
+| Read (documents, history, audit, members) and compile | ✓ | ✓ | ✓ | ✓ |
 | Edit the text directly | ✓ | ✓ | — (suggest only) | — |
 | Accept / reject / comment on suggestions | ✓ | ✓ | ✓ | — |
 | Create / rename / delete documents | ✓ | ✓ | — | — |

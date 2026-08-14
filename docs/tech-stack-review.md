@@ -142,8 +142,8 @@ consider whether the binding is thin enough to vendor/fork if it stalls.
 
 ### oxlint (linter)
 **✅ Right choice.** Modern, fast Rust-based linter from the Oxc project.
-Updated daily (1.78.0). Good replacement for ESLint with less configuration
-overhead.
+Updated daily (pinned at 1.77.0 in `bun.lock`). Good replacement for ESLint
+with less configuration overhead.
 
 ### Vitest 4 / Playwright 1.52 (testing)
 **✅ Right choice.** Vitest is the standard Vite-native test runner. Playwright

@@ -5,9 +5,9 @@ shaped toward. This complements [`architecture.md`](architecture.md) (data flow)
 and [`operations.md`](operations.md) (day-2 hardening/backups).
 
 > **Status:** the controls below are **implemented in the local stack** unless
-> marked *future*. The application services themselves are skeletons; their
-> in-process security (authorisation enforcement, input validation) is the
-> responsibility of the service streams and is out of scope here.
+> marked *future*. Application-layer security is included: authorisation
+> enforcement (`auth.rs::permitted`, `auth.rs::project_acl`, the sync reviewer
+> text gate) and input validation are implemented and documented in §2.
 
 ---
 

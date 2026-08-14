@@ -1,5 +1,12 @@
 # Collaborative Evaluation Report — 2026-08-09
 
+> **Historical QA snapshot — kept for context only.** This report records the
+> state of the stack on 2026-08-09, before the MinIO → SeaweedFS migration (it
+> therefore describes a MinIO-based stack), and names the internal agent setup
+> used for the evaluation. Every bug listed below has since been fixed; see the
+> regression assertions in `deploy/e2e-app.sh` for the current proofs. It is not
+> a description of current behaviour.
+
 > Automated browser-based evaluation conducted by six `zai/glm-5.2` agents
 > against the full local stack (Postgres, MinIO, Keycloak, app, sync, compile,
 > web). Raw agent reports and evidence are preserved under
