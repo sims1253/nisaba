@@ -37,6 +37,11 @@ const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_SOURCES: usize = 256;
 const DEFAULT_MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
+/// Per-compile timeout. COUPLED to the app service's compile HTTP client
+/// (`HttpCompileClient`, services/app/src/compile_client.rs), which gives up
+/// after 150 s: raising this above 150 s via `NISABA_COMPILE_TIMEOUT_MS`
+/// makes clients receive 502s while the abandoned worker still burns a
+/// compile slot. Raise both together.
 const DEFAULT_TIMEOUT: Duration = Duration::from_mins(2);
 /// Cap on concurrently cached per-project workers. Once reached, the least
 /// recently used worker is evicted to make room (LRU).
@@ -530,6 +535,12 @@ fn validate_request_with_limits(
 }
 
 fn validate_virtual_path(value: &str) -> Result<(), String> {
+    // Deliberately laxer than the app service's valid_document_path
+    // (services/app/src/lib.rs): this guards only the compile service's
+    // per-request virtual filesystem, so `.` segments are tolerated and `..`
+    // is allowed as long as it never climbs above the root. The app rejects
+    // `.`/`..` and control characters as well because stored document paths
+    // are user-facing identifiers; the divergence is intentional.
     let path = Path::new(value);
     if value.is_empty() || path.is_absolute() || value.contains('\\') {
         return Err(format!("invalid virtual path: {value:?}"));

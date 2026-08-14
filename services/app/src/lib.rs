@@ -1114,6 +1114,13 @@ fn valid_document_path(path: &str) -> bool {
     // Cap the length like the other user-facing text fields (project names,
     // titles): paths feed compile/export include statements and URLs, so an
     // unbounded path would bloat exports. 1024 matches the project-name cap.
+    //
+    // Deliberately stricter than the compile service's validate_virtual_path
+    // (services/compile/src/lib.rs): stored paths are user-facing identifiers
+    // rendered in listings and URLs, so `.`/`..` segments and control
+    // characters are rejected outright. The compile validator only guards its
+    // per-request virtual filesystem and therefore tolerates `.` and
+    // depth-tracked `..`; the divergence is intentional.
     !path.is_empty()
         && path == path.trim()
         && !path.starts_with('/')

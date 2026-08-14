@@ -27,6 +27,12 @@ impl HttpCompileClient {
     pub fn new(endpoint: impl Into<String>, internal_token: impl Into<String>) -> Self {
         Self {
             client: reqwest::Client::builder()
+                // COUPLED to the compile service's per-compile timeout
+                // (services/compile/src/lib.rs, `NISABA_COMPILE_TIMEOUT_MS`,
+                // default 120 s): this client must outwait the longest legal
+                // compile, otherwise every slow-but-legal compile surfaces as
+                // a 502 here while the worker still finishes and burns a slot.
+                // Raise both together.
                 .timeout(Duration::from_secs(150))
                 .build()
                 .expect("reqwest client builder is infallible"),
