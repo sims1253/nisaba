@@ -8,6 +8,10 @@ export default defineConfig(({ mode }) => {
     .split(",")
     .map((host) => host.trim())
     .filter((host) => host.length > 0)
+  // Optional dev-only OIDC proxy (see the "^/realms" rule below). Left unset by
+  // default: nothing in the repo serves a fallback target, and an unconditional
+  // rule with a dead default would 502 confusingly.
+  const oidcProxyTarget = env.VITE_OIDC_PROXY_TARGET
   return {
     resolve: {
       alias: [
@@ -30,9 +34,14 @@ export default defineConfig(({ mode }) => {
         "^/api/compile$": { target: app, changeOrigin: true },
         "^/api/": { target: app, changeOrigin: true, rewrite: (path: string) => path.replace(/^\/api/, "") },
         "/sync": { target: env.VITE_SYNC_URL || "ws://localhost:8101", ws: true, changeOrigin: true },
-        // Proxy the mock OIDC provider so external users (via tunnel) can reach
-        // the auth endpoints through Vite instead of a localhost-only address.
-        "^/realms": { target: env.VITE_OIDC_PROXY_TARGET || "http://127.0.0.1:8095", changeOrigin: true }
+        // Dev-only tunnel helper, opt-in via VITE_OIDC_PROXY_TARGET (no default):
+        // when the dev server is reached through a tunnel, the browser cannot
+        // address the developer's localhost Keycloak (docker-compose.yml runs it
+        // on 8090). Set VITE_OIDC_ISSUER to <tunnel-origin>/realms/... and
+        // VITE_OIDC_PROXY_TARGET to the IdP (e.g. http://127.0.0.1:8090) so the
+        // auth endpoints forward through Vite. Production has no equivalent
+        // (deploy/web/nginx.conf): browsers there reach the issuer directly.
+        ...(oidcProxyTarget ? { "^/realms": { target: oidcProxyTarget, changeOrigin: true } } : {})
       }
     },
     worker: { format: "es" },
