@@ -47,12 +47,13 @@ use uuid::Uuid;
 const REFS_SOURCE_PATH: &str = "refs.yml";
 
 /// Reserved review support-file path.
+const REVIEW_SUPPORT_PATH: &str = "review.typ";
+
 /// Minimum seconds between revision snapshots. Set low enough that normal
 /// interactive editing cadence (one save every few seconds) produces a
 /// recoverable history entry, while still coalescing rapid-fire saves
 /// (e.g. autosave every 1 s) into a single snapshot.
 const MIN_SNAPSHOT_INTERVAL_SECS: i64 = 10;
-const REVIEW_SUPPORT_PATH: &str = "review.typ";
 
 /// The review support-file body.
 const REVIEW_SUPPORT_SOURCE: &str = "\
@@ -820,19 +821,23 @@ fn constant_time_token_matches(expected: Option<&[u8; 32]>, presented: &str) -> 
     bool::from(expected.as_slice().ct_eq(presented.as_slice()))
 }
 
+/// Extract the internal service bearer token from request headers. Shared by
+/// the machine-token-only `/internal/*` endpoints.
+fn service_token(headers: &HeaderMap) -> Result<&str, AppError> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))
+}
+
 async fn authorize_sync_document(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<SyncAuthorizeRequest>,
 ) -> Result<Json<SyncAuthorizeResponse>, AppError> {
-    let value = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    let token = value
-        .strip_prefix("Bearer ")
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    let token = service_token(&headers)?;
     if !constant_time_token_matches(state.sync_authz_token.as_ref(), token) {
         return Err(AppError::Forbidden);
     }
@@ -868,15 +873,7 @@ async fn document_body(
     Path(document_id): Path<String>,
     h: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    let value = h
-        .get("authorization")
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    let token = value
-        .to_str()
-        .ok()
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    let token = service_token(&h)?;
     if !constant_time_token_matches(s.sync_authz_token.as_ref(), token) {
         return Err(AppError::Forbidden);
     }
@@ -1806,8 +1803,12 @@ async fn get_document_revision(
     // Scope the revision to the document named in the path. Previously the
     // document id was discarded (`_did`), so a caller could fetch document B's
     // revision body by placing B's revision UUID under document A's path as
-    // long as both lived in the same project.
-    let document = document_for_project(&s, &pid, &did).await?;
+    // long as both lived in the same project. (Fetch the document directly —
+    // document_for_project would re-fetch the project we already hold.)
+    let document = s.repo.get_document_by_id(id(&did)?).await?;
+    if document.project_id != project.id {
+        return Err(AppError::NotFound);
+    }
     let rev = s.repo.get_document_revision(id(&rid)?).await?;
     if rev.project_id != project.id || rev.document_id != document.id {
         return Err(AppError::NotFound);
@@ -2360,6 +2361,12 @@ async fn create_share_link(
     let project = project_for(&s, &pid).await?;
     if !matches!(r.role.as_str(), "author" | "reviewer" | "read-only") {
         return Err(AppError::BadRequest("invalid share link role".into()));
+    }
+    // Validate the label like every other user string (it is echoed back in
+    // listings; an unbounded/control-character label was the only unvalidated
+    // one left).
+    if let Some(label) = r.label.as_deref() {
+        validate_text(label, "label", 256)?;
     }
     let link = s
         .repo
