@@ -14,7 +14,7 @@ pub use compile_client::*;
 pub use persistence::{BlobStore, MemoryBlobStore, PostgresRepository, S3BlobStore};
 pub use types::*;
 
-use auth::{Permission, permitted, project_access, project_acl};
+use auth::{Auth, Permission, permitted, project_access, project_acl};
 
 use async_trait::async_trait;
 use axum::{
@@ -47,12 +47,13 @@ use uuid::Uuid;
 const REFS_SOURCE_PATH: &str = "refs.yml";
 
 /// Reserved review support-file path.
+const REVIEW_SUPPORT_PATH: &str = "review.typ";
+
 /// Minimum seconds between revision snapshots. Set low enough that normal
 /// interactive editing cadence (one save every few seconds) produces a
 /// recoverable history entry, while still coalescing rapid-fire saves
 /// (e.g. autosave every 1 s) into a single snapshot.
 const MIN_SNAPSHOT_INTERVAL_SECS: i64 = 10;
-const REVIEW_SUPPORT_PATH: &str = "review.typ";
 
 /// The review support-file body.
 const REVIEW_SUPPORT_SOURCE: &str = "\
@@ -114,6 +115,13 @@ pub trait Repository: Send + Sync {
     ) -> Result<ProjectMembership, RepoError>;
     async fn list_memberships(&self, project_id: Uuid)
     -> Result<Vec<ProjectMembership>, RepoError>;
+    /// Every membership held by any of `subjects` (an OIDC sub and/or its
+    /// `preferred_username` alias), across all projects. Lets the project list
+    /// resolve membership in one query instead of two per project.
+    async fn list_memberships_for_subjects(
+        &self,
+        subjects: &[&str],
+    ) -> Result<Vec<ProjectMembership>, RepoError>;
     async fn update_project(
         &self,
         value: Project,
@@ -312,6 +320,20 @@ impl Repository for MemoryRepository {
             .memberships
             .values()
             .filter(|membership| membership.project_id == project_id)
+            .cloned()
+            .collect())
+    }
+    async fn list_memberships_for_subjects(
+        &self,
+        subjects: &[&str],
+    ) -> Result<Vec<ProjectMembership>, RepoError> {
+        Ok(self
+            .data
+            .read()
+            .await
+            .memberships
+            .values()
+            .filter(|membership| subjects.contains(&membership.subject.as_str()))
             .cloned()
             .collect())
     }
@@ -799,19 +821,23 @@ fn constant_time_token_matches(expected: Option<&[u8; 32]>, presented: &str) -> 
     bool::from(expected.as_slice().ct_eq(presented.as_slice()))
 }
 
+/// Extract the internal service bearer token from request headers. Shared by
+/// the machine-token-only `/internal/*` endpoints.
+fn service_token(headers: &HeaderMap) -> Result<&str, AppError> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))
+}
+
 async fn authorize_sync_document(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<SyncAuthorizeRequest>,
 ) -> Result<Json<SyncAuthorizeResponse>, AppError> {
-    let value = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    let token = value
-        .strip_prefix("Bearer ")
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    let token = service_token(&headers)?;
     if !constant_time_token_matches(state.sync_authz_token.as_ref(), token) {
         return Err(AppError::Forbidden);
     }
@@ -847,73 +873,12 @@ async fn document_body(
     Path(document_id): Path<String>,
     h: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    let value = h
-        .get("authorization")
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    let token = value
-        .to_str()
-        .ok()
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
+    let token = service_token(&h)?;
     if !constant_time_token_matches(s.sync_authz_token.as_ref(), token) {
         return Err(AppError::Forbidden);
     }
     let doc = s.repo.get_document_by_id(id(&document_id)?).await?;
     Ok(Json(json!({ "body": doc.body })))
-}
-
-async fn materialize_document_body(
-    State(s): State<AppState>,
-    Path(document_id): Path<String>,
-    h: HeaderMap,
-    Json(body): Json<String>,
-) -> Result<StatusCode, AppError> {
-    let value = h
-        .get("authorization")
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    let token = value
-        .to_str()
-        .ok()
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    if !constant_time_token_matches(s.sync_authz_token.as_ref(), token) {
-        return Err(AppError::Forbidden);
-    }
-    let doc_id = id(&document_id)?;
-    let mut doc = s.repo.get_document_by_id(doc_id).await?;
-    validate_body(&body)?;
-    doc.body = body;
-    doc.updated_at = Utc::now();
-    let old_revision = doc.revision;
-    doc.revision += 1;
-    // Record the sync-originated materialization in the audit trail and save
-    // a revision snapshot so the edit history reflects CRDT-materialized text.
-    let audit_event = AuditEvent {
-        id: Uuid::new_v4(),
-        project_id: doc.project_id,
-        actor: "sync".to_string(),
-        action: "materialized".to_string(),
-        resource_type: "document".to_string(),
-        resource_id: doc.id,
-        at: Utc::now(),
-        details: json!({"revision": doc.revision, "source": "crdt_sync"}),
-    };
-    s.repo
-        .save_document_revision(
-            doc.id,
-            doc.project_id,
-            doc.body.clone(),
-            doc.revision,
-            Some("sync".to_string()),
-        )
-        .await
-        .ok();
-    s.repo
-        .update_document(doc, old_revision, Some(audit_event))
-        .await?;
-    Ok(StatusCode::OK)
 }
 
 pub fn router(state: AppState) -> Router {
@@ -937,10 +902,6 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/health/ready", get(health_ready))
         .route("/internal/sync/authorize", post(authorize_sync_document))
-        .route(
-            "/internal/document/{document_id}/materialize",
-            post(materialize_document_body),
-        )
         .route("/internal/document/{document_id}/body", get(document_body))
         .route("/api/compile", post(api_compile))
         .route(
@@ -1031,10 +992,11 @@ async fn security_headers(
 
 async fn create_project(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Json(r): Json<ProjectCreate>,
 ) -> Result<(StatusCode, Json<Project>), AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     if r.name.trim().is_empty() {
         return Err(AppError::BadRequest("name is required".into()));
     }
@@ -1060,49 +1022,53 @@ async fn create_project(
         .await?;
     Ok((StatusCode::CREATED, Json(out)))
 }
-async fn list_projects(
-    State(s): State<AppState>,
-    h: HeaderMap,
-) -> Result<Json<Vec<Project>>, AppError> {
-    let principal = permitted(&s, &h, Permission::Read).await?;
-    let mut projects = Vec::new();
-    for project in s.repo.list_projects().await? {
-        // Match the same sub-then-preferred_username resolution used by
-        // project_access so project lists agree with per-project access.
-        let member = s
-            .repo
-            .get_membership(project.id, &principal.subject)
-            .await
-            .is_ok()
-            || if let Some(ref username) = principal.preferred_username {
-                s.repo.get_membership(project.id, username).await.is_ok()
-            } else {
-                false
-            };
-        if member {
-            projects.push(project);
-        }
+async fn list_projects(State(s): State<AppState>, p: Auth) -> Result<Json<Vec<Project>>, AppError> {
+    let principal = p.0;
+    permitted(&principal, Permission::Read)?;
+    // Match the same sub-then-preferred_username resolution used by
+    // project_access so project lists agree with per-project access — resolved
+    // in ONE membership query for both identifiers instead of two queries per
+    // project (the previous N+1).
+    let mut subjects = vec![principal.subject.as_str()];
+    if let Some(ref username) = principal.preferred_username {
+        subjects.push(username.as_str());
     }
+    let member_of: HashSet<Uuid> = s
+        .repo
+        .list_memberships_for_subjects(&subjects)
+        .await?
+        .into_iter()
+        .map(|membership| membership.project_id)
+        .collect();
+    let projects = s
+        .repo
+        .list_projects()
+        .await?
+        .into_iter()
+        .filter(|project| member_of.contains(&project.id))
+        .collect();
     Ok(Json(projects))
 }
 async fn get_project(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    p: Auth,
     Path(project_raw): Path<String>,
 ) -> Result<Json<Project>, AppError> {
+    let p = p.0;
     let project = project_for(&state, &project_raw).await?;
-    project_access(&state, &headers, project.id, Permission::Read).await?;
+    project_access(&state, &p, project.id, Permission::Read).await?;
     Ok(Json(project))
 }
 async fn patch_project(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
     Json(r): Json<ProjectPatch>,
 ) -> Result<Json<Project>, AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let mut v = project_for(&s, &pid).await?;
-    project_access(&s, &h, v.id, Permission::Manage).await?;
+    project_access(&s, &p, v.id, Permission::Manage).await?;
     if let Some(name) = r.name {
         let name = name.trim().to_string();
         if name.is_empty() {
@@ -1118,23 +1084,26 @@ async fn patch_project(
 }
 async fn delete_project(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let project = project_for(&s, &pid).await?;
-    project_access(&s, &h, project.id, Permission::Manage).await?;
-    // Remove fulltext blobs from object storage before the DB rows cascade:
-    // reference_entries/fulltexts rows are deleted by the FK cascade, but the
-    // S3 objects they point at would otherwise be orphaned.
+    project_access(&s, &p, project.id, Permission::Manage).await?;
+    // Collect the reference ids before the DB rows cascade away, delete the
+    // rows first, then remove the blobs from object storage best-effort. If a
+    // blob delete fails afterwards only an orphaned blob remains (recoverable
+    // by a sweeper); deleting blobs first left rows pointing at deleted blobs,
+    // making every later export of the project fail with 409.
     let references = s.repo.list_references(project.id).await?;
-    for reference in &references {
-        if s.blobs.delete(reference.id).await.is_err() {
-            tracing::warn!(project_id = %project.id, reference_id = %reference.id, "failed to delete fulltext blob during project deletion");
-        }
-    }
     let event = build_audit(&p, project.id, "deleted", "project", project.id, json!({}));
     s.repo.delete_project(project.id, Some(event)).await?;
+    for reference in &references {
+        if let Err(error) = s.blobs.delete(reference.id).await {
+            tracing::warn!(project_id = %project.id, reference_id = %reference.id, error = %error, "failed to delete fulltext blob during project deletion");
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1142,6 +1111,13 @@ fn valid_document_path(path: &str) -> bool {
     // Cap the length like the other user-facing text fields (project names,
     // titles): paths feed compile/export include statements and URLs, so an
     // unbounded path would bloat exports. 1024 matches the project-name cap.
+    //
+    // Deliberately stricter than the compile service's validate_virtual_path
+    // (services/compile/src/lib.rs): stored paths are user-facing identifiers
+    // rendered in listings and URLs, so `.`/`..` segments and control
+    // characters are rejected outright. The compile validator only guards its
+    // per-request virtual filesystem and therefore tolerates `.` and
+    // depth-tracked `..`; the divergence is intentional.
     !path.is_empty()
         && path == path.trim()
         && !path.starts_with('/')
@@ -1187,6 +1163,18 @@ fn validate_body(value: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Document metadata (`data`) is stored as jsonb: a control character in a key
+/// or value makes Postgres reject the whole write (HTTP 500). Validate keys and
+/// values like every other user string, with the same caps as reference
+/// metadata extras.
+fn validate_document_data(data: &BTreeMap<String, String>) -> Result<(), AppError> {
+    for (key, value) in data {
+        validate_text(key, "data key", 256)?;
+        validate_text(value, "data value", 4096)?;
+    }
+    Ok(())
+}
+
 // --- Document handlers ---
 
 async fn document_for_project(
@@ -1203,11 +1191,12 @@ async fn document_for_project(
 }
 async fn create_document(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
     Json(r): Json<DocumentCreate>,
 ) -> Result<(StatusCode, Json<Document>), AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let project = project_for(&s, &pid).await?;
     if !valid_document_path(&r.path) {
         return Err(AppError::BadRequest(
@@ -1216,6 +1205,7 @@ async fn create_document(
     }
     validate_text(&r.title, "title", 2048)?;
     validate_body(&r.body)?;
+    validate_document_data(&r.data)?;
     let id = Uuid::new_v4();
     let event = build_audit(
         &p,
@@ -1249,7 +1239,8 @@ async fn create_document(
         })?;
     // Save the initial revision (0) so the original content is preserved in
     // the document history timeline.
-    s.repo
+    if let Err(e) = s
+        .repo
         .save_document_revision(
             out.id,
             out.project_id,
@@ -1258,35 +1249,38 @@ async fn create_document(
             Some(p.subject.clone()),
         )
         .await
-        .ok();
+    {
+        tracing::warn!("failed to save initial document revision snapshot: {e}");
+    }
     Ok((StatusCode::CREATED, Json(out)))
 }
 async fn list_documents(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
 ) -> Result<Json<Vec<Document>>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     let p = project_for(&s, &pid).await?;
     Ok(Json(s.repo.list_documents(p.id).await?))
 }
 async fn get_document(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, did)): Path<(String, String)>,
 ) -> Result<Json<Document>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     Ok(Json(document_for_project(&s, &pid, &did).await?))
 }
 async fn patch_document(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, did)): Path<(String, String)>,
     Json(r): Json<DocumentPatch>,
 ) -> Result<Json<Document>, AppError> {
     // Baseline writes are author/owner only; reviewers propose through the
     // review layer instead (see auth.rs project_acl).
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let mut v = document_for_project(&s, &pid, &did).await?;
     if let Some(expected) = r.expected_revision
         && expected != v.revision
@@ -1313,6 +1307,7 @@ async fn patch_document(
         v.title = x;
     }
     if let Some(x) = r.data {
+        validate_document_data(&x)?;
         v.data = x;
     }
     let old_revision = v.revision;
@@ -1352,18 +1347,19 @@ async fn patch_document(
             )
             .await
     {
-        eprintln!("warning: failed to save document revision snapshot: {e}");
+        tracing::warn!("failed to save document revision snapshot: {e}");
     }
     Ok(Json(out))
 }
 async fn delete_document(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, did)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
     // Deleting a document destroys author work: owner/author only (a reviewer
     // must never be able to delete what they were invited to review).
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let v = document_for_project(&s, &pid, &did).await?;
     let event = build_audit(&p, id(&pid)?, "deleted", "document", v.id, json!({}));
     s.repo.delete_document(v.id, Some(event)).await?;
@@ -1374,22 +1370,23 @@ async fn delete_document(
 
 async fn list_members(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    p: Auth,
     Path(project_raw): Path<String>,
 ) -> Result<Json<Vec<ProjectMembership>>, AppError> {
     let project = project_for(&state, &project_raw).await?;
     // Any project member may see who else is collaborating (the share panel
     // renders this list); only owner/author may modify it.
-    project_access(&state, &headers, project.id, Permission::Read).await?;
+    project_access(&state, &p.0, project.id, Permission::Read).await?;
     Ok(Json(state.repo.list_memberships(project.id).await?))
 }
 async fn get_my_membership(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    p: Auth,
     Path(project_raw): Path<String>,
 ) -> Result<Json<ProjectMembership>, AppError> {
+    let principal = p.0;
     let project = project_for(&state, &project_raw).await?;
-    let principal = project_access(&state, &headers, project.id, Permission::Read).await?;
+    project_access(&state, &principal, project.id, Permission::Read).await?;
     let membership = if let Ok(m) = state
         .repo
         .get_membership(project.id, &principal.subject)
@@ -1414,12 +1411,13 @@ async fn get_my_membership(
 }
 async fn add_member(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    p: Auth,
     Path(project_raw): Path<String>,
     Json(request): Json<ProjectMemberCreate>,
 ) -> Result<(StatusCode, Json<ProjectMembership>), AppError> {
     let project = project_for(&state, &project_raw).await?;
-    let principal = project_access(&state, &headers, project.id, Permission::Manage).await?;
+    project_access(&state, &p.0, project.id, Permission::Manage).await?;
+    let principal = p.0;
     if request.subject.trim().is_empty() {
         return Err(AppError::BadRequest("subject is required".into()));
     }
@@ -1455,18 +1453,19 @@ async fn add_member(
 }
 async fn remove_member(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    p: Auth,
     Path((project_raw, subject)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
     let project = project_for(&state, &project_raw).await?;
     // Any member may remove their own membership (self-service leave); only
     // managers may remove others.
-    let permission = if subject == state.auth.authenticate(&headers).await?.subject {
+    let permission = if subject == p.0.subject {
         Permission::Read
     } else {
         Permission::Manage
     };
-    let principal = project_access(&state, &headers, project.id, permission).await?;
+    project_access(&state, &p.0, project.id, permission).await?;
+    let principal = p.0;
     let membership = state
         .repo
         .get_membership(project.id, &subject)
@@ -1534,11 +1533,12 @@ fn validate_reference_metadata(m: &ReferenceMetadata) -> Result<(), AppError> {
 
 async fn create_reference(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
     Json(r): Json<ReferenceCreate>,
 ) -> Result<(StatusCode, Json<ReferenceEntry>), AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let project = project_for(&s, &pid).await?;
     // Normalize DOI: trim whitespace so leading/trailing spaces don't bypass
     // the case-insensitive uniqueness check.
@@ -1568,28 +1568,29 @@ async fn create_reference(
 }
 async fn list_references(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
 ) -> Result<Json<Vec<ReferenceEntry>>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     let project = project_for(&s, &pid).await?;
     Ok(Json(s.repo.list_references(project.id).await?))
 }
 async fn get_reference(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, rid)): Path<(String, String)>,
 ) -> Result<Json<ReferenceEntry>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     Ok(Json(reference_for_project(&s, &pid, &rid).await?))
 }
 async fn patch_reference(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, rid)): Path<(String, String)>,
     Json(r): Json<ReferencePatch>,
 ) -> Result<Json<ReferenceEntry>, AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let mut v = reference_for_project(&s, &pid, &rid).await?;
     if let Some(patch) = r.metadata {
         // PATCH semantics: merge only the supplied fields into the stored
@@ -1630,17 +1631,19 @@ async fn patch_reference(
 }
 async fn delete_reference(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, rid)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let v = reference_for_project(&s, &pid, &rid).await?;
-    s.blobs
-        .delete(v.id)
-        .await
-        .map_err(|_| AppError::Dependency("blob store unavailable".into()))?;
+    // DB row first, then the blob best-effort: an orphaned blob is recoverable,
+    // a row pointing at a deleted blob made every later export fail with 409.
     let event = build_audit(&p, v.project_id, "deleted", "reference", v.id, json!({}));
     s.repo.delete_reference(v.id, Some(event)).await?;
+    if let Err(error) = s.blobs.delete(v.id).await {
+        tracing::warn!(reference_id = %v.id, error = %error, "failed to delete fulltext blob during reference deletion");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1648,20 +1651,21 @@ async fn delete_reference(
 
 async fn get_fulltext(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, rid)): Path<(String, String)>,
 ) -> Result<Json<FulltextMetadata>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     let reference = reference_for_project(&s, &pid, &rid).await?;
     Ok(Json(s.repo.get_fulltext(reference.id).await?))
 }
 async fn put_fulltext(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, rid)): Path<(String, String)>,
     Json(r): Json<FulltextInput>,
 ) -> Result<Json<FulltextMetadata>, AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let reference = reference_for_project(&s, &pid, &rid).await?;
     if r.filename.trim().is_empty() {
         return Err(AppError::BadRequest("filename is required".into()));
@@ -1737,15 +1741,14 @@ async fn put_fulltext(
 }
 async fn delete_fulltext(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, rid)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let reference = reference_for_project(&s, &pid, &rid).await?;
-    s.blobs
-        .delete(reference.id)
-        .await
-        .map_err(|_| AppError::Dependency("blob store unavailable".into()))?;
+    // DB row first, then the blob best-effort (same rationale as
+    // delete_reference: orphaned blobs are recoverable, dangling rows are not).
     let event = build_audit(
         &p,
         reference.project_id,
@@ -1755,14 +1758,17 @@ async fn delete_fulltext(
         json!({}),
     );
     s.repo.delete_fulltext(reference.id, Some(event)).await?;
+    if let Err(error) = s.blobs.delete(reference.id).await {
+        tracing::warn!(reference_id = %reference.id, error = %error, "failed to delete fulltext blob during fulltext detach");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 async fn list_fulltexts(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
 ) -> Result<Json<Vec<FulltextMetadata>>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     let project = project_for(&s, &pid).await?;
     Ok(Json(s.repo.list_fulltexts(project.id).await?))
 }
@@ -1771,10 +1777,10 @@ async fn list_fulltexts(
 
 async fn list_audit(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
 ) -> Result<Json<Vec<AuditEvent>>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     let p = project_for(&s, &pid).await?;
     Ok(Json(s.repo.list_audit(p.id).await?))
 }
@@ -1783,26 +1789,30 @@ async fn list_audit(
 
 async fn list_document_history(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, did)): Path<(String, String)>,
 ) -> Result<Json<Vec<DocumentRevision>>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     let doc = document_for_project(&s, &pid, &did).await?;
     Ok(Json(s.repo.list_document_revisions(doc.id).await?))
 }
 
 async fn get_document_revision(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, did, rid)): Path<(String, String, String)>,
 ) -> Result<Json<DocumentRevision>, AppError> {
-    permitted(&s, &h, Permission::Read).await?;
+    permitted(&p.0, Permission::Read)?;
     let project = project_for(&s, &pid).await?;
     // Scope the revision to the document named in the path. Previously the
     // document id was discarded (`_did`), so a caller could fetch document B's
     // revision body by placing B's revision UUID under document A's path as
-    // long as both lived in the same project.
-    let document = document_for_project(&s, &pid, &did).await?;
+    // long as both lived in the same project. (Fetch the document directly —
+    // document_for_project would re-fetch the project we already hold.)
+    let document = s.repo.get_document_by_id(id(&did)?).await?;
+    if document.project_id != project.id {
+        return Err(AppError::NotFound);
+    }
     let rev = s.repo.get_document_revision(id(&rid)?).await?;
     if rev.project_id != project.id || rev.document_id != document.id {
         return Err(AppError::NotFound);
@@ -1977,14 +1987,15 @@ fn inject_redline_review(request: &mut CompileRequest) {
 
 async fn api_compile(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    p: Auth,
     Json(mut request): Json<CompileRequest>,
 ) -> Result<Json<CompileResponse>, AppError> {
     // Compiling is a read-only operation (the compile service never mutates the
     // project). The docs' roles table promises "Read and compile" for every
     // role, so any authenticated project member may compile — including
     // read-only users, who were previously denied here.
-    let principal = project_access(&state, &headers, request.project_id, Permission::Read).await?;
+    let principal = p.0;
+    project_access(&state, &principal, request.project_id, Permission::Read).await?;
     if request.sources.is_empty() || !request.sources.contains_key(&request.entry) {
         return Err(AppError::BadRequest("sources must contain entry".into()));
     }
@@ -1997,21 +2008,25 @@ async fn api_compile(
                 request.marks.get(&path).map_or(&[], Vec::as_slice),
                 &request.view,
             )?;
-            Ok((path, projected))
+            // Convert markdown-style headings to Typst syntax at compile time
+            // (never mutating the stored body), matching the export path so a
+            // document that exports successfully also previews successfully.
+            Ok((path, markdown_headings_to_typst(&projected)))
         })
         .collect::<Result<_, AppError>>()?;
     request.marks.clear();
     let yaml = references_bibliography_yaml(&state.repo.list_references(request.project_id).await?);
     inject_bibliography(&mut request, yaml);
     inject_redline_review(&mut request);
-    let response = state.compile.compile(request.clone()).await?;
+    let project_id = request.project_id;
+    let response = state.compile.compile(request).await?;
     audit(
         &state,
         &principal,
-        request.project_id,
+        project_id,
         "compiled",
         "compile",
-        request.project_id,
+        project_id,
         json!({"build_id": response.build_id}),
     )
     .await?;
@@ -2105,7 +2120,12 @@ async fn document_bibliographies(
                         entry.fulltext = Some(fulltext.clone());
                         bytes_cache.insert(key.to_owned(), fulltext);
                     }
-                    Err(()) => missing.push(key.to_owned()),
+                    Err(FulltextError::Missing) => missing.push(key.to_owned()),
+                    Err(FulltextError::Unavailable(error)) => {
+                        return Err(AppError::Dependency(format!(
+                            "failed to fetch fulltext for reference {key}: {error}"
+                        )));
+                    }
                 },
             }
             entries.push(entry);
@@ -2120,15 +2140,32 @@ async fn document_bibliographies(
     Ok((bibliographies, missing))
 }
 
+/// Why a cited reference's fulltext could not be attached to an export.
+enum FulltextError {
+    /// The reference genuinely has no usable fulltext (none recorded, blob
+    /// absent, empty bytes, or a non-PDF content type) — a client-actionable
+    /// 409, same as before.
+    Missing,
+    /// The metadata store or blob store failed — an infrastructure fault that
+    /// must surface as a 502, not as "cited references are missing".
+    Unavailable(String),
+}
+
 async fn fetch_fulltext(
     repo: &dyn Repository,
     blobs: &dyn BlobStore,
     reference_id: Uuid,
-) -> Result<CoreFullText, ()> {
-    let fulltext = repo.get_fulltext(reference_id).await.map_err(|_| ())?;
-    let bytes = blobs.get(reference_id).await.map_err(|_| ())?;
+) -> Result<CoreFullText, FulltextError> {
+    let fulltext = repo.get_fulltext(reference_id).await.map_err(|e| match e {
+        RepoError::NotFound => FulltextError::Missing,
+        other => FulltextError::Unavailable(other.to_string()),
+    })?;
+    let bytes = blobs.get(reference_id).await.map_err(|e| match e {
+        RepoError::NotFound => FulltextError::Missing,
+        other => FulltextError::Unavailable(other.to_string()),
+    })?;
     if bytes.is_empty() || fulltext.content_type != "application/pdf" {
-        return Err(());
+        return Err(FulltextError::Missing);
     }
     Ok(CoreFullText {
         blob_ref: fulltext.blob_ref,
@@ -2180,11 +2217,12 @@ fn markdown_headings_to_typst(source: &str) -> String {
 
 async fn export_project(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
     Json(r): Json<ExportRequest>,
 ) -> Result<Json<ExportResponse>, AppError> {
-    let principal = permitted(&s, &h, Permission::Document).await?;
+    let principal = p.0;
+    permitted(&principal, Permission::Document)?;
     let project = project_for(&s, &pid).await?;
     // The export archive is a full project snapshot: the generated master
     // includes every document, so `entry` only selects which document the
@@ -2312,14 +2350,21 @@ fn pdf_compliance() -> PdfCompliance {
 
 async fn create_share_link(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
     Json(r): Json<ShareLinkCreate>,
 ) -> Result<(StatusCode, Json<ShareLink>), AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let project = project_for(&s, &pid).await?;
     if !matches!(r.role.as_str(), "author" | "reviewer" | "read-only") {
         return Err(AppError::BadRequest("invalid share link role".into()));
+    }
+    // Validate the label like every other user string (it is echoed back in
+    // listings; an unbounded/control-character label was the only unvalidated
+    // one left).
+    if let Some(label) = r.label.as_deref() {
+        validate_text(label, "label", 256)?;
     }
     let link = s
         .repo
@@ -2341,19 +2386,20 @@ async fn create_share_link(
 }
 async fn list_share_links(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(pid): Path<String>,
 ) -> Result<Json<Vec<ShareLink>>, AppError> {
-    permitted(&s, &h, Permission::Manage).await?;
+    permitted(&p.0, Permission::Manage)?;
     let project = project_for(&s, &pid).await?;
     Ok(Json(s.repo.list_share_links(project.id).await?))
 }
 async fn delete_share_link(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path((pid, token)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let p = permitted(&s, &h, Permission::Manage).await?;
+    let p = p.0;
+    permitted(&p, Permission::Manage)?;
     let project = project_for(&s, &pid).await?;
     // Created links can be revoked with their one-time token; listed/redacted
     // links use the non-secret hash returned as their revocation identifier.
@@ -2401,10 +2447,10 @@ fn membership_role_rank(role: &MembershipRole) -> u8 {
 
 async fn redeem_share_link(
     State(s): State<AppState>,
-    h: HeaderMap,
+    p: Auth,
     Path(token): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    let principal = s.auth.authenticate(&h).await?;
+    let principal = p.0;
     let link = s.repo.resolve_share_link(&token).await?;
     if let Some(exp) = link.expires_at
         && exp < Utc::now()

@@ -334,6 +334,57 @@ impl CompileClient for RecordingCompile {
 }
 
 #[tokio::test]
+async fn compile_proxy_converts_markdown_headings_like_export() {
+    // A document written with markdown `#` headings must compile the same way
+    // in the editor preview as it does in the export path (which already
+    // converts them); previously the same body failed only in the preview.
+    let repository = Arc::new(MemoryRepository::new());
+    let now = Utc::now();
+    let project = repository
+        .create_project(
+            Project {
+                id: Uuid::new_v4(),
+                name: "Headings".into(),
+                created_at: now,
+                updated_at: now,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    repository
+        .create_membership(ProjectMembership {
+            project_id: project.id,
+            subject: "alice".into(),
+            role: MembershipRole::Owner,
+            created_at: now,
+        })
+        .await
+        .unwrap();
+    let recorder = Arc::new(RecordingCompile(std::sync::Mutex::new(None)));
+    let state = AppState::new(repository, auth())
+        .with_exporters(recorder.clone(), Arc::new(UnconfiguredReferences));
+    let response = request(
+        router(state),
+        "POST",
+        "/api/compile",
+        "alice",
+        "author",
+        Some(json!({
+            "project_id": project.id,
+            "entry": "main.typ",
+            "sources": {"main.typ": "# Hello\n### Sub"},
+            "mode": "document",
+            "view": "baseline"
+        })),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+    assert_eq!(forwarded.sources["main.typ"], "= Hello\n=== Sub");
+}
+
+#[tokio::test]
 async fn compile_proxy_projects_review_marks_before_forwarding() {
     let repository = Arc::new(MemoryRepository::new());
     let now = Utc::now();
@@ -506,6 +557,43 @@ async fn nul_and_control_characters_are_rejected() {
     )
     .await;
     assert_eq!(nul_body.status(), StatusCode::BAD_REQUEST);
+    // NUL in a document metadata (data) map value — stored as jsonb, so an
+    // unvalidated value would make Postgres reject the write with a 500.
+    let nul_data = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/documents", project.id),
+        "alice",
+        "author",
+        Some(json!({"path": "meta.typ", "title": "ok", "data": {"k": "v\u{0}"}})),
+    )
+    .await;
+    assert_eq!(nul_data.status(), StatusCode::BAD_REQUEST);
+    // ... and on PATCH, where the map previously replaced the stored one
+    // verbatim.
+    let created = response_body(
+        request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/documents", project.id),
+            "alice",
+            "author",
+            Some(json!({"path": "meta.typ", "title": "ok"})),
+        )
+        .await,
+    )
+    .await;
+    let document: Document = created;
+    let nul_patch = request(
+        app.clone(),
+        "PATCH",
+        &format!("/projects/{}/documents/{}", project.id, document.id),
+        "alice",
+        "author",
+        Some(json!({"data": {"k": "v\u{0}"}})),
+    )
+    .await;
+    assert_eq!(nul_patch.status(), StatusCode::BAD_REQUEST);
     // Oversized project name
     let huge = request(
         app,

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use axum::{
-    extract::State,
+    extract::{FromRequestParts, State},
     http::{HeaderMap, Request, header},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -26,7 +26,6 @@ pub struct Principal {
     pub roles: HashSet<Role>,
     /// The `preferred_username` claim (e.g. "demo"), used for membership
     /// lookups when the sharing UI invited by username rather than OIDC sub.
-    #[allow(dead_code)]
     pub preferred_username: Option<String>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -135,6 +134,10 @@ impl Authenticator {
         })
     }
 }
+// `exp`/`iss`/`aud` are never read from the decoded claims: requiring them
+// makes deserialization structurally reject tokens that lack them, while
+// `jsonwebtoken`'s own validation enforces their values. That is why the
+// dead-code allow below is intentional (mirrors services/sync/src/oidc.rs).
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Claims {
@@ -155,21 +158,25 @@ pub(crate) enum Permission {
     Manage,
     Document,
 }
-pub(crate) async fn permitted(
-    state: &AppState,
-    headers: &HeaderMap,
-    permission: Permission,
-) -> Result<Principal, AppError> {
-    let principal = state.auth.authenticate(headers).await?;
-    let allowed = match permission {
-        Permission::Read => !principal.roles.is_empty(),
-        Permission::Manage => principal.roles.contains(&Role::Author),
-        Permission::Document => {
-            principal.roles.contains(&Role::Author) || principal.roles.contains(&Role::Reviewer)
+impl Permission {
+    /// Whether the principal's `IdP` roles satisfy this permission tier.
+    fn allows(self, principal: &Principal) -> bool {
+        match self {
+            Permission::Read => !principal.roles.is_empty(),
+            Permission::Manage => principal.roles.contains(&Role::Author),
+            Permission::Document => {
+                principal.roles.contains(&Role::Author) || principal.roles.contains(&Role::Reviewer)
+            }
         }
-    };
-    if allowed {
-        Ok(principal)
+    }
+}
+
+/// Enforce a permission tier against an already-verified principal. The JWT
+/// signature is verified exactly once per request (see [`Auth`]); this only
+/// checks the role claim.
+pub(crate) fn permitted(principal: &Principal, permission: Permission) -> Result<(), AppError> {
+    if permission.allows(principal) {
+        Ok(())
     } else {
         Err(AppError::Forbidden)
     }
@@ -177,11 +184,11 @@ pub(crate) async fn permitted(
 
 pub(crate) async fn project_access(
     state: &AppState,
-    headers: &HeaderMap,
+    principal: &Principal,
     project_id: Uuid,
     permission: Permission,
-) -> Result<Principal, AppError> {
-    let principal = permitted(state, headers, permission).await?;
+) -> Result<(), AppError> {
+    permitted(principal, permission)?;
     // Try the OIDC sub first; fall back to preferred_username so that
     // memberships created through the UI sharing flow (which sends the
     // human-typed username) also resolve.
@@ -191,7 +198,7 @@ pub(crate) async fn project_access(
         .await
         .is_ok()
     {
-        return Ok(principal);
+        return Ok(());
     }
     if let Some(ref username) = principal.preferred_username {
         state
@@ -199,19 +206,49 @@ pub(crate) async fn project_access(
             .get_membership(project_id, username)
             .await
             .map_err(|_| AppError::Forbidden)?;
-        return Ok(principal);
+        return Ok(());
     }
     Err(AppError::Forbidden)
 }
 
+/// Extractor for the verified caller. The `project_acl` middleware verifies the
+/// JWT once per request and stashes the resulting [`Principal`] in the request
+/// extensions; this extractor reuses it when present and otherwise falls back
+/// to authenticating from the `Authorization` header (for paths the middleware
+/// does not gate). Handlers therefore never re-verify the signature: previously
+/// `permitted`/`project_access` re-authenticated on every call, so a single
+/// request could verify the same JWT up to three times.
+pub(crate) struct Auth(pub Principal);
+
+impl FromRequestParts<AppState> for Auth {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        if let Some(principal) = parts.extensions.get::<Principal>() {
+            return Ok(Auth(principal.clone()));
+        }
+        Ok(Auth(state.auth.authenticate(&parts.headers).await?))
+    }
+}
+
 pub(crate) async fn project_acl(
     State(state): State<AppState>,
-    request: Request<axum::body::Body>,
+    mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     let mut segments = request.uri().path().split('/');
     let project_id = segments.nth(2).and_then(|raw| Uuid::parse_str(raw).ok());
     let Some(project_id) = project_id else {
+        // Not a project-scoped path: the handler performs (and answers for)
+        // its own authentication. Verify anyway when a token is present so
+        // downstream handlers can reuse the stashed principal instead of
+        // verifying the signature a second time.
+        if let Ok(principal) = state.auth.authenticate(request.headers()).await {
+            request.extensions_mut().insert(principal);
+        }
         return next.run(request).await;
     };
     let principal = match state.auth.authenticate(request.headers()).await {
@@ -235,6 +272,8 @@ pub(crate) async fn project_acl(
     } else {
         return AppError::Forbidden.into_response();
     };
+    // Hand the verified identity to the handlers so they do not re-verify it.
+    request.extensions_mut().insert(principal.clone());
     let path = request.uri().path();
     // Export is a read-only operation that generates a project archive from
     // existing data — no mutation. Reviewers need it to export review copies.

@@ -180,19 +180,27 @@ Routes (the machine-readable truth is `GET /openapi.json` on the app service):
 - `POST /api/compile` (proxied verbatim by nginx; also reachable on the app
   port), `GET /healthz`, `GET /health/ready`, `GET /openapi.json`
 - Internal (machine-token only, never proxied): `POST /internal/sync/authorize`,
-  `POST /internal/document/{document_id}/materialize`
+  `GET /internal/document/{document_id}/body`
 
 Reference payloads are structured JSON (`metadata` with `title`, `authors`,
 `year`, `doi`, `pmid`, `journal`, and a mandatory `extra` object) — the API does
 not parse RIS text. Project-scoped DOIs must be unique (409 on duplicates).
+
+Document-body persistence: the web client persists the editor's text with a
+debounced `PATCH /projects/{p}/documents/{d}` (autosave) — that is the write
+path of record for document bodies. The sync relay carries live collaborative
+edits between peers and *reads* the authoritative body from the app (via
+`GET /internal/document/{document_id}/body`) to seed/verify rooms; it never
+writes document bodies back to the database.
 
 Export layout: the archive contains the compiled PDF, the projected document
 sources (paths flattened with `/` → `_`), and per-document RIS bibliographies +
 full-text PDFs under `references-<n>/`. The generated master `main.typ`
 includes every document by its full project-relative path, so documents in
 subdirectories export and compile correctly. Exports require every cited
-reference to have an uploaded full-text PDF (409 otherwise) and are restricted
-to owners/authors (reviewers may compile but not export).
+reference to have an uploaded full-text PDF (409 otherwise). Owners, authors,
+and reviewers may export (reviewers need it to export review copies;
+read-only members may compile but not export).
 
 ### 4.4 Health — `GET /healthz` (all HTTP services)
 

@@ -13,6 +13,8 @@
 //! per empty-room reviewer seed; every later reviewer update that touches the
 //! text container is handled by the room's review-policy gate instead.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use crate::config::DocId;
@@ -99,5 +101,3 @@ impl SeedVerifier for HttpSeedVerifier {
         Ok(body == text)
     }
 }
-
-use std::sync::Arc;

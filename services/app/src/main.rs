@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(S3BlobStore::from_env().await?),
     );
     let state = AppState::new(
-        repository.clone(),
+        repository,
         Authenticator {
             issuer,
             audience,
@@ -65,10 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::env::var("NISABA_COMPILE_URL").unwrap_or_else(|_| "http://compile:8080".into()),
             compile_token,
         )),
-        Arc::new(NisabaReferencesExporter {
-            repo: repository,
-            blobs: blobs.clone(),
-        }),
+        Arc::new(NisabaReferencesExporter),
     )
     .with_blob_store(blobs);
     let address = std::env::var("NISABA_APP_ADDR")

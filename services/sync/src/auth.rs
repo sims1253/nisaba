@@ -22,7 +22,6 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 
 use crate::config::DocId;
-use crate::error::SyncError;
 
 /// A role granted to a peer on a document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -147,14 +146,6 @@ pub struct Identity {
 }
 
 impl Identity {
-    #[must_use]
-    pub fn new(subject: impl Into<String>) -> Self {
-        Self {
-            subject: subject.into(),
-            roles: HashSet::new(),
-        }
-    }
-
     /// The strongest (most permissive) global role the identity holds, or `None`.
     #[must_use]
     pub fn strongest_role(&self) -> Option<Role> {
@@ -234,15 +225,6 @@ impl AccessResolver for StaticAccessResolver {
     }
 }
 
-/// Enforce that `role` has `cap`. Used by the session before acting on a frame.
-pub fn require(role: Role, cap: CapabilitySet, label: &'static str) -> Result<(), SyncError> {
-    if role.capabilities().contains(cap) {
-        Ok(())
-    } else {
-        Err(SyncError::Access(AuthError::Forbidden { role, cap: label }))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,12 +250,5 @@ mod tests {
         let d = DocId::new("d1").unwrap();
         assert_eq!(r.resolve(&d, "anything").await.unwrap(), Role::Reviewer);
         assert!(r.resolve(&d, "").await.is_err());
-    }
-
-    #[test]
-    fn require_blocks_readonly_push() {
-        let err = require(Role::ReadOnly, CapabilitySet::PUSH_UPDATES, "PUSH_UPDATES");
-        assert!(err.is_err());
-        assert!(require(Role::Author, CapabilitySet::PUSH_UPDATES, "PUSH_UPDATES").is_ok());
     }
 }

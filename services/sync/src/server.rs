@@ -6,7 +6,10 @@
 //! Routes:
 //!
 //! * `GET /health` — liveness: always 200, reports version + live room count.
-//! * `GET /health/ready` — readiness: always 200 once serving.
+//! * `GET /health/ready` — readiness: 200 only when the wired probes pass
+//!   (JWKS freshness, data-dir writability); 503 with the failing reasons
+//!   otherwise. Probes that do not apply (no OIDC resolver, no data dir) are
+//!   skipped, so a bare `build` is always ready.
 //! * `GET /sync/{doc_id}` — WebSocket upgrade. The document id is validated here
 //!   (a 400 on a bad id, before any upgrade) and re-checked against the HELLO
 //!   frame inside the session.
@@ -24,6 +27,7 @@ use serde_json::json;
 use tower_http::trace::TraceLayer;
 
 use crate::config::{Config, DocId};
+use crate::oidc::JwksCache;
 use crate::registry::DocRegistry;
 use crate::session::{SessionState, run_socket};
 
@@ -63,12 +67,43 @@ where
     DEFAULT_BIND_ADDR.parse()
 }
 
+/// Readiness probes for [`build_with_readiness`]. A `None` field means the
+/// probe does not apply (e.g. the deny-all dev resolver has no JWKS cache) and
+/// is not checked.
+#[derive(Clone, Default)]
+pub struct Readiness {
+    /// When set, readiness fails while the JWKS cache is stale or empty: token
+    /// validation is fail-closed, so every HELLO would be denied until keys
+    /// load — a state orchestrators should wait out, not route traffic into.
+    pub jwks: Option<Arc<JwksCache>>,
+    /// When set, readiness probes that this directory is writable (the op-log
+    /// and snapshot stores live under it; a read-only volume fails every
+    /// durable join).
+    pub data_dir: Option<std::path::PathBuf>,
+}
+
 /// Build the application router.
 ///
 /// Exposed so tests can drive the router directly or bind it to an ephemeral
-/// listener.
+/// listener. Readiness has no probes wired (always ready); the binary uses
+/// [`build_with_readiness`].
 pub fn build(registry: DocRegistry, config: Arc<Config>) -> Router {
-    let state = SessionState { registry, config };
+    build_with_readiness(registry, config, Readiness::default())
+}
+
+/// Like [`build`], with real readiness probes (see [`Readiness`]).
+pub fn build_with_readiness(
+    registry: DocRegistry,
+    config: Arc<Config>,
+    // Named `probes` so it cannot shadow the `readiness` handler below at the
+    // route registration site.
+    probes: Readiness,
+) -> Router {
+    let state = SessionState {
+        registry,
+        config,
+        readiness: probes,
+    };
     Router::new()
         .route("/health", get(health))
         // `/healthz` is the conventional k8s liveness path; alias of `/health`.
@@ -100,11 +135,50 @@ async fn health(State(st): State<SessionState>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn readiness(State(st): State<SessionState>) -> Json<serde_json::Value> {
-    Json(json!({
-        "status": "ready",
+/// Readiness: report every failing dependency and return 503 until all wired
+/// probes pass (mirrors the app service's `/health/ready`, which returns a
+/// non-200 with a reason while its database is unreachable). The per-document
+/// authz endpoint is deliberately NOT probed here — a network call per
+/// readiness check is not cheap, and a blip there degrades individual joins
+/// without making the service unusable.
+async fn readiness(State(st): State<SessionState>) -> Response {
+    let mut reasons: Vec<String> = Vec::new();
+    if let Some(jwks) = &st.readiness.jwks
+        && jwks.is_stale()
+    {
+        reasons.push("jwks cache is empty or stale; token validation is fail-closed".into());
+    }
+    if let Some(dir) = &st.readiness.data_dir {
+        // A create+write+remove of one probe file (orchestrators poll this
+        // endpoint every few seconds; the synchronous fs calls are µs-scale).
+        if let Err(error) = probe_writable(dir) {
+            reasons.push(format!(
+                "data dir {} is not writable: {error}",
+                dir.display()
+            ));
+        }
+    }
+    let ready = reasons.is_empty();
+    let body = json!({
+        "status": if ready { "ready" } else { "unavailable" },
         "rooms": st.registry.len(),
-    }))
+        "reasons": reasons,
+    });
+    if ready {
+        (StatusCode::OK, Json(body)).into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+    }
+}
+
+/// Verify `dir` exists and accepts writes by touching (and removing) a probe
+/// file inside it.
+fn probe_writable(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let probe = dir.join(".readiness-probe");
+    std::fs::write(&probe, b"")?;
+    std::fs::remove_file(&probe)?;
+    Ok(())
 }
 
 /// WebSocket upgrade handler. A bad document id is rejected with HTTP 400 before

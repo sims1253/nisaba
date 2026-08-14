@@ -46,6 +46,40 @@ async fn update_size_limit_rejects_oversized_blob() {
 }
 
 #[tokio::test]
+async fn oversized_catchup_payload_rejects_the_join() {
+    // A document whose snapshot exceeds the configured catch-up cap must
+    // reject a fresh peer's join with a Limit error instead of queueing a
+    // giant welcome frame — never by truncating the payload. The cap here is
+    // tiny and the content varied (Loro run-length compresses repeated
+    // characters, so identical text would sneak under any cap).
+    let room = room_with(Config {
+        max_snapshot_bytes: 128,
+        ..Config::default()
+    })
+    .await;
+    let mut author = SimPeer::new(21, Role::Author);
+    author.connect(&room, &[]).await;
+    for i in 0..200 {
+        author.insert(0, &format!("f{i:03} "));
+    }
+    author.submit(&room).await;
+    author.drain();
+
+    let (tx, _rx) = mpsc::channel(64);
+    let err = room
+        .join(
+            PeerId(22),
+            Role::ReadOnly,
+            &[],
+            Vec::new(),
+            tx,
+            nisaba_sync::close_signal(nisaba_sync::CLOSE_NORMAL),
+        )
+        .unwrap_err();
+    assert!(matches!(err, SyncError::Limit(_)), "{err:?}");
+}
+
+#[tokio::test]
 async fn read_only_role_cannot_push_updates() {
     let room = room_with(Config::default()).await;
     let mut ro = SimPeer::new(7, Role::ReadOnly);
