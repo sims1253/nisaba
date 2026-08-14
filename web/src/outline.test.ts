@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { activeHeadingIndex, buildFileTree, documentHeadings, folderPaths, headingTrail, wordCount } from "./outline"
+import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount } from "./outline"
 
 const paths = (list: readonly string[]) => list.map((path) => ({ path, item: path }))
 
@@ -30,11 +30,6 @@ describe("buildFileTree", () => {
   it("ignores empty and dot segments instead of creating nameless folders", () => {
     const tree = buildFileTree(paths(["/a.typ", "./b.typ", "x//y.typ"]))
     expect(tree.map((node) => `${node.type}:${node.name}`)).toEqual(["folder:x", "file:a.typ", "file:b.typ"])
-  })
-
-  it("lists every folder path", () => {
-    const tree = buildFileTree(paths(["a/b/c.typ", "d/e.typ"]))
-    expect([...folderPaths(tree)].sort()).toEqual(["a", "a/b", "d"])
   })
 })
 

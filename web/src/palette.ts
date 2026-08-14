@@ -37,8 +37,6 @@ export interface PaletteItem {
 
 export interface Palette {
   readonly open: (initialQuery?: string) => void
-  readonly close: () => void
-  readonly isOpen: () => boolean
 }
 
 const MAX_RESULTS = 40
@@ -218,5 +216,5 @@ export function createPalette(provider: () => readonly PaletteItem[]): Palette {
     input.focus()
   }
 
-  return { open, close, isOpen: () => backdrop !== undefined }
+  return { open }
 }

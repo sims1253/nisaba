@@ -99,21 +99,6 @@ export function buildFileTree<T>(entries: readonly { readonly path: string; read
   return sortTree(roots)
 }
 
-/** Every folder path in a tree, for expand/collapse bookkeeping. */
-export function folderPaths<T>(nodes: readonly TreeNode<T>[]): readonly string[] {
-  const out: string[] = []
-  const walk = (list: readonly TreeNode<T>[]): void => {
-    for (const node of list) {
-      if (node.type === "folder") {
-        out.push(node.path)
-        walk(node.children)
-      }
-    }
-  }
-  walk(nodes)
-  return out
-}
-
 // ---------------------------------------------------------------------------
 // Section outline
 // ---------------------------------------------------------------------------

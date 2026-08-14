@@ -135,7 +135,6 @@ export const SHELL_HTML = `
       Problems<span class="n num" id="problem-count">0</span>
     </button>
     <button id="drawer-tab-log" class="tab" type="button" role="tab" aria-selected="false" data-drawer-tab="log">Log</button>
-    <span class="drawer-summary" id="drawer-summary"></span>
     <button id="drawer-close" class="btn-icon" type="button" title="Close" aria-label="Close the problems panel">×</button>
   </div>
   <div class="drawer-body" id="diagnostics-list" role="tabpanel" aria-labelledby="drawer-tab-problems"></div>
