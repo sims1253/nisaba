@@ -1214,16 +1214,33 @@ function openProject(project: Project): void {
   persistLastOpen({ projectId: project.id })
   renderWorkspaceState()
   loadOutline()
-  run(api.listReferences(project.id), (references) => { state.references = references; renderProjectFacts() })
-  run(api.listFulltexts(project.id), (fulltexts) => { state.fulltexts = new Map(fulltexts.map((item) => [item.reference_id, item])); renderProjectFacts() })
+  // Each of these callbacks writes project-scoped state (references, fulltexts,
+  // role). Rapidly opening project A then B delivers responses out of order, so
+  // without the same still-open guard loadOutline uses, a late response for A
+  // would hand B the wrong citation completer entries or — worse for the
+  // reviewer UX — the wrong role.
+  run(api.listReferences(project.id), (references) => {
+    if (state.project?.id !== project.id) return
+    state.references = references
+    renderProjectFacts()
+  })
+  run(api.listFulltexts(project.id), (fulltexts) => {
+    if (state.project?.id !== project.id) return
+    state.fulltexts = new Map(fulltexts.map((item) => [item.reference_id, item]))
+    renderProjectFacts()
+  })
   // Fetch the caller's project-scoped role to gate reviewer UX: a reviewer is
   // locked into suggesting mode (H1) and has Export hidden (M4). On failure,
   // default to read-only (least privilege) so a transient error does not grant
-  // author-level UI powers to non-authors.
+  // author-level UI powers to non-authors. The failure path needs the guard
+  // too: A's failed membership resolving after B opened would lock B's UI to
+  // read-only on A's behalf.
   run(api.getMembership(project.id), (membership) => {
+    if (state.project?.id !== project.id) return
     state.role = membership.role
     applyRoleGates()
   }, () => {
+    if (state.project?.id !== project.id) return
     state.role = "read-only"
     applyRoleGates()
   })
