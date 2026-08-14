@@ -19,8 +19,12 @@ label on mobile so it cannot cover the sign-in controls.
   read by the app. `directAccessGrantsEnabled` (the password grant) is **off**.
 - **Token claims:** roles are mapped into a **top-level `roles`** claim (the app
   reads `roles`, *not* Keycloak's conventional `realm_access.roles`), and a
-  `nisaba-audience` mapper adds `nisaba` to the access-token `aud` (the value
-  the app validates against `NISABA_OIDC_AUDIENCE`).
+  `nisaba-audience` mapper emits **two** values into the access-token `aud`:
+  `nisaba-web` (the client audience Keycloak adds natively) and `nisaba` (a
+  custom audience). The app validates `NISABA_OIDC_AUDIENCE` against that
+  claim, so **both settings work**: `.env.example` sets `nisaba-web`, while the
+  app's built-in default is `nisaba`. Change either only in step with the
+  realm's mapper.
 - **Roles:** `author`, `reviewer`, `read-only`. `reviewer` is the
   suggesting/accept-reject role; `read-only` cannot edit.
 - **Demo users (local dev only):**
@@ -77,9 +81,9 @@ MUST:
 
 - [ ] Keep `nisaba-web` a **public** client with PKCE (`S256`) enabled; never
       re-introduce a static client secret into the browser bundle.
-- [ ] Confirm the `roles` (top-level) and `nisaba-audience` (`aud: nisaba`)
-      mappers are present on the production client, or the app will reject
-      tokens / see no roles.
+- [ ] Confirm the `roles` (top-level) and `nisaba-audience` (aud: both
+      `nisaba-web` and `nisaba`) mappers are present on the production client,
+      or the app will reject tokens / see no roles.
 - [ ] Populate the app's `NISABA_OIDC_JWKS_JSON` (or wire the adapter to fetch
       `NISABA_OIDC_DISCOVERY_URL`) from the production IdP, never the dev JWKS.
 - [ ] Delete the `demo` / `reviewer` / `reader` users (or replace with real

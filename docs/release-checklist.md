@@ -40,6 +40,10 @@ capabilities.
 - [ ] Audit log: tamper evidence (hash chain or append-only)
 - [ ] Log redaction: no secrets in structured logs
 - [ ] Upload quarantine: file type and size validation enforced
+- [ ] Production Keycloak: the dev realm's `subject-id` mapper overwrites the
+      JWT `sub` claim with the mutable `username` — document this claim-stability
+      hazard (renaming a user changes the subject identity) and decide whether
+      the production realm keeps the mapper
 
 ### Supply chain
 - [x] `cargo deny check` passes (licenses, advisories, bans, sources)
@@ -53,6 +57,11 @@ capabilities.
 - [ ] Warm compile benchmark recorded (cached project)
 - [ ] 1000-page document compiles within timeout
 - [ ] Large file tree loads without blocking UI
+
+### Known product gaps
+- [ ] Review marks are not persisted to documents yet and do not flow into
+      export/compile views (see `services/app/src/lib.rs`, the export
+      projection currently receives an empty mark list)
 
 ## Post-release monitoring
 

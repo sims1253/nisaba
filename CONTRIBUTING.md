@@ -39,6 +39,14 @@ additional system prerequisites documented in [`docs/testing.md`](docs/testing.m
   reports outside their documented fixture/output directories.
 - Keep public documentation factual. Planned behavior must be labelled as planned.
 
+## Licensing
+
+The project is licensed under **AGPL-3.0-only** ([`LICENSE`](LICENSE)). By
+contributing, you agree that your contribution is licensed under AGPL-3.0-only
+as part of this repository. No per-file copyright or
+SPDX-License-Identifier headers are used — the repository relies on the
+top-level `LICENSE` file — so do not add them to new files.
+
 ## Commits and pull requests
 
 Use focused commits and describe:
