@@ -557,6 +557,43 @@ async fn nul_and_control_characters_are_rejected() {
     )
     .await;
     assert_eq!(nul_body.status(), StatusCode::BAD_REQUEST);
+    // NUL in a document metadata (data) map value — stored as jsonb, so an
+    // unvalidated value would make Postgres reject the write with a 500.
+    let nul_data = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/documents", project.id),
+        "alice",
+        "author",
+        Some(json!({"path": "meta.typ", "title": "ok", "data": {"k": "v\u{0}"}})),
+    )
+    .await;
+    assert_eq!(nul_data.status(), StatusCode::BAD_REQUEST);
+    // ... and on PATCH, where the map previously replaced the stored one
+    // verbatim.
+    let created = response_body(
+        request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/documents", project.id),
+            "alice",
+            "author",
+            Some(json!({"path": "meta.typ", "title": "ok"})),
+        )
+        .await,
+    )
+    .await;
+    let document: Document = created;
+    let nul_patch = request(
+        app.clone(),
+        "PATCH",
+        &format!("/projects/{}/documents/{}", project.id, document.id),
+        "alice",
+        "author",
+        Some(json!({"data": {"k": "v\u{0}"}})),
+    )
+    .await;
+    assert_eq!(nul_patch.status(), StatusCode::BAD_REQUEST);
     // Oversized project name
     let huge = request(
         app,

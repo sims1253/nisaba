@@ -1160,6 +1160,18 @@ fn validate_body(value: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Document metadata (`data`) is stored as jsonb: a control character in a key
+/// or value makes Postgres reject the whole write (HTTP 500). Validate keys and
+/// values like every other user string, with the same caps as reference
+/// metadata extras.
+fn validate_document_data(data: &BTreeMap<String, String>) -> Result<(), AppError> {
+    for (key, value) in data {
+        validate_text(key, "data key", 256)?;
+        validate_text(value, "data value", 4096)?;
+    }
+    Ok(())
+}
+
 // --- Document handlers ---
 
 async fn document_for_project(
@@ -1190,6 +1202,7 @@ async fn create_document(
     }
     validate_text(&r.title, "title", 2048)?;
     validate_body(&r.body)?;
+    validate_document_data(&r.data)?;
     let id = Uuid::new_v4();
     let event = build_audit(
         &p,
@@ -1291,6 +1304,7 @@ async fn patch_document(
         v.title = x;
     }
     if let Some(x) = r.data {
+        validate_document_data(&x)?;
         v.data = x;
     }
     let old_revision = v.revision;
