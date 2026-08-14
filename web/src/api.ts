@@ -453,7 +453,10 @@ const asShareLinkRole = (raw: string): ShareLinkRole =>
   (SHARE_LINK_ROLES as readonly string[]).includes(raw) ? (raw as ShareLinkRole) : "read-only"
 
 const ShareLink = Schema.Struct({
-  token: Schema.String,
+  // The plaintext token is returned exactly once, on creation. List responses
+  // deliberately omit it because only its hash is stored server-side.
+  token: Schema.optional(Schema.String),
+  token_hash: Schema.String,
   project_id: Schema.String,
   role: Schema.String,
   created_by: Schema.String,
@@ -486,8 +489,8 @@ export const createShareLink = (
       )
     : Effect.fail(new ApiError({ message: `Invalid share-link role: ${role}` }))
 
-export const deleteShareLink = (projectId: string, token: string): Effect.Effect<void, ApiError> =>
-  request(path("projects", projectId, "share-links", token), undefined, { method: "DELETE" })
+export const deleteShareLink = (projectId: string, revocationId: string): Effect.Effect<void, ApiError> =>
+  request(path("projects", projectId, "share-links", revocationId), undefined, { method: "DELETE" })
 
 /** Redeems a share token: adds the caller as a member and returns the project ID. */
 export const redeemShareLink = (token: string): Effect.Effect<{ readonly project_id: string }, ApiError> =>

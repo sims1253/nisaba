@@ -10,8 +10,8 @@ use futures_util::{FutureExt, SinkExt, StreamExt};
 use loro::LoroDoc;
 use nisaba_sync::protocol::{CatchUp, Frame, PROTOCOL_VERSION};
 use nisaba_sync::{
-    Config, DocRegistry, MemoryOpLogStore, MemorySnapshotStore, Role, StaticAccessResolver,
-    SystemClock,
+    AccessResolver, AuthError, Config, DocId, DocRegistry, MemoryOpLogStore, MemorySnapshotStore,
+    Role, StaticAccessResolver, SystemClock,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -38,6 +38,33 @@ async fn spawn_server_with(access: Arc<dyn nisaba_sync::AccessResolver>) -> std:
         let _ = axum::serve(listener, router).await;
     });
     addr
+}
+
+#[derive(Clone)]
+struct MutableAccessResolver {
+    role: Arc<Mutex<Option<Role>>>,
+}
+
+impl MutableAccessResolver {
+    fn new(role: Role) -> Self {
+        Self {
+            role: Arc::new(Mutex::new(Some(role))),
+        }
+    }
+
+    fn revoke(&self) {
+        *self.role.lock().unwrap() = None;
+    }
+}
+
+#[async_trait::async_trait]
+impl AccessResolver for MutableAccessResolver {
+    async fn resolve(&self, _doc: &DocId, _token: &str) -> Result<Role, AuthError> {
+        self.role
+            .lock()
+            .unwrap()
+            .ok_or_else(|| AuthError::Unauthenticated("membership removed".to_string()))
+    }
 }
 
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
@@ -296,6 +323,73 @@ async fn production_default_denies_every_token() {
         _ => false,
     };
     assert!(denied, "expected FORBIDDEN under deny-by-default");
+}
+
+#[tokio::test]
+async fn revoking_membership_terminates_an_existing_author_session() {
+    let access = MutableAccessResolver::new(Role::Author);
+    let addr = spawn_server_with(Arc::new(access.clone())).await;
+    let mut client = Client::connect(addr, "revoked-live-session", 1).await;
+    let mut observer = Client::connect(addr, "revoked-live-session", 2).await;
+
+    access.revoke();
+    client.edit(0, "must not reach the relay").await;
+
+    let denied = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match client.recv_frame().await {
+                Some(frame @ Frame::Error { .. }) => break frame,
+                Some(_) => {}
+                None => panic!("relay closed before sending the revocation error"),
+            }
+        }
+    })
+    .await
+    .expect("relay should answer the revoked update promptly");
+    assert!(
+        matches!(
+            denied,
+            Frame::Error { code, ref msg }
+                if code == nisaba_sync::session::codes::FORBIDDEN
+                    && msg.contains("access was revoked")
+        ),
+        "expected an explicit access-revoked denial, got {denied:?}"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    observer.drain_updates();
+    assert_eq!(observer.text(), "", "revoked update reached the relay");
+}
+
+#[tokio::test]
+async fn heartbeat_detects_revocation_before_the_user_edits() {
+    let access = MutableAccessResolver::new(Role::Author);
+    let addr = spawn_server_with(Arc::new(access.clone())).await;
+    let mut client = Client::connect(addr, "idle-revoked-session", 1).await;
+
+    access.revoke();
+    send(&mut client.ws, Frame::Heartbeat).await;
+
+    let denied = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match client.recv_frame().await {
+                Some(frame @ Frame::Error { .. }) => break frame,
+                Some(_) => {}
+                None => panic!("relay closed before sending the revocation error"),
+            }
+        }
+    })
+    .await
+    .expect("heartbeat should detect revoked access promptly");
+    assert!(
+        matches!(
+            denied,
+            Frame::Error { code, ref msg }
+                if code == nisaba_sync::session::codes::FORBIDDEN
+                    && msg.contains("access was revoked")
+        ),
+        "expected an explicit access-revoked denial, got {denied:?}"
+    );
 }
 
 #[tokio::test]

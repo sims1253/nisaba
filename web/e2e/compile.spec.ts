@@ -34,6 +34,24 @@ test.describe("Compile and PDF preview", () => {
     expect(width).toBeGreaterThan(0)
   })
 
+  test("rapid preview updates do not invalidate an in-flight PDF", async ({ page }) => {
+    await signIn(page, { username: "demo", password: "demo", role: "author" })
+    await createProject(page, "Rapid Compile Test")
+    await openFirstProject(page)
+
+    const failedBlobRequests: string[] = []
+    page.on("requestfailed", (request) => {
+      if (request.url().startsWith("blob:")) failedBlobRequests.push(request.url())
+    })
+
+    for (let index = 0; index < 5; index++) {
+      await page.locator("#compile-button").click()
+    }
+
+    await expect(page.locator(".pdf-page canvas").first()).toBeVisible({ timeout: 30_000 })
+    expect(failedBlobRequests).toEqual([])
+  })
+
   test("compile error is surfaced to the user", async ({ page }) => {
     await signIn(page, { username: "demo", password: "demo", role: "author" })
     await createProject(page, "Compile Error Test")

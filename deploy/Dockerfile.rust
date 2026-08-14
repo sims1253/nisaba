@@ -39,6 +39,10 @@ ARG SERVICE=nisaba-compile
 # Cook the dependency graph from the recipe — this layer is cache-stable across
 # source-only changes and survives concurrent edits to workspace manifests.
 COPY --from=planner /usr/src/nisaba/recipe.json recipe.json
+# cargo-chef does not materialise patched path dependencies that are outside
+# the workspace member list. Make the local `im` shim available while cooking
+# dependencies; the later `COPY . .` still supplies all application sources.
+COPY vendor/im vendor/im
 # Keep Cargo's registry, Git checkout, and target directories in BuildKit cache
 # mounts. In particular, use the SAME target cache for `chef cook` and the real
 # build: baking the cooked target into a layer and then hiding it behind a cache

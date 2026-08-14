@@ -9,6 +9,13 @@ export default defineConfig(({ mode }) => {
     .map((host) => host.trim())
     .filter((host) => host.length > 0)
   return {
+    resolve: {
+      alias: [
+        // Keep every runtime import (including loro-codemirror's) behind the
+        // same explicitly initialized WASM boundary.
+        { find: /^loro-crdt$/, replacement: "/src/loro.ts" }
+      ]
+    },
     server: {
       port: 5173,
       // Vite always permits localhost and IP literals. Additional tunnel hosts

@@ -1,0 +1,28 @@
+/* Keep the deliberately loud local-development realm label readable without
+   letting it overlay the credential form on narrow/touch screens. */
+#kc-header-wrapper {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  #kc-header {
+    position: static;
+    margin: 0;
+  }
+
+  #kc-header-wrapper {
+    padding: 1rem;
+    font-size: 1.25rem;
+    line-height: 1.25;
+  }
+
+  .login-pf-page {
+    padding-top: 0;
+  }
+
+  .login-pf-page .card-pf {
+    width: calc(100% - 2rem);
+    margin: 1rem;
+  }
+}

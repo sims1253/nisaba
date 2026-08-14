@@ -5,10 +5,10 @@ import type { PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist"
 // entry directly lets Vite emit it as a hashed asset and wire the URL.
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker"
 
-async function loadPdfDocument(url: string): Promise<PDFDocumentProxy> {
+async function loadPdfDocument(data: Uint8Array): Promise<PDFDocumentProxy> {
   const { GlobalWorkerOptions, getDocument } = await import("pdfjs-dist")
   GlobalWorkerOptions.workerPort = new PdfWorker()
-  return getDocument({ url }).promise
+  return getDocument({ data }).promise
 }
 
 const ZOOM_LEVELS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
@@ -95,7 +95,7 @@ export class VirtualPdfViewer {
     this.renderedPages.clear()
   }
 
-  async load(url: string): Promise<void> {
+  async load(data: Uint8Array): Promise<void> {
     const generation = ++this.generation
     this.observer?.disconnect()
     this.container.replaceChildren()
@@ -105,7 +105,7 @@ export class VirtualPdfViewer {
     this.activeTextLayers.forEach((layer) => layer.cancel())
     this.activeTextLayers.clear()
     this.clearHighlight()
-    const pdf = await loadPdfDocument(url)
+    const pdf = await loadPdfDocument(data)
     if (generation !== this.generation) return
     this.document = pdf
     const pages = Array.from({ length: pdf.numPages }, (_, index) => {

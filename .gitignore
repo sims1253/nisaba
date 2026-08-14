@@ -33,5 +33,5 @@ artifacts/
 Thumbs.db
 
 # Playwright e2e artifacts
-web/e2e/test-results/
+test-results/
 web/playwright-report/

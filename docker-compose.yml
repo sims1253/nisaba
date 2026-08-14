@@ -165,6 +165,7 @@ services:
     volumes:
       - ./deploy/keycloak/nisaba-realm.json:/opt/keycloak/data/import/nisaba-realm.json:ro
       - ./deploy/keycloak/healthcheck.sh:/usr/local/bin/kc-healthcheck.sh:ro
+      - ./deploy/keycloak/themes/nisaba:/opt/keycloak/themes/nisaba:ro
       - keycloak-data:/opt/keycloak/data
     healthcheck:
       # Keycloak's image has no curl/wget; the mounted script does a real HTTP

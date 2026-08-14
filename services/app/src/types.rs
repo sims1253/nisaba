@@ -99,7 +99,8 @@ pub struct DocumentRevision {
 pub struct ShareLink {
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub token: String,
-    #[serde(skip)]
+    /// Opaque revocation identifier. This is the one-way hash already stored by
+    /// the service, not the share secret, and is safe to return in managed lists.
     pub token_hash: String,
     pub project_id: Uuid,
     pub role: String,

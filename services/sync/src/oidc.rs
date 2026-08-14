@@ -392,21 +392,34 @@ fn index_keys(set: JwkSet) -> HashMap<String, jsonwebtoken::jwk::Jwk> {
 }
 
 /// Run a JWKS URL refresher forever (spawn it from the binary). Fetches once on
-/// entry, then every `interval`. Failures are logged and the previous keys are
-/// retained; the cache's `max_age` guard handles prolonged outages.
+/// entry, then every `interval`. Before the first successful fetch, retry once a
+/// second: dependency health can change between Compose's readiness check and
+/// this task's first request, and waiting the normal 15-minute rotation interval
+/// would leave every live session denied. After keys have loaded, failures keep
+/// the previous keys and the cache's `max_age` guard handles prolonged outages.
 pub async fn run_jwks_refresher(
     jwks: Arc<JwksCache>,
     http: Arc<dyn HttpFetch>,
     url: String,
     interval: Duration,
 ) {
-    if let Err(e) = jwks.refresh(&url, &http).await {
-        tracing::warn!(error = %e, url = %url, "initial JWKS refresh failed (denying until success)");
-    } else {
-        tracing::info!(url = %url, keys = "loaded", "JWKS refreshed");
+    loop {
+        match jwks.refresh(&url, &http).await {
+            Ok(()) => {
+                tracing::info!(url = %url, keys = "loaded", "JWKS refreshed");
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, url = %url, "initial JWKS refresh failed; retrying in one second (denying until success)");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
     }
     let mut tick = tokio::time::interval(interval);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // `interval` yields immediately once; the successful initial fetch above
+    // already covered that tick.
+    tick.tick().await;
     loop {
         tick.tick().await;
         if let Err(e) = jwks.refresh(&url, &http).await {

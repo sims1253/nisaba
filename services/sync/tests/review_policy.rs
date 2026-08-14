@@ -153,6 +153,26 @@ async fn reviewer_combined_text_and_review_update_is_accepted() {
 }
 
 #[tokio::test]
+async fn reviewer_first_suggestion_in_empty_room_is_accepted() {
+    let room = room_with_verifier(vec![], false).await;
+    let mut rev = SimPeer::new(3, Role::Reviewer);
+    rev.connect(&room, &[]).await;
+    rev.drain();
+    rev.doc.get_text("text").insert(0, "suggested").unwrap();
+    rev.set_review(
+        r#"[{"id":"r1","kind":"suggestion","change":"insert","text":"suggested","status":"open"}]"#,
+    );
+
+    rev.submit_first(&room)
+        .await
+        .expect("combined first suggestion accepted");
+    assert_eq!(
+        room.authority().inner().get_text("text").to_string(),
+        "suggested"
+    );
+}
+
+#[tokio::test]
 async fn reviewer_review_only_update_is_accepted() {
     let room = room_with_verifier(vec![], false).await;
     let mut rev = SimPeer::new(1, Role::Reviewer);

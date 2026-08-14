@@ -99,7 +99,7 @@ pub async fn run_socket(mut socket: WebSocket, state: SessionState, doc_id: DocI
         ),
     )
     .await;
-    let (peer, role, room, generation) = match outcome {
+    let (peer, role, token, room, generation) = match outcome {
         Ok(Some(v)) => v,
         Ok(None) => return,
         Err(_) => {
@@ -122,6 +122,14 @@ pub async fn run_socket(mut socket: WebSocket, state: SessionState, doc_id: DocI
 
     // ---- main loop: read ↔ write multiplex ----------------------------------
     let mut rate = FrameRateLimiter::new(state.config.max_frames_per_second);
+    let session = InboundSession {
+        room: &room,
+        peer,
+        role,
+        token: &token,
+        state: &state,
+        doc_id: &doc_id,
+    };
     loop {
         tokio::select! {
             biased;
@@ -139,7 +147,7 @@ pub async fn run_socket(mut socket: WebSocket, state: SessionState, doc_id: DocI
             },
             msg = socket.recv() => match msg {
                 Some(Ok(message)) => {
-                    if !handle_message(&message, &room, peer, role, &state.config, &mut socket, &mut rate).await {
+                    if !handle_message(&message, &session, &mut socket, &mut rate).await {
                         break;
                     }
                 }
@@ -223,8 +231,9 @@ async fn first_binary(socket: &mut WebSocket) -> Option<Vec<u8>> {
     }
 }
 
-/// Validate the HELLO frame and join the room. Returns the peer, role, room, and
-/// the admission generation on success.
+/// Validate the HELLO frame and join the room. Returns the peer, role, bearer,
+/// room, and admission generation on success. The bearer is retained so
+/// mutating frames can be re-authorized after membership changes.
 async fn handshake(
     socket: &mut WebSocket,
     state: &SessionState,
@@ -232,7 +241,7 @@ async fn handshake(
     hello_bytes: &[u8],
     tx: mpsc::Sender<Frame>,
     close: CloseSignal,
-) -> Option<(PeerId, Role, Arc<DocRoom>, u64)> {
+) -> Option<(PeerId, Role, String, Arc<DocRoom>, u64)> {
     let frame = match Frame::decode(hello_bytes, state.config.max_update_bytes) {
         Ok(f) => f,
         Err(e) => {
@@ -293,7 +302,7 @@ async fn handshake(
     };
     let initial_state = Vec::new();
     match room.join(peer, role, &last_vv, initial_state, tx, close) {
-        Ok(outcome) => Some((peer, role, room, outcome.generation)),
+        Ok(outcome) => Some((peer, role, token, room, outcome.generation)),
         Err(e) => {
             let code = match &e {
                 crate::error::SyncError::Limit(_) => codes::LIMIT,
@@ -306,13 +315,19 @@ async fn handshake(
     }
 }
 
+struct InboundSession<'a> {
+    room: &'a Arc<DocRoom>,
+    peer: PeerId,
+    role: Role,
+    token: &'a str,
+    state: &'a SessionState,
+    doc_id: &'a DocId,
+}
+
 /// Handle one inbound WebSocket message. Returns `false` to terminate the session.
 async fn handle_message(
     message: &Message,
-    room: &Arc<DocRoom>,
-    peer: PeerId,
-    role: Role,
-    config: &Config,
+    session: &InboundSession<'_>,
     socket: &mut WebSocket,
     rate: &mut FrameRateLimiter,
 ) -> bool {
@@ -325,19 +340,19 @@ async fn handle_message(
     // Rate gate before decode: a peer exceeding the frame budget is evicted by
     // the room rather than burning CPU on frame decode + op-log append + fan-out.
     if !rate.allow() {
-        let _ = room.evict_for_rate_limit(peer);
+        let _ = session.room.evict_for_rate_limit(session.peer);
         let _ = send_error(
             socket,
             codes::LIMIT,
             &format!(
                 "inbound frame rate exceeded (max {} frames/second)",
-                config.max_frames_per_second
+                session.state.config.max_frames_per_second
             ),
         )
         .await;
         return false;
     }
-    let frame = match Frame::decode(bytes, config.max_update_bytes) {
+    let frame = match Frame::decode(bytes, session.state.config.max_update_bytes) {
         Ok(f) => f,
         Err(e) => {
             let _ = send_error(socket, codes::PROTOCOL, &e.to_string()).await;
@@ -346,7 +361,25 @@ async fn handle_message(
     };
     match frame {
         Frame::Update(b) => {
-            if let Err(e) = room.handle_update(peer, role, &b).await {
+            // Memberships can be changed while a socket is open. Re-authorize
+            // every mutating frame so removal/downgrade takes effect immediately
+            // instead of leaving a stale author session live until reconnect.
+            let Some(current_role) = refresh_access(
+                session.role,
+                session.token,
+                session.state,
+                session.doc_id,
+                socket,
+            )
+            .await
+            else {
+                return false;
+            };
+            if let Err(e) = session
+                .room
+                .handle_update(session.peer, current_role, &b)
+                .await
+            {
                 let code = match &e {
                     // A review-policy violation is a permission-style denial.
                     crate::error::SyncError::Access(_)
@@ -363,13 +396,28 @@ async fn handle_message(
             true
         }
         Frame::Presence(state) => {
-            if let Err(e) = room.handle_presence(peer, state) {
+            if let Err(e) = session.room.handle_presence(session.peer, state) {
                 let _ = send_error(socket, codes::TOO_LARGE, &e.to_string()).await;
             }
             true
         }
         Frame::Heartbeat => {
-            let _ = room.handle_heartbeat(peer);
+            // Heartbeats make revocation proactive even when the removed user
+            // is idle. Without this check the stale editor was only locked after
+            // their next edit had already been accepted locally.
+            if refresh_access(
+                session.role,
+                session.token,
+                session.state,
+                session.doc_id,
+                socket,
+            )
+            .await
+            .is_none()
+            {
+                return false;
+            }
+            let _ = session.room.handle_heartbeat(session.peer);
             true
         }
         Frame::Bye => false,
@@ -382,6 +430,31 @@ async fn handle_message(
             )
             .await;
             true
+        }
+    }
+}
+
+async fn refresh_access(
+    role: Role,
+    token: &str,
+    state: &SessionState,
+    doc_id: &DocId,
+    socket: &mut WebSocket,
+) -> Option<Role> {
+    match state.registry.access().resolve(doc_id, token).await {
+        Ok(current) if current == role => Some(current),
+        Ok(current) => {
+            let _ = send_error(
+                socket,
+                codes::FORBIDDEN,
+                &format!("project access changed from {role} to {current}; reopen the project"),
+            )
+            .await;
+            None
+        }
+        Err(_) => {
+            let _ = send_error(socket, codes::FORBIDDEN, "project access was revoked").await;
+            None
         }
     }
 }

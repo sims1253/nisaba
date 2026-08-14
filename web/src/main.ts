@@ -11,14 +11,14 @@
  */
 import { basicSetup } from "codemirror"
 import { autocompletion, acceptCompletion, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete"
-import { Annotation, Compartment, EditorState, StateEffect, StateField } from "@codemirror/state"
+import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state"
 import { Decoration, EditorView, keymap, placeholder, type DecorationSet, type ViewUpdate } from "@codemirror/view"
-import { LoroExtensions } from "loro-codemirror"
+import { LoroExtensions, loroSyncAnnotation, redo as loroRedo } from "loro-codemirror"
 import { LoroDoc, LoroText, UndoManager } from "loro-crdt"
 import { Effect, Layer } from "effect"
 import { findConstructs, type Construct } from "./model"
 import { hybridEditorField, revealConstruct, reviewEditorField, setReviewItems, type ReferenceDisplay } from "./decorations"
-import { PdfBlobUrlStore, downloadBase64 } from "./effects"
+import { decodeBase64Pdf, downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { VirtualPdfViewer } from "./pdf-viewer"
 import * as api from "./api"
@@ -210,7 +210,6 @@ function searchEditor(text: string): void {
 const pdfViewer = new VirtualPdfViewer(root.querySelector<HTMLElement>("#pdf-viewer")!, {
   onDblClickText: (text) => searchEditor(text)
 })
-const pdfUrls = new PdfBlobUrlStore()
 
 // ---------------------------------------------------------------------------
 // Small DOM helpers
@@ -819,13 +818,33 @@ function renderProjects(): void {
             status("That did not match the project name — nothing was deleted")
             return
           }
-          run(api.deleteProject(project.id), () => {
+          const reconcileDeletedProject = (): void => {
             status("Project deleted")
             state.projects = state.projects.filter((item) => item.id !== project.id)
             // If the deleted project was the last-open one, clear it so a future
             // tab-return doesn't try to reopen a project that no longer exists.
             if (readLastOpen().projectId === project.id) persistLastOpen({})
             renderProjects()
+          }
+          run(api.deleteProject(project.id), reconcileDeletedProject, (error) => {
+            if (!(error instanceof api.ApiError) || (error.status !== 403 && error.status !== 404)) {
+              status(error instanceof Error ? error.message : "The API request failed")
+              return
+            }
+            // Project deletion also removes its memberships, so the loser of a
+            // same-project delete race can receive 403 rather than 404. Re-list
+            // before treating it as success: an existing inaccessible project
+            // remains a real permission error, while an absent target confirms
+            // that another tab already completed this deletion.
+            run(api.listProjects(), (projects) => {
+              state.projects = projects
+              if (projects.some((item) => item.id === project.id)) {
+                status(error.message)
+                renderProjects()
+                return
+              }
+              reconcileDeletedProject()
+            }, () => status(error.message))
           })
         },
         { placeholder: project.name }
@@ -843,6 +862,10 @@ function projectTimestamp(project: Project): string {
 
 /** Leaves the open project and returns to the projects screen. */
 function leaveProject(): void {
+  if (failedSave?.projectId === state.project?.id && failedSave?.context.documentId === state.selected?.document.id) {
+    status("Unsaved offline changes — reconnect before leaving this project")
+    return
+  }
   closeOpenDocument()
   state.project = undefined
   state.role = undefined
@@ -863,8 +886,13 @@ function closeOpenDocument(): void {
   syncConnection = undefined
   flushPendingSave()
   cancelDiagnosticsCompile()
+  // Detach the binding before clearing the editor. Otherwise the clear is
+  // committed into the document we are closing, corrupting its CRDT and its
+  // undo history while the next file is loading.
+  editor.dispatch({ effects: loroCompartment.reconfigure([]) })
   state.selected = undefined
   state.document = undefined
+  reviewerSyncReady = false
   state.review = emptyReviewState
   presencePeers = []
   renderPresence()
@@ -1013,10 +1041,21 @@ function deleteDocument(entry: OutlineEntry): void {
       status("That did not match the file name — nothing was deleted")
       return
     }
-    run(api.deleteDocument(project.id, entry.document.id), () => {
+    const reconcileDeletedDocument = (): void => {
       status("File deleted")
       if (state.selected?.document.id === entry.document.id) closeOpenDocument()
       loadOutline()
+    }
+    run(api.deleteDocument(project.id, entry.document.id), reconcileDeletedDocument, (error) => {
+      // Deletes are idempotent from the editor's point of view. Another tab or
+      // collaborator may win the race; a 404 then confirms the desired final
+      // state and must close the stale document/relay instead of leaving a
+      // ghost row that is later misdiagnosed as revoked project access.
+      if (error instanceof api.ApiError && error.status === 404) {
+        reconcileDeletedDocument()
+        return
+      }
+      status(error instanceof Error ? error.message : "The API request failed")
     })
   }, { placeholder: entry.document.title })
 }
@@ -1236,6 +1275,7 @@ function addDocument(): void {
     const documentPath = pathValue.endsWith(".typ") ? pathValue : `${pathValue}.typ`
     const title = documentPath.split("/").pop()?.replace(/\.typ$/i, "") || "Untitled"
     run(api.createDocument(project.id, { path: documentPath, title }), () => {
+      if (state.project?.id !== project.id) return
       status("File created")
       loadOutline()
     })
@@ -1485,10 +1525,20 @@ function generateDemoBody(refIds: string[]): string {
 // ---------------------------------------------------------------------------
 
 let syncConnection: SyncConnection | undefined
+let documentAccessRevoked = false
+// Reviewer changes have no REST baseline fallback: they are durable only after
+// the CRDT binding is live. Authors can keep working through relay outages
+// because autosave persists their baseline, but a reviewer must stay locked
+// until the initial welcome succeeds (and after a fatal protocol/auth failure).
+let reviewerSyncReady = false
 
 function openDocument(entry: OutlineEntry): void {
   const project = state.project
   if (!project) return
+  if (entry.document.id !== state.selected?.document.id && failedSave?.projectId === project.id && failedSave.context.documentId === state.selected?.document.id) {
+    status("Unsaved offline changes — reconnect before switching files")
+    return
+  }
   // CRITICAL #1: Capture the document id at call time so the async getDocument
   // callback can verify the response still matches the document the user has
   // selected. Rapid document switching can deliver responses out of order; without
@@ -1505,6 +1555,11 @@ function openDocument(entry: OutlineEntry): void {
   // document we are leaving never fires a build for the one we are loading.
   cancelDiagnosticsCompile()
   syncConnection?.close()
+  syncConnection = undefined
+  // A socket close does not detach CodeMirror's Loro plugin. Remove the old
+  // binding before any clear/load transaction so rapid file switches cannot
+  // write the next editor state into the previous document's replica.
+  editor.dispatch({ effects: loroCompartment.reconfigure([]) })
   // MEDIUM #8: Capture the document currently in the editor BEFORE reassigning
   // state.selected, so we can tell whether this open is a real switch.
   const previousDocumentId = state.selected?.document.id
@@ -1517,6 +1572,9 @@ function openDocument(entry: OutlineEntry): void {
   // new document with empty text — a data-loss / corruption path. With document
   // undefined, captureSaveContext() returns undefined and scheduleSave is skipped.
   state.document = undefined
+  documentAccessRevoked = false
+  reviewerSyncReady = false
+  editor.dispatch({ effects: editableComp.reconfigure(EditorView.editable.of(false)) })
   // MEDIUM #8: When switching to a DIFFERENT document, clear stale editor content
   // before the async getDocument resolves. Without this the previous document's text
   // stays editable during the load gap; a user can type into it and those "gap
@@ -1542,11 +1600,11 @@ function openDocument(entry: OutlineEntry): void {
       state.review = emptyReviewState
       editor.dispatch({ effects: setReviewItems.of([]) })
       closeReviewPopover()
+      state.document = document
       // Re-apply the role gate after the review reset: openDocument wipes review
       // state (including a reviewer's forced-suggesting) so the lock must be
       // re-established here, not only in openProject (H1).
       applyRoleGates()
-      state.document = document
       renderWorkspaceState()
       // The replica starts empty; loadIntoEditor seeds the persisted body into both
       // the replica and CodeMirror (so the user sees content immediately AND the
@@ -1579,7 +1637,35 @@ function openDocument(entry: OutlineEntry): void {
       lastBuild = undefined
       renderBuildLabel()
       renderBuildHealth()
+      // History is document-scoped. If the dock stayed open while switching
+      // files, replace its pending/previous request with the newly-opened file's
+      // timeline. The response guard in openHistory still discards the old one.
+      if (dockTool === "history") openHistory()
       connectDocument(document, replica)
+      // A reload can race a keepalive PATCH from the page being replaced: this
+      // GET may return the old revision even though that save commits moments
+      // later. Recheck once after the unload-save window. Only adopt a newer
+      // revision while the new page is still pristine; local or peer edits make
+      // the editor diverge from its loaded REST baseline and must never be
+      // overwritten by this recovery path.
+      setTimeout(() => {
+        void Effect.runPromise(api.getDocument(project.id, documentId)).then((latest) => {
+          const current = state.document
+          if (state.selected?.document.id !== documentId || !current) return
+          if (latest.revision <= current.revision) return
+          if (pendingSave || saveTimer !== undefined || saveInFlight) return
+          if (editor.state.doc.toString() !== current.body) return
+          state.document = latest
+          state.selected = { document: latest }
+          state.outline = state.outline.map((item) => item.document.id === documentId ? { document: latest } : item)
+          loadIntoEditor(latest.body)
+          setText("#revision-label", `v${latest.revision}`)
+          refreshDocumentStructure()
+          renderOutline()
+          renderCrumbs()
+          status("Saved")
+        }, () => undefined)
+      }, 2_500)
     }
   )
 }
@@ -1647,7 +1733,7 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
           changes: { from: 0, to: editor.state.doc.length, insert: replicaText },
           effects: [
             loroCompartment.reconfigure(
-              LoroExtensions(activeLoro, undefined, new UndoManager(activeLoro, { excludeOriginPrefixes: ["load"] }), getTextFromDoc)
+              LoroExtensions(activeLoro, undefined, new UndoManager(activeLoro, { excludeOriginPrefixes: ["load"] }), getTextFromDoc, stageReviewUpdate)
             )
           ]
         })
@@ -1657,8 +1743,43 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
       // Tell the room who we are and where we are as soon as the handshake is
       // complete, so peers see us without waiting for the next caret move.
       publishPresence()
+      reviewerSyncReady = true
+      applyRoleGates()
     },
-    onStatus: (value, detail) => setSyncStatus(value, detail),
+    onStatus: (value, detail) => {
+      if (value === "unsupported") {
+        reviewerSyncReady = false
+        applyRoleGates()
+      }
+      setSyncStatus(value, detail)
+    },
+    onAccessRevoked: (message) => {
+      // Stop edits immediately when a membership/project disappears underneath
+      // an open socket. Keeping the stale binding editable accepted local text
+      // that could never be persisted and often surfaced an unrelated review
+      // policy error instead.
+      documentAccessRevoked = true
+      if (saveTimer !== undefined) clearTimeout(saveTimer)
+      saveTimer = undefined
+      pendingSave = undefined
+      isLoadingDocument = true
+      try {
+        editor.dispatch({
+          changes: state.document
+            ? { from: 0, to: editor.state.doc.length, insert: state.document.body }
+            : undefined,
+          effects: [
+            loroCompartment.reconfigure([]),
+            editableComp.reconfigure(EditorView.editable.of(false))
+          ]
+        })
+      } finally {
+        isLoadingDocument = false
+      }
+      status(message.includes("changed")
+        ? "Project access changed — reopen the project"
+        : "Project access revoked — this document is now read-only")
+    },
     onPresence: (peers) => {
       presencePeers = peers
       renderPresence()
@@ -1796,6 +1917,10 @@ let pendingSave: SaveContext | undefined
 // beforeunload guard must look at this flag to detect an in-flight save that
 // would lose data if the tab closes mid-request.
 let saveInFlight = false
+/** Completion of the currently-running baseline PATCH, used by dependent actions. */
+let saveCompletion: Promise<void> | undefined
+/** A baseline write that failed at the transport boundary and must not be discarded by navigation. */
+let failedSave: { readonly projectId: string; readonly context: SaveContext } | undefined
 
 function captureSaveContext(): SaveContext | undefined {
   const { selected, document } = state
@@ -1874,17 +1999,45 @@ function runSave(projectId: string, context: SaveContext): void {
   // Mark the request as in-flight so the beforeunload guard can warn about an
   // unsaved PATCH — saveTimer/pendingSave are already cleared by this point.
   saveInFlight = true
+  let completeSave!: () => void
+  const completion = new Promise<void>((resolve) => { completeSave = resolve })
+  saveCompletion = completion
+  void completion.finally(() => {
+    if (saveCompletion === completion) saveCompletion = undefined
+  })
   run(
     api.saveDocument(projectId, context.documentId, context.body, context.revision),
     (saved) => {
       saveInFlight = false
+      const recoveringFailedSave = failedSave?.projectId === projectId && failedSave.context.documentId === context.documentId
+      if (failedSave?.context.documentId === context.documentId) failedSave = undefined
+      // The PATCH body is an immutable snapshot captured when local typing was
+      // scheduled. Peer suggestions may arrive while that request is in flight;
+      // never promote the then-current CRDT/editor text to the REST baseline.
+      // Keep `state.document.body` aligned with exactly what this PATCH wrote,
+      // while preserving server-owned metadata/revision from the response.
+      const persisted = { ...saved, body: context.body }
       // Only update the open document if we are still editing the document this
       // save was for.
       if (state.selected?.document.id === context.documentId) {
-        state.document = saved
-        setText("#revision-label", `v${saved.revision}`)
+        state.document = persisted
+        setText("#revision-label", `v${persisted.revision}`)
       }
       status("Saved")
+      // Reconnecting the CRDT socket can deliver an empty relay catch-up in the
+      // same window as the successful retry and clear CodeMirror after REST has
+      // durably accepted the offline body. Repair only that impossible-looking
+      // state (non-empty recovered save, empty pristine editor); never replace a
+      // non-empty editor, which may already include legitimate peer edits.
+      if (recoveringFailedSave && persisted.body.length > 0) {
+        setTimeout(() => {
+          if (state.selected?.document.id !== context.documentId || editor.state.doc.length !== 0) return
+          loadIntoEditor(persisted.body)
+          refreshDocumentStructure()
+          status("Saved")
+        }, 500)
+      }
+      completeSave()
     },
     (error: unknown) => {
       saveInFlight = false
@@ -1896,19 +2049,21 @@ function runSave(projectId: string, context: SaveContext): void {
       if (error instanceof api.ApiError && error.status === 409) {
         if (state.selected?.document.id !== context.documentId) {
           status("Save conflicted; the document changed")
+          completeSave()
           return
         }
         void Effect.runPromise(
           api.getDocument(projectId, context.documentId)
         ).then(
           (latest) => {
-            if (state.selected?.document.id !== context.documentId) { status("Saved elsewhere"); return }
+            if (state.selected?.document.id !== context.documentId) { status("Saved elsewhere"); completeSave(); return }
             state.document = latest
             setText("#revision-label", `v${latest.revision}`)
             const localBody = editor.state.doc.toString()
             if (localBody === latest.body) {
               // Already in sync (the CRDT merged the peer edit); nothing to write.
               status("Saved")
+              completeSave()
               return
             }
             // H2 (data loss): the old recovery unconditionally re-scheduled the
@@ -1925,14 +2080,53 @@ function runSave(projectId: string, context: SaveContext): void {
             } else {
               status("Save conflict — another author edited this document while you were offline; reload to merge")
             }
+            completeSave()
           },
-          () => status("Save conflicted; couldn't reload the latest revision")
+          () => { status("Save conflicted; couldn't reload the latest revision"); completeSave() }
         )
         return
       }
+      if (!(error instanceof api.ApiError) || error.status === undefined) failedSave = { projectId, context }
       status(error instanceof Error ? error.message : "The API request failed")
+      completeSave()
     }
   )
+}
+
+/**
+ * Establishes the REST baseline required by server-side project operations.
+ * Collaboration keeps the live editor current, but export/history APIs read the
+ * persisted document, so they must not race the autosave debounce or an active
+ * PATCH. Failure rejects and the caller must not continue with stale content.
+ */
+async function saveBeforeServerSnapshot(): Promise<void> {
+  if (saveTimer !== undefined) {
+    clearTimeout(saveTimer)
+    saveTimer = undefined
+  }
+  pendingSave = undefined
+  if (saveCompletion) await saveCompletion
+
+  const project = state.project
+  const context = captureSaveContext()
+  if (!project || !context || context.body === state.document?.body) return
+  status("Saving before export…")
+  saveInFlight = true
+  try {
+    const saved = await Effect.runPromise(
+      api.saveDocument(project.id, context.documentId, context.body, context.revision)
+    )
+    if (state.selected?.document.id === context.documentId) {
+      state.document = saved
+      setText("#revision-label", `v${saved.revision}`)
+    }
+    status("Saved")
+  } catch (error) {
+    status(error instanceof Error ? error.message : "Couldn't save before export")
+    throw error
+  } finally {
+    saveInFlight = false
+  }
 }
 
 /**
@@ -2120,6 +2314,17 @@ const editor = new EditorView({
       autocompletion({ override: [typstCompletions, referenceCompletions] }),
       // Tab accepts the current autocomplete suggestion (muscle memory from most editors).
       keymap.of([{ key: "Tab", run: acceptCompletion }]),
+      // On Chromium/Linux the adapter's generic Mod-z binding also matched
+      // Ctrl+Shift+Z, turning redo into a second undo. Intercept the exact
+      // conventional redo chord at the highest precedence; Ctrl+Y remains
+      // supported by the adapter itself.
+      Prec.highest(EditorView.domEventHandlers({
+        keydown(event, view) {
+          if (!(event.shiftKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z")) return false
+          event.preventDefault()
+          return loroRedo(view)
+        }
+      })),
       EditorView.lineWrapping,
       // Empty editor guidance: a freshly opened, never-edited document otherwise
       // shows a blank pane with no hint that this is Typst.
@@ -2194,7 +2399,19 @@ const editor = new EditorView({
           //     isLoadingDocument has reset, so the flag alone does not cover it.
           // The review tracker still runs for remote changes so peer edits remap
           // existing accept/reject anchors; it classifies remote edits itself.
-          const remote = isImportingRemote()
+          // `isImportingRemote()` covers synchronous Loro callbacks, while the
+          // adapter annotation survives if Loro delivers its subscriber on a
+          // later microtask. The annotation is therefore the durable source of
+          // truth for peer text. Missing it caused an author's browser to treat
+          // an imported reviewer proposal as local typing and PATCH that still-
+          // open suggestion into the agreed REST baseline.
+          const remote = isImportingRemote() || update.transactions.some((transaction) =>
+            transaction.annotation(loroSyncAnnotation) !== undefined)
+          const resolution = resolvingSuggestions || update.transactions.some((transaction) =>
+            transaction.annotation(resolveAnnotation) === true)
+          const localIntent = update.transactions.some((transaction) =>
+            transaction.isUserEvent("input") || transaction.isUserEvent("delete") ||
+            transaction.annotation(loroSyncAnnotation) === "undo")
           if (!isLoadingDocument) {
             // A suggesting-mode edit is a PROPOSAL: it is persisted through the
             // Loro review map (persistReview) and must never be written into the
@@ -2202,8 +2419,15 @@ const editor = new EditorView({
             // reviewers the server correctly rejects baseline PATCHes. Only
             // non-suggestion edits (including accept/reject resolutions, which
             // apply a suggestion to the text) are flushed to the baseline.
-            const recordedSuggestion = updateReviewItems(update)
-            if (!remote && !recordedSuggestion) {
+            // Local edits are staged by loro-codemirror's before-commit hook so a
+            // suggestion record joins the text in the same CRDT transaction. A
+            // remote/imported update does not pass through that hook and is
+            // reconciled here as before.
+            const staged = stagedReviewUpdate?.update === update ? stagedReviewUpdate : undefined
+            if (staged) stagedReviewUpdate = undefined
+            const recordedSuggestion = staged?.recordedSuggestion ?? updateReviewItems(update)
+            if (staged) renderReviewUpdate(update)
+            if (!remote && localIntent && !recordedSuggestion && !resolution) {
               scheduleSave()
               // Live error checking: after the typing pause, recompile in the
               // background for fresh diagnostic underlines (no PDF update). Same
@@ -2244,6 +2468,21 @@ const REVIEW_CONTAINER = "review"
  */
 let reviewSyncUnsubscribe: (() => void) | undefined
 
+/** Review result prepared inside loro-codemirror immediately before it commits. */
+let stagedReviewUpdate: { update: ViewUpdate; recordedSuggestion: boolean } | undefined
+
+/**
+ * Attach review metadata while the editor's text mutation is still pending in
+ * Loro. The adapter commits immediately after this hook returns, producing one
+ * relay frame that contains both the suggestion and the text it annotates.
+ */
+function stageReviewUpdate(update: ViewUpdate): void {
+  stagedReviewUpdate = {
+    update,
+    recordedSuggestion: updateReviewItems(update, { render: false, commit: false })
+  }
+}
+
 /**
  * Tracks review items across edits and records suggestions while suggesting is on.
  *
@@ -2254,7 +2493,7 @@ let reviewSyncUnsubscribe: (() => void) | undefined
  * suggestion actually recorded, or a non-remote apply) trigger a persist, never a
  * pure position remap, to avoid per-keystroke CRDT writes.
  */
-function updateReviewItems(update: ViewUpdate): boolean {
+function updateReviewItems(update: ViewUpdate, options: { render?: boolean; commit?: boolean } = {}): boolean {
   // Returns true when this transaction recorded one or more new suggestions (a
   // suggesting-mode edit that must be persisted through the Loro review map and
   // must NOT be written into the baseline body via the REST PATCH).
@@ -2316,6 +2555,7 @@ function updateReviewItems(update: ViewUpdate): boolean {
         const next = addCoalesced(review, { id: crypto.randomUUID(), kind: "suggestion", from: fromA, to: fromA, fromCursor, toCursor: fromCursor, change: "delete", text: original, author, status: "open", createdAt }, fromA, lastPreFrom)
         lastPreFrom = fromA
         review = next
+        recordedNew = true
       }
       if (insert.length > 0) {
         const insFromCursor = createCursorAt(activeLoro, fromB)
@@ -2323,18 +2563,21 @@ function updateReviewItems(update: ViewUpdate): boolean {
         const next = addCoalesced(review, { id: crypto.randomUUID(), kind: "suggestion", from: fromB, to: toB, fromCursor: insFromCursor, toCursor: insToCursor, change: "insert", text: insert.toString(), author, status: "open", createdAt }, fromB, lastPreFrom)
         lastPreFrom = fromB
         review = next
+        recordedNew = true
       }
     })
-    // Suggestions were recorded (or an existing run was extended) — the review set
-    // changed structurally, not just by position remap, so it must persist + sync.
-    recordedNew = review.items.length > state.review.items.length
   }
   state.review = review
-  update.view.dispatch({ effects: setReviewItems.of(review.items) })
+  if (options.render !== false) renderReviewUpdate(update)
+  if (recordedNew) persistReview(options.commit !== false)
+  return recordedNew
+}
+
+/** Refresh review decorations and surfaces after state.review has been updated. */
+function renderReviewUpdate(update: ViewUpdate): void {
+  update.view.dispatch({ effects: setReviewItems.of(state.review.items) })
   renderReviewBanner()
   renderReviewSidebar()
-  if (recordedNew) persistReview()
-  return recordedNew
 }
 
 // ---------------------------------------------------------------------------
@@ -2361,7 +2604,7 @@ function updateReviewItems(update: ViewUpdate): boolean {
  *   * importing remote text (isImportingRemote) — peer edits, not local review edits;
  *   * no replica is active yet (before openDocument) — there is nowhere to write.
  */
-function persistReview(): void {
+function persistReview(commit = true): void {
   if (applyingRemoteReview || isLoadingDocument || isImportingRemote()) return
   const doc = activeLoro
   const json = JSON.stringify(mergeReviewItems(readReviewItemsFromMap(doc), state.review.items))
@@ -2369,7 +2612,7 @@ function persistReview(): void {
     const map = doc.getMap(REVIEW_CONTAINER)
     if (map.get("items") !== json) {
       map.set("items", json)
-      doc.commit({ origin: "review" })
+      if (commit) doc.commit({ origin: "review" })
     }
   } catch { /* replica torn down mid-document-switch: silently skip */ }
 }
@@ -2846,12 +3089,17 @@ function openShare(): void {
   })
 
   // Shareable links: create, copy, and revoke.
+  let knownShareLinks: readonly api.ShareLink[] = []
   const renderShareLinks = (links: readonly api.ShareLink[]): void => {
+    knownShareLinks = links
     const host = el<HTMLElement>("#share-links")
     if (!host) return
     host.innerHTML = links.length === 0
       ? `<p class="dock-note">No shareable links yet.</p>`
       : links.map((link) => {
+          if (!link.token) {
+            return `<div class="link-row"><span>${escapeHtml(ROLE_LABELS[link.role] ?? link.role)} link${link.label ? ` · ${escapeHtml(link.label)}` : ""}</span><span class="dock-note">Secret hidden</span><button type="button" class="btn" data-revoke="${escapeHtml(link.token_hash)}">Revoke</button></div>`
+          }
           const url = `${window.location.origin}/?share=${encodeURIComponent(link.token)}`
           return `<div class="link-row"><code>${escapeHtml(url)}</code><button type="button" class="btn" data-copy="${escapeHtml(url)}">Copy</button><button type="button" class="btn" data-revoke="${escapeHtml(link.token)}">Revoke</button></div>`
         }).join("")
@@ -2876,10 +3124,10 @@ function openShare(): void {
     if (createButton) { createButton.disabled = true; createButton.textContent = "Creating…" }
     run(
       api.createShareLink(project.id, role),
-      () => {
-        status("Share link created")
+      (created) => {
+        status("Share link created — copy it now; the secret is shown once")
         if (createButton) { createButton.disabled = false; createButton.textContent = "Create link" }
-        run(api.listShareLinks(project.id), renderShareLinks)
+        renderShareLinks([created, ...knownShareLinks])
       },
       (error: unknown) => {
         if (createButton) { createButton.disabled = false; createButton.textContent = "Create link" }
@@ -2968,10 +3216,15 @@ function lineDiff(oldText: string, newText: string): { type: "added" | "removed"
 function openHistory(): void {
   const { project, selected } = state
   if (!project || !selected) { showPanel("history", `<p class="empty-note">Open a document first.</p>`); return }
+  const documentId = selected.document.id
   showPanel("history", `<p class="dock-note">Loading earlier versions…</p>`)
   run(
     api.listDocumentHistory(project.id, selected.document.id),
     (revisions) => {
+      // A history response belongs to the document that requested it. Switching
+      // files while the request is in flight must not populate the dock with a
+      // stale timeline under the newly-selected document.
+      if (state.selected?.document.id !== documentId || dockTool !== "history") return
       const host = el<HTMLElement>("#dock-content")
       if (!host) return
       if (revisions.length === 0) {
@@ -3036,6 +3289,7 @@ function openHistory(): void {
       })
     },
     (error: unknown) => {
+      if (state.selected?.document.id !== documentId || dockTool !== "history") return
       const host = el<HTMLElement>("#dock-content")
       if (host) host.innerHTML = `<p class="empty-note">Couldn't load history: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
     }
@@ -3056,8 +3310,10 @@ function openExport(): void {
     if (!entry) return
     const exportButton = el<HTMLButtonElement>("#run-export")
     if (exportButton) exportButton.disabled = true
-    setText("#export-result", "Exporting…")
-    run(api.exportProject(project.id, entry, "full", state.view), (result) => {
+    setText("#export-result", "Saving current edits…")
+    void saveBeforeServerSnapshot().then(() => {
+      setText("#export-result", "Exporting…")
+      run(api.exportProject(project.id, entry, "full", state.view), (result) => {
       if (exportButton) exportButton.disabled = false
       const files = result.references.files
       const pdf = result.compile.pdf_base64
@@ -3077,10 +3333,15 @@ function openExport(): void {
           if (file) { try { downloadBase64(file.content_base64, file.path.split("/").pop() ?? "reference", "application/octet-stream") } catch { status("Download failed: corrupt data") } }
         })
       }
-    }, (error) => {
+      }, (error) => {
+        if (exportButton) exportButton.disabled = false
+        const host = el<HTMLElement>("#export-result")
+        if (host) host.innerHTML = `<p class="state-warn">Export failed: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
+      })
+    }, (error: unknown) => {
       if (exportButton) exportButton.disabled = false
       const host = el<HTMLElement>("#export-result")
-      if (host) host.innerHTML = `<p class="state-warn">Export failed: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
+      if (host) host.innerHTML = `<p class="state-warn">Export cancelled because the current edits could not be saved: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
     })
   })
 }
@@ -3160,7 +3421,10 @@ function applyRoleGates(): void {
   const canManage = state.role === undefined
     ? globalCanManage
     : state.role === "owner" || state.role === "author"
-  const readOnly = state.role === undefined ? !globalCanManage && !(Array.isArray(tokenRoles) && tokenRoles.includes("reviewer")) : state.role === "read-only"
+  const readOnly = documentAccessRevoked
+    || !state.document
+    || (state.role === "reviewer" && !reviewerSyncReady)
+    || (state.role === undefined ? !globalCanManage && !(Array.isArray(tokenRoles) && tokenRoles.includes("reviewer")) : state.role === "read-only")
   const exportButton = el<HTMLElement>("#export-button")
   if (exportButton) exportButton.hidden = !canManage
   // Share/Invite is available to owners and authors (the roles the server allows
@@ -3405,6 +3669,10 @@ function applyReviewItemAction(item: ReviewItem, type: "accept" | "reject" | "re
   renderReviewBanner()
   renderReviewSidebar()
   persistReview()
+  if (item.kind === "suggestion" && !state.review.items.some((candidate) =>
+    candidate.kind === "suggestion" && candidate.status === "open")) {
+    scheduleSave()
+  }
 }
 
 /**
@@ -3776,6 +4044,7 @@ function acceptAllSuggestions(openSuggestions: readonly Extract<ReviewItem, { ki
   renderReviewBanner()
   renderReviewDock()
   persistReview()
+  scheduleSave()
 }
 
 function rejectAllSuggestions(openSuggestions: readonly Extract<ReviewItem, { kind: "suggestion" }>[]): void {
@@ -3810,6 +4079,7 @@ function rejectAllSuggestions(openSuggestions: readonly Extract<ReviewItem, { ki
   renderReviewBanner()
   renderReviewDock()
   persistReview()
+  if (!state.review.items.some((item) => item.kind === "suggestion" && item.status === "open")) scheduleSave()
 }
 
 /** Kept under its old name for the many call sites that fire after a mutation. */
@@ -4203,10 +4473,8 @@ function compileCurrent(): void {
   const startedAt = Date.now()
   // Clear the previous result on EVERY attempt so a failing compile can never
   // leave a stale PDF (or stale kept pages) on the canvas — the pane must reflect
-  // the source being compiled, not the last successful build. Revoking the blob
-  // via replace(undefined) avoids leaking the now-discarded URL.
+  // the source being compiled, not the last successful build.
   clearPreview()
-  pdfUrls.replace(undefined)
   renderDiagnostics([])
   // Projection happens server-side over the marks we send here. Only open,
   // non-orphaned suggestions affect the body text: accepted/rejected ones are
@@ -4251,22 +4519,23 @@ function compileCurrent(): void {
       // canvas from the previous successful compile.
       const pdf = result.pdf_base64
       if (pdf && diagnostics.filter((item) => item.severity !== "warning").length === 0) {
-        const url = pdfUrls.replace(pdf)
-        if (url) {
-          // `empty-preview` is the empty-state marker; drop it once a real PDF is
-          // being rendered (clearPreview/showPreviewFailure re-add it on clear/fail).
-          el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
-          updateZoomLabel()
-          el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
-          void pdfViewer.load(url).then(() => {
-            if (lastBuild) lastBuild.pages = pdfViewer.pageCount
-            renderPagePosition()
-            renderBuildHealth()
-          }).catch((error: unknown) => {
-            console.error("PDF render failed", error)
-            showPreviewFailure(error instanceof Error ? error.message : "The pages could not be rendered.")
-          })
-        }
+        // Pass bytes directly to PDF.js. Object URLs can be revoked by a later
+        // rapid compile while the worker is still fetching them, producing a
+        // successful build with a broken preview.
+        const data = decodeBase64Pdf(pdf)
+        // `empty-preview` is the empty-state marker; drop it once a real PDF is
+        // being rendered (clearPreview/showPreviewFailure re-add it on clear/fail).
+        el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
+        updateZoomLabel()
+        el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
+        void pdfViewer.load(data).then(() => {
+          if (lastBuild) lastBuild.pages = pdfViewer.pageCount
+          renderPagePosition()
+          renderBuildHealth()
+        }).catch((error: unknown) => {
+          console.error("PDF render failed", error)
+          showPreviewFailure(error instanceof Error ? error.message : "The pages could not be rendered.")
+        })
       } else {
         showPreviewFailure(diagnostics.length > 0 ? "Fix the problems listed below and try again." : "The build produced no pages.")
       }
@@ -4354,27 +4623,25 @@ function compileForDiagnostics(): void {
       renderDiagnostics(result.diagnostics as readonly CompileDiagnostic[])
       // Update the PDF preview only on a clean build. A build with errors leaves
       // the last good PDF in place (better than clearing to an empty pane on
-      // every transient typo). The zoom controls and blob URL are managed the
-      // same way as a manual compile.
+      // every transient typo). The zoom controls are managed the same way as a
+      // manual compile.
       const diagnostics = result.diagnostics as readonly CompileDiagnostic[]
       const errors = diagnostics.filter((item) => item.severity !== "warning").length
       const pdf = result.pdf_base64
       if (pdf && errors === 0) {
-        const url = pdfUrls.replace(pdf)
-        if (url) {
-          el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
-          updateZoomLabel()
-          el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
-          lastBuild = { buildId: result.build_id, at: Date.now(), ms: 0 }
-          renderBuildLabel()
-          void pdfViewer.load(url).then(() => {
-            if (lastBuild) lastBuild.pages = pdfViewer.pageCount
-            renderPagePosition()
-            renderBuildHealth()
-          }).catch((error: unknown) => {
-            console.error("PDF render failed", error)
-          })
-        }
+        const data = decodeBase64Pdf(pdf)
+        el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
+        updateZoomLabel()
+        el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
+        lastBuild = { buildId: result.build_id, at: Date.now(), ms: 0 }
+        renderBuildLabel()
+        void pdfViewer.load(data).then(() => {
+          if (lastBuild) lastBuild.pages = pdfViewer.pageCount
+          renderPagePosition()
+          renderBuildHealth()
+        }).catch((error: unknown) => {
+          console.error("PDF render failed", error)
+        })
       }
       // The status bar must reflect what the background build just found, or a
       // typo silently introduces problems the writer is never told about.
@@ -4438,8 +4705,23 @@ el("#sign-in")?.addEventListener("click", () => {
  * afterwards so a reload does not replay a spent authorization code.
  */
 function completeSignIn(): Promise<void> {
-  if (!isOidcCallback()) return Promise.resolve()
-  return Effect.runPromise(Effect.provide(OidcClient.use((client) => client.completeCallback()), authLayer)).then(
+  const callbackUrl = window.location.href
+  const callback = isOidcCallback(callbackUrl)
+  const current = new URL(callbackUrl)
+  const hasOidcResponse = current.searchParams.has("code") || current.searchParams.has("error")
+  if (hasOidcResponse) {
+    for (const key of ["code", "state", "session_state", "iss", "error", "error_description"]) {
+      current.searchParams.delete(key)
+    }
+    window.history.replaceState({}, "", `${current.pathname}${current.search}${current.hash}`)
+  }
+  // A spent callback can be reached through Back after the pending PKCE state
+  // has been consumed. It still must be scrubbed, but must not be exchanged.
+  if (!callback) return Promise.resolve()
+  // Capture the response for validation, then remove its authorization code and
+  // state synchronously. The token exchange is asynchronous; leaving secrets in
+  // the address bar until it finishes lets the browser snapshot that entry.
+  return Effect.runPromise(Effect.provide(OidcClient.use((client) => client.completeCallback(callbackUrl)), authLayer)).then(
     () => {
       state.signedIn = true
       window.history.replaceState({}, "", window.location.pathname)
@@ -4630,8 +4912,8 @@ window.addEventListener("beforeunload", (event) => {
     event.preventDefault()
     event.returnValue = ""
   }
-  // HIGH #4: Do NOT destroy the editor / close the sync connection / dispose PDF
-  // URLs here. beforeunload can fire and then the user clicks "Stay on page", which
+  // HIGH #4: Do NOT destroy the editor or close the sync connection here.
+  // beforeunload can fire and then the user clicks "Stay on page", which
   // would leave the editor permanently destroyed with no recovery path. The
   // destructive teardown now runs on "pagehide", which only fires on a real unload.
 })
@@ -4641,12 +4923,11 @@ window.addEventListener("beforeunload", (event) => {
 window.addEventListener("pagehide", (event) => {
   // bfcache freeze: the browser snapshots the page for back-forward cache
   // and restores it without reloading when the user navigates back. Destroying
-  // the editor / closing sync / revoking the PDF URL here would leave a
+  // the editor or closing sync here would leave a
   // visually-intact but completely dead page. Skip teardown on persisted freeze;
   // the handlers run only on a genuine unload.
   if (event.persisted) return
   syncConnection?.close()
-  pdfUrls.dispose()
   editor.destroy()
 })
 // Honest connectivity indicator (H3): the browser fires offline/online the moment
@@ -4665,6 +4946,19 @@ window.addEventListener("online", () => {
   // truth once its WebSocket re-establishes. Fall back to lastSyncDetail if the
   // relay had reported a specific reason, otherwise a generic reconnecting message.
   setSyncStatus(lastSyncStatus ?? "connecting", lastSyncDetail ?? "Reconnecting…")
+  // A failed offline PATCH has already left the debounce queue. Recreate it
+  // from the editor when connectivity returns so the status and REST baseline
+  // recover without requiring another keystroke or a reload.
+  if ((state.role === "owner" || state.role === "author") && editor.state.doc.toString() !== state.document?.body) {
+    scheduleSave()
+  }
+  // One-shot actions such as create/delete are intentionally not replayed:
+  // automatically repeating a destructive request after reconnect would be
+  // surprising. Do clear the stale browser transport error and tell the user
+  // exactly what remains to do.
+  if (el<HTMLElement>("#save-status")?.textContent === "Failed to fetch") {
+    status("Back online — retry the action")
+  }
 })
 
 renderAuth()

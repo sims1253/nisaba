@@ -694,7 +694,7 @@ impl Worker {
             typst_pdf::PdfStandards::new(&request.pdf_standards)
                 .map_err(|e| format!("invalid PDF standards combination: {e:?}"))?
         };
-        let pdf = typst_pdf::pdf(
+        let pdf = match typst_pdf::pdf(
             &document,
             &typst_pdf::PdfOptions {
                 standards,
@@ -704,8 +704,31 @@ impl Worker {
                 )),
                 ..typst_pdf::PdfOptions::default()
             },
-        )
-        .map_err(|errors| format!("PDF export failed: {errors:?}"))?;
+        ) {
+            Ok(pdf) => pdf,
+            Err(errors) => {
+                let diagnostics = diagnostics
+                    .into_iter()
+                    .chain(errors.iter().map(|diag| diagnostic(&world, diag)))
+                    .collect();
+                return Ok(CompileResponse {
+                    pdf: None,
+                    frames: Vec::new(),
+                    span_map: source_span_map(Some(&document), &world, &request.sources),
+                    diagnostics,
+                    outline: outline(&request.sources),
+                    build_id: build_id(self.compile_count),
+                    instrumentation: instrumentation(
+                        started,
+                        pdf_started.elapsed().as_millis(),
+                        0,
+                        reused,
+                        self,
+                        convergence_passes,
+                    ),
+                });
+            }
+        };
         let pdf_ms = pdf_started.elapsed().as_millis();
         let svg_started = Instant::now();
         let frames = if request.include_frames {
@@ -1240,6 +1263,24 @@ mod tests {
         for entry in &response.span_map {
             assert!(entry.end <= source.chars().count());
         }
+    }
+
+    #[test]
+    fn unsupported_unicode_is_reported_as_a_compile_diagnostic() {
+        // A missing glyph is a document problem, not a service failure. In
+        // particular PDF export must not turn Typst's diagnostic into a 500
+        // containing its internal Debug representation.
+        let request = request("文");
+        let mut worker = Worker::new(&request).expect("worker");
+        let response = worker.compile(&request, false).expect("compile response");
+        assert!(response.pdf.is_none());
+        assert!(
+            response
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == "error"),
+            "expected an ordinary user-facing error diagnostic"
+        );
     }
 
     #[test]

@@ -1,5 +1,17 @@
 --- a/node_modules/loro-codemirror/dist/sync.js
 +++ b/node_modules/loro-codemirror/dist/sync.js
+@@ -4,9 +4,10 @@
+ export const loroSyncAnnotation = Annotation.define();
+ export class LoroSyncPluginValue {
+-    constructor(view, doc, getTextFromDoc) {
++    constructor(view, doc, getTextFromDoc, beforeCommit) {
+         this.view = view;
+         this.doc = doc;
+         this.getTextFromDoc = getTextFromDoc;
++        this.beforeCommit = beforeCommit;
+         this.isInitDispatch = false;
+         this.onRemoteUpdate = (e) => {
+             if (e.by === "local") {
 @@ -33,10 +33,10 @@
                      const text = this.getTextFromDoc(this.doc);
                      // Skip if the event is not a text event
@@ -13,3 +25,135 @@
                      const textDiff = diff.diff;
                      for (const delta of textDiff) {
                          if (delta.insert) {
+@@ -107,6 +108,7 @@
+             }
+             adj += insertText.length - (toA - fromA);
+         });
++        this.beforeCommit?.(update);
+         this.doc.commit();
+     }
+     destroy() {
+--- a/node_modules/loro-codemirror/dist/index.js
++++ b/node_modules/loro-codemirror/dist/index.js
+@@ -3,6 +3,7 @@
+ import { Awareness, EphemeralStore, LoroDoc, LoroText, UndoManager, } from "loro-crdt";
+ import { createCursorLayer as createAwarenessCursorLayer, createSelectionLayer as createAwarenessSelectionLayer, AwarenessPlugin, remoteAwarenessStateField, RemoteAwarenessPlugin, loroCursorTheme, } from "./awareness.js";
+ import { LoroSyncPluginValue } from "./sync.js";
++export { loroSyncAnnotation } from "./sync.js";
+ import { keymap, ViewPlugin } from "@codemirror/view";
+ import { undoKeyMap, undoManagerStateField, UndoPluginValue } from "./undo.js";
+ import { defaultGetTextFromDoc } from "./utils.js";
+@@ -73,10 +73,10 @@
+         ViewPlugin.define((view) => new UndoPluginValue(view, doc, undoManager, getTextFromDoc)),
+     ];
+ };
+-export function LoroExtensions(doc, ephemeral, undoManager, getTextFromDoc) {
++export function LoroExtensions(doc, ephemeral, undoManager, getTextFromDoc, beforeCommit) {
+     getTextFromDoc = getTextFromDoc !== null && getTextFromDoc !== void 0 ? getTextFromDoc : defaultGetTextFromDoc;
+     let extension = [
+-        ViewPlugin.define((view) => new LoroSyncPluginValue(view, doc, getTextFromDoc)).extension,
++        ViewPlugin.define((view) => new LoroSyncPluginValue(view, doc, getTextFromDoc, beforeCommit)).extension,
+     ];
+     if (undoManager) {
+         extension = extension.concat([
+--- a/node_modules/loro-codemirror/dist/sync.d.ts
++++ b/node_modules/loro-codemirror/dist/sync.d.ts
+@@ -6,9 +6,10 @@
+     private view;
+     private doc;
+     private getTextFromDoc;
++    private beforeCommit?;
+     sub?: Subscription;
+     private isInitDispatch;
+-    constructor(view: EditorView, doc: LoroDoc, getTextFromDoc: (doc: LoroDoc) => LoroText);
++    constructor(view: EditorView, doc: LoroDoc, getTextFromDoc: (doc: LoroDoc) => LoroText, beforeCommit?: (update: ViewUpdate) => void);
+     onRemoteUpdate: (e: LoroEventBatch) => void;
+     update(update: ViewUpdate): void;
+     destroy(): void;
+--- a/node_modules/loro-codemirror/dist/index.d.ts
++++ b/node_modules/loro-codemirror/dist/index.d.ts
+@@ -7,5 +7,6 @@
+ export { getCursorEphemeralKey, getUserEphemeralKey } from "./ephemeral.ts";
+ export { undo, redo } from "./undo.ts";
++export { loroSyncAnnotation } from "./sync.ts";
+ export type { UserState, AwarenessState, EphemeralState };
+ export { defaultGetTextFromDoc as getTextFromDoc };
+ /**
+@@ -46,4 +46,4 @@
+ export declare function LoroExtensions(doc: LoroDoc, ephemeral?: {
+     user: UserState;
+     ephemeral: EphemeralStore;
+-}, undoManager?: UndoManager, getTextFromDoc?: (doc: LoroDoc) => LoroText): Extension;
++}, undoManager?: UndoManager, getTextFromDoc?: (doc: LoroDoc) => LoroText, beforeCommit?: (update: import("@codemirror/view").ViewUpdate) => void): Extension;
+--- a/node_modules/loro-codemirror/dist/undo.js
++++ b/node_modules/loro-codemirror/dist/undo.js
+@@ -37,41 +37,21 @@ export class UndoPluginValue {
+         this.sub = doc.subscribe((e) => {
+             if (e.origin !== "undo")
+                 return;
+-            let changes = [];
+-            let pos = 0;
+-            for (let { diff, target } of e.events) {
+-                const text = this.getTextFromDoc(this.doc);
+-                // Skip if the event is not a text event
+-                if (diff.type !== "text")
+-                    return;
+-                // Skip if the event is not for the current document
+-                if (target !== text.id)
+-                    return;
+-                const textDiff = diff.diff;
+-                for (const delta of textDiff) {
+-                    if (delta.insert) {
+-                        changes.push({
+-                            from: pos,
+-                            to: pos,
+-                            insert: delta.insert,
+-                        });
+-                    }
+-                    else if (delta.delete) {
+-                        changes.push({
+-                            from: pos,
+-                            to: pos + delta.delete,
+-                        });
+-                        pos += delta.delete;
+-                    }
+-                    else if (delta.retain != null) {
+-                        pos += delta.retain;
+-                    }
+-                }
+-                this.view.dispatch({
+-                    changes,
+-                    annotations: [loroSyncAnnotation.of("undo")],
+-                });
+-            }
++            // Undo items may contain both the text mutation and review-map
++            // metadata. Replaying event deltas independently can apply positions
++            // from one container to another and corrupt CodeMirror's tile tree.
++            // Loro is already authoritative after the pop, so reconcile the
++            // editor to its complete text in one annotated transaction. Defer it:
++            // the subscription fires inside the StateField update that invoked
++            // undo/redo, and a nested EditorView.dispatch corrupts CodeMirror's
++            // view tree.
++            const current = this.getTextFromDoc(this.doc).toString();
++            queueMicrotask(() => {
++                this.view.dispatch({
++                    changes: { from: 0, to: this.view.state.doc.length, insert: current },
++                    annotations: [loroSyncAnnotation.of("undo")],
++                });
++            });
+         });
+         this.undoManager.setOnPop((isUndo, value, counterRange) => {
+             var _a, _b;
+@@ -80,9 +60,10 @@ export class UndoPluginValue {
+             if (!anchor)
+                 return;
+             setTimeout(() => {
+-                const anchorPos = this.doc.getCursorPos(anchor).offset;
++                const docLength = this.view.state.doc.length;
++                const anchorPos = Math.min(this.doc.getCursorPos(anchor).offset, docLength);
+                 const headPos = head
+-                    ? this.doc.getCursorPos(head).offset
++                    ? Math.min(this.doc.getCursorPos(head).offset, docLength)
+                     : anchorPos;
+                 const selection = EditorSelection.single(anchorPos, headPos);
+                 this.view.dispatch({
