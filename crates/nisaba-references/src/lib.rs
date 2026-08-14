@@ -1059,7 +1059,7 @@ pub fn fulltext_filename(number: u32, metadata: &Metadata) -> String {
             .or(p.literal.as_deref())
             .unwrap_or("UnknownAuthor")
     });
-    let author = safe_filename_component(author);
+    let author = safe_filename_component(author, "UnknownAuthor");
     let year = metadata.issued.as_ref().map_or("0000".to_owned(), |date| {
         if (0..=9999).contains(&date.year) {
             format!("{:04}", date.year)
@@ -1114,7 +1114,14 @@ fn fold_to_ascii(c: char) -> Option<&'static str> {
     })
 }
 
-fn safe_filename_component(value: &str) -> String {
+/// Sanitizes one filesystem component: ASCII letters/digits, `-` and `_` survive,
+/// non-ASCII letters fold to their closest ASCII spelling (see [`fold_to_ascii`])
+/// rather than collapsing to `_`, everything else becomes `_`, `..` sequences collapse,
+/// and leading/trailing `.`/`_` are trimmed. Returns `fallback` when nothing usable
+/// remains. This is the crate's single filename-sanitization rule; other crates
+/// (nisaba-export) reuse it so sanitized names behave identically everywhere.
+#[must_use]
+pub fn safe_filename_component(value: &str, fallback: &str) -> String {
     let mut output = value
         .chars()
         .map(|c| {
@@ -1128,11 +1135,11 @@ fn safe_filename_component(value: &str) -> String {
     while output.contains("..") {
         output = output.replace("..", "_");
     }
-    let output = output.trim_matches(['.', '_']).to_owned();
+    let output = output.trim_matches(['.', '_']);
     if output.is_empty() {
-        "UnknownAuthor".to_owned()
+        fallback.to_owned()
     } else {
-        output
+        output.to_owned()
     }
 }
 
@@ -1205,7 +1212,7 @@ impl ExportManifest {
             return Err(ReferenceError::MissingFullText(missing));
         }
         let ris = export_numbered_ris(&bibliography.entries, &numbers)?.into_bytes();
-        let prefix = safe_filename_component(&bibliography.directory);
+        let prefix = safe_filename_component(&bibliography.directory, "UnknownAuthor");
         let mut files = vec![ExportFile {
             path: format!("{prefix}/references.ris"),
             contents: ris,
@@ -1249,7 +1256,7 @@ pub fn validate_export(
             return Err(errors);
         }
     };
-    let prefix = safe_filename_component(&bibliography.directory);
+    let prefix = safe_filename_component(&bibliography.directory, "UnknownAuthor");
     let ris_path = format!("{prefix}/references.ris");
     let ris_file = files.iter().find(|file| file.path == ris_path);
     if ris_file.is_none() {
