@@ -83,16 +83,16 @@ pub use project::{DocumentPath, InvalidDocumentPath, Project, ProjectDocument, P
 pub use projection::{CharVisibility, View, project, project_with};
 pub use redline::{
     InlineSafety, RedlineReport, RedlineRunRecord, RedlineStyle, ReplacedReason,
-    classify_inline_safety, redline, redline_with_report,
+    classify_inline_safety, redline, redline_with_report, wrap_change,
 };
 pub use resolution::{
     Resolution, ResolutionError, ResolutionOutcome, accept, reject, remap_position_after_deletion,
     remap_range_after_deletion, remove_char_range, resolve,
 };
 pub use review::{
-    BulkResolutionOutcome, CommentMessage, CommentState, CommentThread, CommentThreadId, Milestone,
-    MilestoneComparison, ProjectedSnapshot, SnapshotChange, SnapshotPath, compare_milestones,
-    refresh_comment_threads, resolve_bulk,
+    BulkResolutionOperation, BulkResolutionOutcome, CommentMessage, CommentState, CommentThread,
+    CommentThreadId, Milestone, MilestoneComparison, ProjectedSnapshot, SnapshotChange,
+    SnapshotPath, compare_milestones, refresh_comment_threads, resolve_bulk,
 };
 pub use validation::{ValidationIssue, is_valid, validate};
 
