@@ -198,8 +198,9 @@ sources (paths flattened with `/` → `_`), and per-document RIS bibliographies 
 full-text PDFs under `references-<n>/`. The generated master `main.typ`
 includes every document by its full project-relative path, so documents in
 subdirectories export and compile correctly. Exports require every cited
-reference to have an uploaded full-text PDF (409 otherwise) and are restricted
-to owners/authors (reviewers may compile but not export).
+reference to have an uploaded full-text PDF (409 otherwise). Owners, authors,
+and reviewers may export (reviewers need it to export review copies;
+read-only members may compile but not export).
 
 ### 4.4 Health — `GET /healthz` (all HTTP services)
 
