@@ -164,16 +164,40 @@ pub struct RedlineStyle {
 }
 
 impl RedlineStyle {
+    /// Default inline-insertion open marker: `#review.add[`.
+    pub const DEFAULT_INSERT_OPEN: &'static str = "#review.add[";
+    /// Default inline-insertion close marker: `]`.
+    pub const DEFAULT_INSERT_CLOSE: &'static str = "]";
+    /// Default inline-deletion open marker: `#review.del[`.
+    pub const DEFAULT_DELETE_OPEN: &'static str = "#review.del[";
+    /// Default inline-deletion close marker: `]`.
+    pub const DEFAULT_DELETE_CLOSE: &'static str = "]";
+    /// Default block-level "replaced" open marker: `#review.rep-open[]`.
+    pub const DEFAULT_REPLACED_OPEN: &'static str = "#review.rep-open[]";
+    /// Default block-level "replaced" close marker: `#review.rep-close[]`.
+    pub const DEFAULT_REPLACED_CLOSE: &'static str = "#review.rep-close[]";
+
+    /// The inline marker pair for a change kind: `(open, close)`.
+    #[must_use]
+    pub fn inline_markers(&self, kind: MarkKind) -> (&str, &str) {
+        match kind {
+            MarkKind::Insert => (&self.insert_open, &self.insert_close),
+            MarkKind::Delete => (&self.delete_open, &self.delete_close),
+            // Comments/secrets never take the inline path.
+            _ => (&self.replaced_open, &self.replaced_close),
+        }
+    }
+
     /// Construct the default review-package style.
     #[must_use]
     pub fn new_default() -> Self {
         RedlineStyle {
-            insert_open: "#review.add[".to_string(),
-            insert_close: "]".to_string(),
-            delete_open: "#review.del[".to_string(),
-            delete_close: "]".to_string(),
-            replaced_open: "#review.rep-open[]".to_string(),
-            replaced_close: "#review.rep-close[]".to_string(),
+            insert_open: Self::DEFAULT_INSERT_OPEN.to_string(),
+            insert_close: Self::DEFAULT_INSERT_CLOSE.to_string(),
+            delete_open: Self::DEFAULT_DELETE_OPEN.to_string(),
+            delete_close: Self::DEFAULT_DELETE_CLOSE.to_string(),
+            replaced_open: Self::DEFAULT_REPLACED_OPEN.to_string(),
+            replaced_close: Self::DEFAULT_REPLACED_CLOSE.to_string(),
         }
     }
 
@@ -399,6 +423,18 @@ fn flag_to_run_kind(f: u8) -> RunKind {
     }
 }
 
+/// Wrap `text` in the style's inline open/close markers for `kind`.
+///
+/// This is the single definition of marker wrapping; the redline emitter
+/// ([`emit_change`]) and the milestone-comparison redline both go through it so the
+/// marker pairs can never drift apart.
+pub fn wrap_change(out: &mut String, text: &str, kind: MarkKind, style: &RedlineStyle) {
+    let (open, close) = style.inline_markers(kind);
+    out.push_str(open);
+    out.push_str(text);
+    out.push_str(close);
+}
+
 fn emit_change(
     out: &mut String,
     runs: &mut Vec<RedlineRunRecord>,
@@ -410,17 +446,7 @@ fn emit_change(
 ) {
     let safety = classify_inline_safety(span);
     match safety {
-        InlineSafety::InlineSafe => {
-            let (open, close) = match kind {
-                MarkKind::Insert => (&style.insert_open, &style.insert_close),
-                MarkKind::Delete => (&style.delete_open, &style.delete_close),
-                // Comments/secrets never reach here.
-                _ => (&style.replaced_open, &style.replaced_close),
-            };
-            out.push_str(open);
-            out.push_str(span);
-            out.push_str(close);
-        }
+        InlineSafety::InlineSafe => wrap_change(out, span, kind, style),
         InlineSafety::BlockReplaced(_) => {
             out.push_str(&style.replaced_open);
             out.push_str(span);

@@ -15,7 +15,8 @@
 //! - a comment whose entire range is covered by pending deletions is *orphaned* (never
 //!   silently relocated).
 
-use crate::mark::{Mark, MarkKind, MarkSet};
+use crate::Position;
+use crate::mark::{Mark, MarkId, MarkKind, MarkSet};
 use crate::position::{TextRange, char_len};
 
 /// One validation finding.
@@ -119,30 +120,59 @@ pub fn validate(text: &str, marks: &MarkSet) -> Vec<ValidationIssue> {
         }
     }
 
-    // 2. Insert/delete conflicts over shared characters.
-    let inserts = marks.of_kind(MarkKind::Insert);
+    // 2. Insert/delete conflicts over shared characters. The per-character flag vector
+    // (one pass) decides *whether* any character is both inserted and deleted; only then
+    // are the (few) candidate marks paired up, instead of comparing every insert against
+    // every delete up front.
+    let flags = crate::projection::char_flags(text, marks);
+    let has_conflict = flags.iter().any(|f| {
+        f & crate::projection::FLAG_INSERT != 0 && f & crate::projection::FLAG_DELETE != 0
+    });
     let deletes = marks.of_kind(MarkKind::Delete);
-    let mut conflicts: Vec<ValidationIssue> = Vec::new();
-    for ins in &inserts {
-        for del in &deletes {
-            if let Some(overlap) = ins.range.intersect(del.range) {
-                conflicts.push(ValidationIssue::InsertDeleteConflict {
-                    insert: ins.id,
-                    delete: del.id,
-                    overlap,
-                });
+    if has_conflict {
+        let mut conflicts: Vec<ValidationIssue> = Vec::new();
+        let clamped = |m: &Mark| {
+            // Mirrors `char_flags`: ranges are clamped to the text length, and a range
+            // that covers nothing after clamping contributes no flags (and no conflict).
+            let s = m.range.start.to_char_idx().min(n);
+            let e = m.range.end.to_char_idx().min(n);
+            (s < e).then_some((s, e))
+        };
+        let inserts: Vec<(usize, usize, MarkId)> = marks
+            .iter()
+            .filter(|m| m.kind == MarkKind::Insert)
+            .filter_map(|m| clamped(m).map(|(s, e)| (s, e, m.id)))
+            .collect();
+        let deletes: Vec<(usize, usize, MarkId)> = deletes
+            .iter()
+            .filter_map(|m| clamped(m).map(|(s, e)| (s, e, m.id)))
+            .collect();
+        for (ins_s, ins_e, ins_id) in &inserts {
+            for (del_s, del_e, del_id) in &deletes {
+                let overlap_s = (*ins_s).max(*del_s);
+                let overlap_e = (*ins_e).min(*del_e);
+                if overlap_s < overlap_e {
+                    conflicts.push(ValidationIssue::InsertDeleteConflict {
+                        insert: *ins_id,
+                        delete: *del_id,
+                        overlap: TextRange::new(
+                            Position::from_char_idx(u32::try_from(overlap_s).unwrap_or(u32::MAX)),
+                            Position::from_char_idx(u32::try_from(overlap_e).unwrap_or(u32::MAX)),
+                        ),
+                    });
+                }
             }
         }
+        conflicts.sort_by_key(|c| match c {
+            ValidationIssue::InsertDeleteConflict { insert, delete, .. } => {
+                (insert.as_u64(), delete.as_u64())
+            }
+            _ => (0, 0),
+        });
+        // Deduplicate (shouldn't happen since pairs are unique, but defensive).
+        conflicts.dedup();
+        issues.extend(conflicts);
     }
-    conflicts.sort_by_key(|c| match c {
-        ValidationIssue::InsertDeleteConflict { insert, delete, .. } => {
-            (insert.as_u64(), delete.as_u64())
-        }
-        _ => (0, 0),
-    });
-    // Deduplicate (shouldn't happen since pairs are unique, but defensive).
-    conflicts.dedup();
-    issues.extend(conflicts);
 
     // 3. Orphaned comments: a comment whose entire range is covered by delete marks.
     let mut orphans: Vec<ValidationIssue> = Vec::new();
