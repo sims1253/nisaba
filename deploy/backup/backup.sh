@@ -41,7 +41,15 @@ if docker compose ps seaweedfs 2>/dev/null | grep -q "seaweedfs"; then
     echo "[backup] syncing SeaweedFS buckets..."
     obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q seaweedfs)" 2>/dev/null | awk '{print $1}')"
     obj_net="${obj_net:-nisaba_obj-net}"
-    if ! docker run --rm -i --network "$obj_net" --entrypoint /bin/sh         -e AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}"         -e AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}"         -v "${DEST}/seaweedfs:/out:rw"         amazon/aws-cli:2.36.20 -c '
+    # Digest-pinned to match docker-compose.yml (seaweedfs-init service).
+    if ! docker run --rm -i \
+            --network "$obj_net" \
+            --entrypoint /bin/sh \
+            -e AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}" \
+            -e AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}" \
+            -v "${DEST}/seaweedfs:/out:rw" \
+            amazon/aws-cli:2.36.20@sha256:8af59c0d96b104000cce4f11e211c06385240d72c515198159041f13ebe459fa \
+            -c '
             export AWS_ENDPOINT_URL=http://seaweedfs:8333
             failed=0
             for b in '"${NISABA_S3_BUCKET_BLOBS:-nisaba-blobs}"' '"${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}"'; do
