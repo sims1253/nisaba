@@ -25,6 +25,7 @@ import * as api from "./api"
 import type { CompileView, Fulltext, MarkInput, MembershipRole, NisabaDocument, Project, Reference } from "./api"
 import { AuthTokenLive, OidcClient, OidcClientLive, onAuthFailure, readStoredAccessToken, currentUserDisplayName, decodedTokenPayload, isOidcCallback, oidcConfigFromEnv, scheduleTokenRefresh } from "./auth"
 import { emptyReviewState, reviewReducer, type ReviewItem, type ReviewState } from "./review"
+import { mergeReviewItems, readReviewItemsFromMap, writeReviewItemsToMap } from "./review-persistence"
 import { createCursorAt, resolveCursor } from "./cursor"
 import { SHELL_HTML } from "./shell"
 import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount, type Heading, type TreeNode } from "./outline"
@@ -2458,9 +2459,6 @@ let isLoadingDocument = false
  */
 let applyingRemoteReview = false
 
-/** Loro container key that holds the serialised review state (JSON-in-LoroMap). */
-const REVIEW_CONTAINER = "review"
-
 /**
  * Unsubscribe handle for the active document's review-container subscription.
  * One per document: torn down in openDocument before the next document subscribes,
@@ -2585,20 +2583,12 @@ function renderReviewUpdate(update: ViewUpdate): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Writes the current review items into the active replica's "review" LoroMap as a
- * single JSON string, so they survive reload and sync to every collaborator through
- * the existing WebSocket relay (the same path the text CRDT uses — no new endpoints).
+ * Writes the current review items into the active replica's "review" LoroMap
+ * (per-item schema v2 — see review-persistence.ts for the layout and why it
+ * replaced the single-blob v1 write), so they survive reload and sync to every
+ * collaborator through the existing WebSocket relay.
  *
- * The whole item list is one value keyed "items". Loro maps are last-writer-wins per
- * key, so a peer that writes a STALE or EMPTY list (e.g. a fresh session whose
- * catch-up has not arrived yet, or a reload racing the WELCOME) would clobber the
- * shared items — the 2026-08-09 collaboration finding: reviewer suggestions lost,
- * snapshots showed the review container reset to []. The write therefore MERGES the
- * current map value with the local list (union by id, local wins per id) instead of
- * replacing it.
- *
- * The map.set() is a no-op when the value is unchanged (Loro dedups it), so calling
- * this after every review mutation is cheap. It is guarded so it does NOT run while:
+ * It is guarded so it does NOT run while:
  *   * applying a remote review update (applyingRemoteReview) — would echo back;
  *   * seeding a document (isLoadingDocument) — the seed dispatch, not a real change;
  *   * importing remote text (isImportingRemote) — peer edits, not local review edits;
@@ -2607,36 +2597,11 @@ function renderReviewUpdate(update: ViewUpdate): void {
 function persistReview(commit = true): void {
   if (applyingRemoteReview || isLoadingDocument || isImportingRemote()) return
   const doc = activeLoro
-  const json = JSON.stringify(mergeReviewItems(readReviewItemsFromMap(doc), state.review.items))
   try {
-    const map = doc.getMap(REVIEW_CONTAINER)
-    if (map.get("items") !== json) {
-      map.set("items", json)
-      if (commit) doc.commit({ origin: "review" })
+    if (writeReviewItemsToMap(doc, state.review.items) && commit) {
+      doc.commit({ origin: "review" })
     }
   } catch { /* replica torn down mid-document-switch: silently skip */ }
-}
-
-/**
- * Union of two review item lists by id, with `local` winning for duplicate ids
- * (the local session is authoritative for items it created or just acted on).
- * Prevents a stale/empty session from clobbering shared review state.
- */
-function mergeReviewItems(remote: readonly ReviewItem[], local: readonly ReviewItem[]): ReviewItem[] {
-  const byId = new Map<string, ReviewItem>()
-  for (const item of remote) byId.set(item.id, item)
-  for (const item of local) byId.set(item.id, item) // local wins
-  return [...byId.values()]
-}
-
-/** Reads the persisted review items JSON from the active replica's review map. */
-function readReviewItemsFromMap(doc: LoroDoc): ReviewItem[] {
-  try {
-    const value = doc.getMap(REVIEW_CONTAINER).get("items")
-    if (value === undefined) return []
-    const parsed = JSON.parse(String(value))
-    return Array.isArray(parsed) ? (parsed as ReviewItem[]) : []
-  } catch { return [] }
 }
 
 /**
@@ -2676,11 +2641,8 @@ function loadPersistedReview(doc: LoroDoc = activeLoro): readonly ReviewItem[] |
     // LOW #10: Read from the passed-in doc, not the file-level activeLoro, so the
     // subscribe handler always reads the replica it subscribed to (activeLoro may
     // have been reassigned to a newer document's replica by the time the callback fires).
-    const json = doc.getMap(REVIEW_CONTAINER).get("items")
-    if (typeof json !== "string" || json.length === 0) return undefined
-    const items = JSON.parse(json) as readonly ReviewItem[]
-    if (!Array.isArray(items)) return undefined
-    return items
+    const items = readReviewItemsFromMap(doc)
+    return items.length > 0 ? items : undefined
   } catch { return undefined }
 }
 
