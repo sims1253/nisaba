@@ -21,6 +21,49 @@ async fn spawn_server() -> std::net::SocketAddr {
     spawn_server_with(Arc::new(StaticAccessResolver::allow_all(Role::Author))).await
 }
 
+#[tokio::test]
+async fn oversized_hello_token_and_version_vector_are_rejected() {
+    let addr = spawn_server().await;
+    // Frame decode alone bounds each blob at 4 MiB; the HELLO token (16 KiB
+    // cap) and version vector (64 KiB cap) have tighter limits that must be
+    // enforced before the token reaches the access resolver.
+    for (token, last_vv) in [
+        (
+            "t".repeat(nisaba_sync::config::MAX_TOKEN_BYTES + 1),
+            Vec::new(),
+        ),
+        (
+            "dev".to_string(),
+            vec![0u8; nisaba_sync::config::MAX_VV_BYTES + 1],
+        ),
+    ] {
+        let mut ws = dial(addr, "oversized_hello").await;
+        send(
+            &mut ws,
+            Frame::Hello {
+                proto: PROTOCOL_VERSION,
+                doc_id: "oversized_hello".into(),
+                peer: 42,
+                token,
+                last_vv,
+            },
+        )
+        .await;
+        let mut reply = None;
+        while let Some(msg) = ws.next().await {
+            if let Ok(Message::Binary(b)) = msg {
+                reply = Some(Frame::decode(&b, 1 << 24).unwrap());
+                break;
+            }
+        }
+        match reply {
+            Some(Frame::Error { code, .. })
+                if code == nisaba_sync::session::codes::TOO_LARGE => {}
+            other => panic!("expected TOO_LARGE error frame, got {other:?}"),
+        }
+    }
+}
+
 /// Spawn a server with an explicit access resolver, so the deny-by-default path
 /// can be exercised end to end.
 async fn spawn_server_with(access: Arc<dyn nisaba_sync::AccessResolver>) -> std::net::SocketAddr {

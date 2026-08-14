@@ -286,6 +286,22 @@ async fn handshake(
             return None;
         }
     };
+    // Bound the two unbounded HELLO fields beyond the coarse 4 MiB frame cap:
+    // frame decode alone lets a multi-megabyte token or version vector through,
+    // and the token is about to be handed to the (potentially remote) access
+    // resolver while the vv is fed to the authority.
+    for (kind, len, max) in [
+        ("HELLO token", token.len(), crate::config::MAX_TOKEN_BYTES),
+        ("HELLO version vector", last_vv.len(), crate::config::MAX_VV_BYTES),
+    ] {
+        if let Err(e) = state
+            .config
+            .check_hello_field_size(kind, len, max)
+        {
+            let _ = send_error(socket, codes::TOO_LARGE, &e.to_string()).await;
+            return None;
+        }
+    }
     let role = match state.registry.access().resolve(doc_id, &token).await {
         Ok(r) => r,
         Err(e) => {

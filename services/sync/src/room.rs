@@ -352,6 +352,20 @@ impl DocRoom {
         // Catch-up is computed inside the gate so it observes any update already
         // fanned out by a concurrent handle_update (which also holds this gate).
         let catchup = self.authority.catchup(peer_vv)?;
+        // Bound the catch-up payload (incremental updates or a full snapshot):
+        // without a cap, `catchup` output was queued verbatim on the peer's
+        // channel no matter how large. Reject the join — never truncate, since
+        // silently modifying CRDT state would corrupt the peer.
+        if let CatchUp::Updates(bytes) | CatchUp::Snapshot(bytes) = &catchup
+            && bytes.len() > self.config.max_snapshot_bytes
+        {
+            return Err(SyncError::Limit(format!(
+                "catch-up payload of {} bytes exceeds the {} byte limit for document {}",
+                bytes.len(),
+                self.config.max_snapshot_bytes,
+                self.doc_id
+            )));
+        }
         let status = match &catchup {
             CatchUp::None => WelcomeStatus::OkNoCatchUp,
             _ => WelcomeStatus::Ok,
