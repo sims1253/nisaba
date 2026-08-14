@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'tools/**'
+      # fixtures/ holds the golden DOCX/manifest/skeleton files that
+      # tools/verify.sh re-generates and compares against.
+      - 'fixtures/**'
       - 'deploy/**'
       - 'docker-compose.yml'
       - '.env.example'
@@ -12,7 +15,10 @@ on:
       - 'Cargo.toml'
       - '**/Cargo.toml'
       - 'services/**'
-      - 'web/**'
+      # web/package.json (not web/**): the workspace-root bun install below
+      # covers web's manifest, so dependency changes still gate this workflow,
+      # but web-only source changes are web.yml's signal, not ours.
+      - 'web/package.json'
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
@@ -22,6 +28,7 @@ on:
   pull_request:
     paths:
       - 'tools/**'
+      - 'fixtures/**'
       - 'deploy/**'
       - 'docker-compose.yml'
       - '.env.example'
@@ -29,7 +36,7 @@ on:
       - 'Cargo.toml'
       - '**/Cargo.toml'
       - 'services/**'
-      - 'web/**'
+      - 'web/package.json'
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
@@ -97,6 +104,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      # setup-bun has no dependency-cache input (it only caches the bun binary),
+      # so cache the global bun install cache ourselves, keyed on the lockfile.
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies (workspace root, frozen lockfile)
         run: bun install --frozen-lockfile
       - name: Typecheck
@@ -125,20 +140,37 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libreoffice poppler-utils qpdf imagemagick
+      # typst is PINNED to the same version the compile service builds with
+      # (services/compile/Cargo.toml: typst = "0.15.1"), and the tarballs are
+      # verified against SHA256 checksums before install — a floating
+      # releases/latest would test against an untested typst with no
+      # integrity check.
       - name: Install typst (for the skeleton-compile check in verify.sh)
+        env:
+          TYPST_VERSION: '0.15.1'
         run: |
           arch=$(uname -m)
           case "$arch" in
-            x86_64) asset="typst-x86_64-unknown-linux-musl";;
-            aarch64) asset="typst-aarch64-unknown-linux-musl";;
+            x86_64) asset="typst-x86_64-unknown-linux-musl"
+                    expected_sha256="a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c";;
+            aarch64) asset="typst-aarch64-unknown-linux-musl"
+                     expected_sha256="5aa8d74a3d906e60ea12a66ac2f37f8eef1b14cbad7182a745e393a10c23dcee";;
             *) echo "Unsupported arch: $arch"; exit 1;;
           esac
-          latest=$(curl -sL https://api.github.com/repos/typst/typst/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
-          echo "Installing typst $latest ($asset)"
-          curl -sL "https://github.com/typst/typst/releases/download/${latest}/${asset}.tar.xz" | tar xJ -C /tmp
+          url="https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/${asset}.tar.xz"
+          echo "Installing typst v${TYPST_VERSION} ($asset) with SHA256 verification"
+          curl -fsSL -o "/tmp/${asset}.tar.xz" "$url"
+          echo "${expected_sha256}  /tmp/${asset}.tar.xz" | sha256sum --check --strict -
+          tar xJf "/tmp/${asset}.tar.xz" -C /tmp
           sudo install -m755 "$(find /tmp -name typst -type f | head -1)" /usr/local/bin/typst
           typst --version
       - uses: oven-sh/setup-bun@v2
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies (workspace root, frozen lockfile)
         run: bun install --frozen-lockfile
       - name: Full tools/verify.sh (external-gated tests run for real)
@@ -165,12 +197,17 @@ jobs:
           fi
           shellcheck \
             scripts/cargo-audit.sh \
+            scripts/check-architecture.sh \
+            scripts/wait-healthy.sh \
             deploy/validate-compose.sh \
             deploy/smoke.sh \
+            deploy/e2e-app.sh \
             deploy/backup/backup.sh \
             deploy/backup/restore.sh \
+            deploy/backup/verify.sh \
             deploy/postgres/init/10-init-databases.sh \
             deploy/seaweedfs/init-buckets.sh \
+            deploy/seaweedfs/generate-s3-identities.sh \
             deploy/keycloak/healthcheck.sh
 
   smoke:
