@@ -1097,17 +1097,19 @@ async fn delete_project(
     permitted(&p, Permission::Manage)?;
     let project = project_for(&s, &pid).await?;
     project_access(&s, &p, project.id, Permission::Manage).await?;
-    // Remove fulltext blobs from object storage before the DB rows cascade:
-    // reference_entries/fulltexts rows are deleted by the FK cascade, but the
-    // S3 objects they point at would otherwise be orphaned.
+    // Collect the reference ids before the DB rows cascade away, delete the
+    // rows first, then remove the blobs from object storage best-effort. If a
+    // blob delete fails afterwards only an orphaned blob remains (recoverable
+    // by a sweeper); deleting blobs first left rows pointing at deleted blobs,
+    // making every later export of the project fail with 409.
     let references = s.repo.list_references(project.id).await?;
-    for reference in &references {
-        if s.blobs.delete(reference.id).await.is_err() {
-            tracing::warn!(project_id = %project.id, reference_id = %reference.id, "failed to delete fulltext blob during project deletion");
-        }
-    }
     let event = build_audit(&p, project.id, "deleted", "project", project.id, json!({}));
     s.repo.delete_project(project.id, Some(event)).await?;
+    for reference in &references {
+        if let Err(error) = s.blobs.delete(reference.id).await {
+            tracing::warn!(project_id = %project.id, reference_id = %reference.id, error = %error, "failed to delete fulltext blob during project deletion");
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1634,12 +1636,13 @@ async fn delete_reference(
     let p = p.0;
     permitted(&p, Permission::Manage)?;
     let v = reference_for_project(&s, &pid, &rid).await?;
-    s.blobs
-        .delete(v.id)
-        .await
-        .map_err(|_| AppError::Dependency("blob store unavailable".into()))?;
+    // DB row first, then the blob best-effort: an orphaned blob is recoverable,
+    // a row pointing at a deleted blob made every later export fail with 409.
     let event = build_audit(&p, v.project_id, "deleted", "reference", v.id, json!({}));
     s.repo.delete_reference(v.id, Some(event)).await?;
+    if let Err(error) = s.blobs.delete(v.id).await {
+        tracing::warn!(reference_id = %v.id, error = %error, "failed to delete fulltext blob during reference deletion");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1743,10 +1746,8 @@ async fn delete_fulltext(
     let p = p.0;
     permitted(&p, Permission::Manage)?;
     let reference = reference_for_project(&s, &pid, &rid).await?;
-    s.blobs
-        .delete(reference.id)
-        .await
-        .map_err(|_| AppError::Dependency("blob store unavailable".into()))?;
+    // DB row first, then the blob best-effort (same rationale as
+    // delete_reference: orphaned blobs are recoverable, dangling rows are not).
     let event = build_audit(
         &p,
         reference.project_id,
@@ -1756,6 +1757,9 @@ async fn delete_fulltext(
         json!({}),
     );
     s.repo.delete_fulltext(reference.id, Some(event)).await?;
+    if let Err(error) = s.blobs.delete(reference.id).await {
+        tracing::warn!(reference_id = %reference.id, error = %error, "failed to delete fulltext blob during fulltext detach");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 async fn list_fulltexts(
