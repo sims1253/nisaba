@@ -12,12 +12,12 @@
  */
 import { describe, it, expect } from "vitest"
 import { LoroDoc } from "loro-crdt"
-import type { ReviewItem } from "./review"
+import type { Comment, ReviewItem } from "./review"
 import { readReviewItemsFromMap, writeReviewItemsToMap } from "./review-persistence"
 
 const REVIEW_CONTAINER = "review"
 
-function comment(id: string, author: string, createdAt: number): ReviewItem {
+function comment(id: string, author: string, createdAt: number): Comment {
   return { id, kind: "comment", from: 0, to: 1, body: `note from ${author}`, author, status: "open", createdAt }
 }
 

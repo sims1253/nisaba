@@ -148,7 +148,9 @@ export class VirtualPdfViewer {
       throw error
     }
     if (generation !== this.generation) {
-      void pdf.destroy().catch(() => undefined)
+      // pdfjs v6 dropped PDFDocumentProxy.destroy(); teardown goes through the
+      // loading task (pdf.loadingTask.destroy()).
+      void pdf.loadingTask.destroy().catch(() => undefined)
       return
     }
     this.document = pdf

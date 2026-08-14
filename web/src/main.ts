@@ -1819,6 +1819,21 @@ let browserOffline = false
 let lastSyncStatus: SyncStatus | undefined
 let lastSyncDetail: string | undefined
 
+/**
+ * The short status word for the sync cell. One mapping shared by setSyncStatus
+ * and renderPresence — the two previously re-derived it independently and their
+ * fallbacks drifted ("Local" vs "No document"). `status` is undefined before the
+ * first relay callback: with no document open the label stays "No document"
+ * (the shell's initial text); with one open, the editor works locally.
+ */
+function syncShortLabel(status: SyncStatus | undefined): string {
+  if (browserOffline) return "Offline"
+  if (status === "connected") return "Live"
+  if (status === "connecting") return "Connecting…"
+  if (status === "unsupported") return "Sync off"
+  return state.document ? "Local" : "No document"
+}
+
 function setSyncStatus(value: SyncStatus, detail?: string): void {
   // Remember the latest relay status so the offline listener can restore it on
   // reconnect without a redundant status callback.
@@ -1832,11 +1847,7 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
   // the tooltip so the bar stays scannable. "Live" is only ever claimed when the
   // relay says so — going offline dims it immediately, without waiting for the
   // WebSocket to notice.
-  const short = browserOffline ? "Offline"
-    : value === "connected" ? "Live"
-      : value === "connecting" ? "Connecting…"
-        : value === "unsupported" ? "Sync off"
-          : "Local"
+  const short = syncShortLabel(value)
   const explanation = browserOffline ? "You are offline — your work is still saved to this device and syncs when you reconnect"
     : value === "connected" ? "Connected: other people see your edits as you type"
       : value === "connecting" ? "Reconnecting to the collaboration server…"
@@ -1883,13 +1894,9 @@ function renderPresence(): void {
     more.textContent = `+${presencePeers.length - shown.length}`
     host.append(more)
   }
-  setText("#sync-label", presenceSuffix(
-    browserOffline ? "Offline"
-      : lastSyncStatus === "connected" ? "Live"
-        : lastSyncStatus === "connecting" ? "Connecting…"
-          : lastSyncStatus === "unsupported" ? "Sync off"
-            : state.document ? "Local" : "No document"
-  ))
+  // Re-rendering the avatar row also refreshes the "N here" suffix on the sync
+  // label, using the same shared short-word mapping as setSyncStatus.
+  setText("#sync-label", presenceSuffix(syncShortLabel(lastSyncStatus)))
 }
 
 /**
@@ -2364,7 +2371,11 @@ const editor = new EditorView({
             editor.state.selection.main.to
           ).trim()
           if (selected.length > 0) {
-            void pdfViewer.searchAndScroll(selected)
+            // searchAndScroll awaits page loads that reject when the document
+            // is replaced mid-search (a rapid double-click during a recompile);
+            // swallow it like the load() call sites rather than surface an
+            // unhandled rejection.
+            void pdfViewer.searchAndScroll(selected).catch(() => undefined)
           }
         }
       }),

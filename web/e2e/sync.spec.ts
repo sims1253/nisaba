@@ -22,7 +22,6 @@ test.describe("Sync WebSocket", () => {
     const syncLabel = page.locator("#sync-label, .sync-status, #connection-state")
     if (await syncLabel.first().isVisible()) {
       const status = await syncLabel.first().textContent()
-      console.log("Sync status:", status)
       // The status should be "Live" or "Connected" if sync is working,
       // or show a clear error message if not.
       // We do NOT assert "connected" here because the sync config depends on
