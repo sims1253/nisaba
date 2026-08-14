@@ -296,15 +296,28 @@ export async function refreshAccessToken(): Promise<AuthToken | undefined> {
     accessToken: body.access_token,
     ...(body.expires_in === undefined ? {} : { expiresAt: Date.now() + body.expires_in * 1000 }),
     ...(body.token_type === undefined ? {} : { tokenType: body.token_type }),
-    ...(body.refresh_token ?? stored.refreshToken === undefined ? {} : { refreshToken: body.refresh_token ?? stored.refreshToken })
+    // Parenthesize: without them `??` binds looser than `===` and the condition
+    // silently becomes `body.refresh_token ?? (stored.refreshToken === undefined)`.
+    ...((body.refresh_token ?? stored.refreshToken) === undefined ? {} : { refreshToken: body.refresh_token ?? stored.refreshToken })
   }
-  try { sessionStorage.setItem(storageKey, JSON.stringify(token)) } catch { /* storage unavailable */ }
+  // Persist through the same channel every read uses (localStorage via storage()
+  // / AuthTokenLive) — writing to sessionStorage here meant the refreshed token
+  // never replaced the stored one, so reads kept seeing the expired token and the
+  // session died at expiry even though the refresh request itself succeeded.
+  try { storage()?.setItem(storageKey, JSON.stringify(token)) } catch { /* storage unavailable */ }
+  // A successful refresh arms the NEXT refresh: scheduleTokenRefresh is one-shot
+  // (armed at sign-in/boot), so without re-arming here the token dies at the end
+  // of the refreshed lifetime. This clears and re-derives the module timer.
+  scheduleTokenRefresh()
   return token
 }
 
 /**
  * Proactively refreshes the access token ~60s before it expires, using the
  * OIDC refresh_token grant. Call once on sign-in. Cancels any previous timer.
+ * refreshAccessToken() re-invokes this after each successful refresh, so the
+ * schedule stays armed for the whole session rather than expiring one token
+ * lifetime after sign-in.
  */
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 
