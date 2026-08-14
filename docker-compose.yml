@@ -93,14 +93,33 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.41@sha256:43b768cd62b00d132439cda881b93fd1adebf1b315e996e794087743821d771d
     <<: [*default-restart, *common-logging]
-    command: >-
-      server -s3 -dir=/data
-      -s3.config=/etc/seaweedfs/s3.json
-      -s3.port=8333
-      -master.volumeSizeLimitMB=1024
+    # S3 identities are generated at container start from the NISABA_S3_*
+    # variables below (deploy/seaweedfs/generate-s3-identities.sh) and written
+    # to /tmp inside the container — the repository contains no working
+    # credentials, and rotating a secret only requires editing .env and
+    # recreating the container. There is deliberately NO anonymous identity:
+    # every S3 request must be signed (the gateway is published on the host,
+    # so anonymous read would expose every blob — incl. full-text PDFs).
+    environment:
+      NISABA_S3_ACCESS_KEY: ${NISABA_S3_ACCESS_KEY:-nisaba-app}
+      NISABA_S3_SECRET_KEY: ${NISABA_S3_SECRET_KEY:?NISABA_S3_SECRET_KEY is required}
+      NISABA_S3_ADMIN_KEY: ${NISABA_S3_ADMIN_KEY:-nisaba-admin}
+      NISABA_S3_ADMIN_SECRET: ${NISABA_S3_ADMIN_SECRET:?NISABA_S3_ADMIN_SECRET is required}
+    # Render the identity config, then hand off to the image's own
+    # /entrypoint.sh (which fixes /data ownership and drops to the non-root
+    # `seaweed` user before exec'ing `weed server`).
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - >-
+        /bin/sh /deploy/generate-s3-identities.sh /tmp/nisaba-s3-identities.json &&
+        exec /entrypoint.sh server -s3 -dir=/data
+        -s3.config=/tmp/nisaba-s3-identities.json
+        -s3.port=8333
+        -master.volumeSizeLimitMB=1024
     volumes:
       - seaweedfs-data:/data
-      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - ./deploy/seaweedfs/generate-s3-identities.sh:/deploy/generate-s3-identities.sh:ro
     healthcheck:
       # SeaweedFS exposes /healthz (liveness) and /readyz (readiness) on the
       # S3 port (see seaweedfs #9736). The entrypoint runs as the non-root
