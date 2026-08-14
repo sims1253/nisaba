@@ -1192,7 +1192,8 @@ async fn create_document(
         })?;
     // Save the initial revision (0) so the original content is preserved in
     // the document history timeline.
-    s.repo
+    if let Err(e) = s
+        .repo
         .save_document_revision(
             out.id,
             out.project_id,
@@ -1201,7 +1202,9 @@ async fn create_document(
             Some(p.subject.clone()),
         )
         .await
-        .ok();
+    {
+        tracing::warn!("failed to save initial document revision snapshot: {e}");
+    }
     Ok((StatusCode::CREATED, Json(out)))
 }
 async fn list_documents(
@@ -1295,7 +1298,7 @@ async fn patch_document(
             )
             .await
     {
-        eprintln!("warning: failed to save document revision snapshot: {e}");
+        tracing::warn!("failed to save document revision snapshot: {e}");
     }
     Ok(Json(out))
 }
