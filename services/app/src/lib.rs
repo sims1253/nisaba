@@ -2055,7 +2055,12 @@ async fn document_bibliographies(
                         entry.fulltext = Some(fulltext.clone());
                         bytes_cache.insert(key.to_owned(), fulltext);
                     }
-                    Err(()) => missing.push(key.to_owned()),
+                    Err(FulltextError::Missing) => missing.push(key.to_owned()),
+                    Err(FulltextError::Unavailable(error)) => {
+                        return Err(AppError::Dependency(format!(
+                            "failed to fetch fulltext for reference {key}: {error}"
+                        )));
+                    }
                 },
             }
             entries.push(entry);
@@ -2070,15 +2075,38 @@ async fn document_bibliographies(
     Ok((bibliographies, missing))
 }
 
+/// Why a cited reference's fulltext could not be attached to an export.
+enum FulltextError {
+    /// The reference genuinely has no usable fulltext (none recorded, blob
+    /// absent, empty bytes, or a non-PDF content type) — a client-actionable
+    /// 409, same as before.
+    Missing,
+    /// The metadata store or blob store failed — an infrastructure fault that
+    /// must surface as a 502, not as "cited references are missing".
+    Unavailable(String),
+}
+
 async fn fetch_fulltext(
     repo: &dyn Repository,
     blobs: &dyn BlobStore,
     reference_id: Uuid,
-) -> Result<CoreFullText, ()> {
-    let fulltext = repo.get_fulltext(reference_id).await.map_err(|_| ())?;
-    let bytes = blobs.get(reference_id).await.map_err(|_| ())?;
+) -> Result<CoreFullText, FulltextError> {
+    let fulltext = repo
+        .get_fulltext(reference_id)
+        .await
+        .map_err(|e| match e {
+            RepoError::NotFound => FulltextError::Missing,
+            other => FulltextError::Unavailable(other.to_string()),
+        })?;
+    let bytes = blobs
+        .get(reference_id)
+        .await
+        .map_err(|e| match e {
+            RepoError::NotFound => FulltextError::Missing,
+            other => FulltextError::Unavailable(other.to_string()),
+        })?;
     if bytes.is_empty() || fulltext.content_type != "application/pdf" {
-        return Err(());
+        return Err(FulltextError::Missing);
     }
     Ok(CoreFullText {
         blob_ref: fulltext.blob_ref,
