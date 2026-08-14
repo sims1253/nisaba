@@ -45,6 +45,8 @@ export interface SyncOptions {
    */
   readonly onReady?: () => void
   readonly onStatus?: (status: SyncStatus, detail?: string) => void
+  /** Called when the relay says this already-open session lost project access. */
+  readonly onAccessRevoked?: (message: string) => void
   /**
    * The relay's presence roster, minus this client's own peer, whenever it
    * changes. The relay coalesces bursts (250 ms) and sweeps peers that stop
@@ -307,7 +309,12 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
           return
         }
         if (frame.type === "heartbeat") return
-        if (frame.type === "error") throw new Error(`Sync server error ${frame.code}: ${frame.message}`)
+        if (frame.type === "error") {
+          if (frame.code === 4003 && /access (?:was revoked|changed)/i.test(frame.message)) {
+            options.onAccessRevoked?.(frame.message)
+          }
+          throw new Error(`Sync server error ${frame.code}: ${frame.message}`)
+        }
       } catch (error) {
         // A protocol-level failure will not fix itself on retry; report and stop.
         unsupported = true

@@ -50,6 +50,18 @@ test.describe("Authentication", () => {
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible()
   })
 
+  test("browser history never resurfaces an OIDC authorization response", async ({ page }) => {
+    await signIn(page, USERS.author)
+
+    await page.goBack()
+    await page.waitForTimeout(1_000)
+
+    const historyUrl = new URL(page.url())
+    expect(historyUrl.searchParams.has("code")).toBe(false)
+    expect(historyUrl.searchParams.has("state")).toBe(false)
+    expect(historyUrl.searchParams.has("session_state")).toBe(false)
+  })
+
   test("OIDC callback with mismatched state is rejected", async ({ page }) => {
     // Navigate to the app with a fake callback URL
     await page.goto(`${BASE_URL}/?code=fake&state=tampered`)

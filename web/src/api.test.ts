@@ -42,6 +42,16 @@ describe("app service contract", () => {
     expect(fetch).toHaveBeenCalledWith("/api/projects/p1/documents", expect.anything())
   })
 
+  it("accepts redacted share-link list entries without a plaintext token", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok([{
+      token_hash: "abc123", project_id: "p1", role: "reviewer", created_by: "demo",
+      created_at: "2026-01-01T00:00:00Z", expires_at: null, label: null
+    }])))
+    const links = await Effect.runPromise(api.listShareLinks("p1"))
+    expect(links[0]).toMatchObject({ project_id: "p1", role: "reviewer", token_hash: "abc123" })
+    expect(links[0]?.token).toBeUndefined()
+  })
+
   it("gets a document from the flat document route", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ok(document)))
     expect((await Effect.runPromise(api.getDocument("p1", "d1"))).body).toBe("= Heading")

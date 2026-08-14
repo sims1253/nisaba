@@ -346,8 +346,11 @@ body:not(.has-project) .appbar-tools { display: none }
 .navigator { background: var(--chrome); border-right: 1px solid var(--rule-strong) }
 
 .nav-section { display: flex; flex-direction: column; min-height: 0 }
-.nav-section-files { flex: 1 1 auto }
-.nav-section-outline { flex: 1 1 auto; border-top: 1px solid var(--rule) }
+/* Give Files and Outline independent, equal scroll regions. An `auto` basis
+   lets a long outline consume the navigator's height, collapsing the file
+   body beneath outline rows and making its controls impossible to click. */
+.nav-section-files { flex: 1 1 0 }
+.nav-section-outline { flex: 1 1 0; border-top: 1px solid var(--rule) }
 
 .nav-head {
   flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
@@ -1104,6 +1107,8 @@ body.focus-mode .cm-scroller { padding-top: 40px }
 }
 
 @media (max-width: 900px) {
+  #app, .appbar, .statusbar, .workspace { min-width: 0; max-width: 100vw }
+  .appbar, .statusbar { overflow-x: auto; overflow-y: hidden }
   .workspace { display: flex; flex-direction: column; overflow: auto }
   .workspace > .gutter, .show-pane-tab { display: none !important }
   /* Each region becomes a fixed-height band in a scrolling stack. `flex: 0 0 …`
@@ -1112,7 +1117,22 @@ body.focus-mode .cm-scroller { padding-top: 40px }
   .navigator { flex: 0 0 200px; border-right: 0; border-bottom: 1px solid var(--rule-strong) }
   .nav-section-files, .nav-section-outline { flex: 1 1 50% }
   .doc-pane { flex: 0 0 70vh }
-  .dock, .preview-pane { flex: 0 0 70vh; border-left: 0; border-top: 1px solid var(--rule-strong) }
+  .dock, .preview-pane { flex: 0 0 70vh; width: 100%; border-left: 0; border-top: 1px solid var(--rule-strong) }
+  /* Tool docks are actions, not another page-length band. Overlay them on a
+     narrow screen so Share/Review opens inside the viewport. */
+  .dock:not([hidden]) {
+    position: fixed; inset: var(--appbar-h) 0 var(--statusbar-h) 0;
+    z-index: 30; max-width: 100vw; background: var(--chrome);
+  }
   .palette-hint { display: none }
   .crumbs { max-width: 40vw }
+}
+
+@media (max-width: 520px) {
+  .appbar { gap: 4px; padding-inline: 4px }
+  .brand > span:last-child, .crumbs, .save-status, #cursor-position, #word-count,
+  #build-health, #compile-button kbd { display: none }
+  .appbar-right { gap: 4px }
+  .appbar-tools .btn { padding-inline: 6px }
+  #compile-button { padding-inline: 10px }
 }

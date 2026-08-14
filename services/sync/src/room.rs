@@ -622,14 +622,21 @@ impl DocRoom {
     /// review validator and is documented in docs/security.md.
     async fn enforce_reviewer_policy(&self, sender: PeerId, bytes: &[u8]) -> SyncResult<()> {
         let delta = self.authority.review_delta(bytes)?;
-        if !delta.touches_text {
-            if delta.touches_review {
-                let now = self.clock.now();
-                self.review_touched
-                    .lock()
-                    .expect("review_touched poisoned")
-                    .insert(sender, now);
+        if delta.touches_review {
+            let now = self.clock.now();
+            self.review_touched
+                .lock()
+                .expect("review_touched poisoned")
+                .insert(sender, now);
+            // A combined text + review update is a suggestion regardless of
+            // whether the document was previously empty. Check this before the
+            // seed branch so a reviewer's first suggestion in an empty document
+            // is not mistaken for an unsigned baseline seed.
+            if delta.touches_text {
+                return Ok(());
             }
+        }
+        if !delta.touches_text {
             return Ok(());
         }
         if self.authority.text_is_empty() {
@@ -659,7 +666,7 @@ impl DocRoom {
                     <= Duration::from_millis(Self::REVIEWER_TEXT_WINDOW_MS)
             })
         };
-        if delta.touches_review || window_ok {
+        if window_ok {
             return Ok(());
         }
         Err(SyncError::ReviewPolicy(

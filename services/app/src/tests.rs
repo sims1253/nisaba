@@ -570,6 +570,47 @@ async fn owner_can_remove_members_but_not_the_owner_row() {
 }
 
 #[tokio::test]
+async fn inviting_an_existing_member_updates_their_role() {
+    let app = router(state());
+    let (project, _) = create_project_and_document(app.clone()).await;
+    for role in ["read-only", "reviewer", "author"] {
+        let response = request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/members", project.id),
+            "alice",
+            "author",
+            Some(json!({"subject": "reader", "role": role})),
+        )
+        .await;
+        assert!(
+            response.status().is_success(),
+            "role {role}: {}",
+            response.status()
+        );
+    }
+    let members: Vec<ProjectMembership> = response_body(
+        request(
+            app,
+            "GET",
+            &format!("/projects/{}/members", project.id),
+            "alice",
+            "author",
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        members
+            .iter()
+            .find(|member| member.subject == "reader")
+            .map(|member| &member.role),
+        Some(&MembershipRole::Author)
+    );
+}
+
+#[tokio::test]
 async fn any_member_can_list_members() {
     let app = router(state());
     let (project, _) = create_project_and_document(app.clone()).await;
@@ -625,6 +666,47 @@ async fn share_link_revocation_actually_revokes() {
     // Redeeming the revoked token must now fail.
     let redeem = request(
         app.clone(),
+        "POST",
+        &format!("/share/{}/redeem", created.token),
+        "bob",
+        "reviewer",
+        None,
+    )
+    .await;
+    assert_eq!(redeem.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn redacted_share_link_can_be_revoked_by_its_list_identifier() {
+    let app = router(state());
+    let (project, _) = create_project_and_document(app.clone()).await;
+    let created: ShareLink = response_body(
+        request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/share-links", project.id),
+            "alice",
+            "author",
+            Some(json!({"role": "reviewer"})),
+        )
+        .await,
+    )
+    .await;
+    let revoke = request(
+        app.clone(),
+        "DELETE",
+        &format!(
+            "/projects/{}/share-links/{}",
+            project.id, created.token_hash
+        ),
+        "alice",
+        "author",
+        None,
+    )
+    .await;
+    assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+    let redeem = request(
+        app,
         "POST",
         &format!("/share/{}/redeem", created.token),
         "bob",

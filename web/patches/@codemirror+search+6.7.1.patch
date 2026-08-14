@@ -1,0 +1,36 @@
+--- a/node_modules/@codemirror/search/dist/index.js
++++ b/node_modules/@codemirror/search/dist/index.js
+@@ -1062,6 +1062,7 @@ class SearchPanel {
+             name: "search",
+             form: "",
+             "main-field": "true",
++            oninput: this.commit,
+             onchange: this.commit,
+             onkeyup: this.commit
+         });
+@@ -1072,6 +1073,7 @@ class SearchPanel {
+             class: "cm-textfield",
+             name: "replace",
+             form: "",
++            oninput: this.commit,
+             onchange: this.commit,
+             onkeyup: this.commit
+         });
+--- a/node_modules/@codemirror/search/dist/index.cjs
++++ b/node_modules/@codemirror/search/dist/index.cjs
+@@ -1064,6 +1064,7 @@ class SearchPanel {
+             name: "search",
+             form: "",
+             "main-field": "true",
++            oninput: this.commit,
+             onchange: this.commit,
+             onkeyup: this.commit
+         });
+@@ -1074,6 +1075,7 @@ class SearchPanel {
+             class: "cm-textfield",
+             name: "replace",
+             form: "",
++            oninput: this.commit,
+             onchange: this.commit,
+             onkeyup: this.commit
+         });

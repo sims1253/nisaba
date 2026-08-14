@@ -657,7 +657,7 @@ impl Repository for PostgresRepository {
             .collect()
     }
     async fn delete_share_link(&self, token: &str) -> Result<(), RepoError> {
-        let h = crate::hash_token(token);
+        let h = crate::share_link_deletion_hash(token);
         let n = sqlx::query("DELETE FROM share_links WHERE token_hash=$1")
             .bind(&h)
             .execute(&self.pool)

@@ -43,7 +43,7 @@ export async function signIn(page: Page, user: TestUser): Promise<void> {
 /** Create a project through the UI and return its ID from the URL. */
 const uniqueCounter = { value: 0 }
 
-export async function createProject(page: Page, name: string): Promise<void> {
+export async function createProject(page: Page, name: string): Promise<string> {
   const uniqueName = `${name}-${Date.now()}-${uniqueCounter.value++}`
   await page.locator("#new-project").waitFor({ state: "visible" })
   await page.locator("#new-project").click()
@@ -54,6 +54,7 @@ export async function createProject(page: Page, name: string): Promise<void> {
   await page.locator("[data-document]").first().waitFor({ state: "visible", timeout: 15_000 })
   await page.locator("[data-document]").first().click()
   await page.locator(".cm-content").waitFor({ state: "visible", timeout: 15_000 })
+  return uniqueName
 }
 
 /** Click on a project in the sidebar to open it and wait for the editor. */

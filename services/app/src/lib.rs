@@ -74,6 +74,17 @@ fn hash_token(token: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Resolve either the one-time plaintext secret or its list-safe revocation ID
+/// to the hash stored by repositories. Share redemption still calls
+/// `hash_token` directly, so publishing this ID never grants project access.
+fn share_link_deletion_hash(value: &str) -> String {
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        value.to_ascii_lowercase()
+    } else {
+        hash_token(value)
+    }
+}
+
 /// Repository boundary. A durable Postgres adapter can implement this trait without changing
 /// HTTP DTOs. `MemoryRepository` is only the explicitly limited local/test adapter.
 #[async_trait]
@@ -632,11 +643,15 @@ impl Repository for MemoryRepository {
             .iter()
             .filter(|l| l.project_id == project_id)
             .cloned()
+            .map(|mut link| {
+                link.token.clear();
+                link
+            })
             .collect())
     }
     async fn delete_share_link(&self, token: &str) -> Result<(), RepoError> {
         let mut d = self.data.write().await;
-        let h = hash_token(token);
+        let h = share_link_deletion_hash(token);
         let before = d.share_links.len();
         d.share_links.retain(|l| l.token_hash != h);
         if d.share_links.len() == before {
@@ -1225,7 +1240,13 @@ async fn create_document(
             },
             Some(event),
         )
-        .await?;
+        .await
+        .map_err(|error| match error {
+            RepoError::Conflict(_) => {
+                AppError::Conflict("a document with that path already exists".into())
+            }
+            other => AppError::from(other),
+        })?;
     // Save the initial revision (0) so the original content is preserved in
     // the document history timeline.
     s.repo
@@ -1411,15 +1432,15 @@ async fn add_member(
     let role_value = serde_json::to_value(&request.role).unwrap_or_default();
     let membership = state
         .repo
-        .create_membership(ProjectMembership {
+        .upsert_membership(ProjectMembership {
             project_id: project.id,
             subject: request.subject.clone(),
             role: request.role,
             created_at: Utc::now(),
         })
         .await?;
-    // Granting project access is security-sensitive: record who added whom and
-    // with what role (remove_member already audits removals).
+    // Granting or changing project access is security-sensitive: record who
+    // assigned whom which role (remove_member already audits removals).
     audit(
         &state,
         &principal,
@@ -2334,14 +2355,21 @@ async fn delete_share_link(
 ) -> Result<StatusCode, AppError> {
     let p = permitted(&s, &h, Permission::Manage).await?;
     let project = project_for(&s, &pid).await?;
-    // Only the token hash is persisted (migration 0004), so revocation has to
-    // resolve by hashing the raw token — comparing against the listed rows is
-    // always false because stored rows never carry the plaintext token.
-    let link = s
-        .repo
-        .resolve_share_link(&token)
-        .await
-        .map_err(|_| AppError::NotFound)?;
+    // Created links can be revoked with their one-time token; listed/redacted
+    // links use the non-secret hash returned as their revocation identifier.
+    let link = if token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        s.repo
+            .list_share_links(project.id)
+            .await?
+            .into_iter()
+            .find(|link| link.token_hash.eq_ignore_ascii_case(&token))
+            .ok_or(AppError::NotFound)?
+    } else {
+        s.repo
+            .resolve_share_link(&token)
+            .await
+            .map_err(|_| AppError::NotFound)?
+    };
     if link.project_id != project.id {
         return Err(AppError::NotFound);
     }

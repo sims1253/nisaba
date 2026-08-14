@@ -30,7 +30,7 @@ test.describe("Reviewer suggestion workflow", () => {
     const owner = await browser.newContext()
     const ownerPage = await owner.newPage()
     await signIn(ownerPage, { username: "demo", password: "demo", role: "author" })
-    await createProject(ownerPage, "Reviewer Suggestion Test")
+    const projectName = await createProject(ownerPage, "Reviewer Suggestion Test")
     await ownerPage.locator("#share-button").waitFor({ state: "visible", timeout: 10_000 })
     await ownerPage.locator("#share-button").click()
     await ownerPage.locator("#share-subject").waitFor({ state: "visible", timeout: 10_000 })
@@ -42,8 +42,8 @@ test.describe("Reviewer suggestion workflow", () => {
     const reviewer = await browser.newContext()
     const page = await reviewer.newPage()
     await signIn(page, { username: "reviewer", password: "reviewer", role: "reviewer" })
-    await page.locator("[data-project]", { hasText: "Reviewer Suggestion Test" }).first().waitFor({ state: "visible", timeout: 15_000 })
-    await page.locator("[data-project]", { hasText: "Reviewer Suggestion Test" }).first().click()
+    await page.locator("[data-project]", { hasText: projectName }).waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator("[data-project]", { hasText: projectName }).click()
     await page.locator("[data-document]").first().waitFor({ state: "visible", timeout: 15_000 })
     await page.locator("[data-document]").first().click()
     await page.locator(".cm-content").waitFor({ state: "visible", timeout: 15_000 })
@@ -54,6 +54,11 @@ test.describe("Reviewer suggestion workflow", () => {
     // Type a suggestion and wait well past the autosave debounce window.
     await typeInEditor(page, "= A suggested heading")
     await page.waitForTimeout(4000)
+
+    // Text and its review record must reach the relay atomically. Sending the
+    // text commit first makes the reviewer policy reject the update (4003),
+    // disconnects sync, and loses the suggestion on reload.
+    await expect(page.locator("#sync-label")).toContainText("Live")
 
     // The reviewer's local status must NOT be a stuck "Unsaved changes" —
     // suggestions are tracked through the review layer, not the baseline PATCH.
@@ -69,6 +74,34 @@ test.describe("Reviewer suggestion workflow", () => {
     await expect(page.locator("#review-count")).toHaveText(/[1-9]/, { timeout: 10_000 })
     await page.locator("#review-button").click()
     await expect(page.locator(".review-card").first()).toBeVisible({ timeout: 10_000 })
+
+    await page.reload()
+    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({ timeout: 15_000 })
+    // Reload restores the last open project when session state is available;
+    // only navigate from the project screen when the editor was not restored.
+    const restoredProject = page.locator("[data-project]", { hasText: projectName })
+    if (await restoredProject.isVisible()) await restoredProject.click()
+    if (!await page.locator(".cm-content").isVisible()) {
+      await page.locator("[data-document]").first().click()
+      await page.locator(".cm-content").waitFor({ state: "visible", timeout: 15_000 })
+    }
+    await page.locator("#review-button").click()
+    await expect(page.locator(".review-card").filter({ hasText: "A suggested heading" })).toBeVisible({ timeout: 15_000 })
+
+    // The author sees proposed text live, but an unresolved reviewer proposal
+    // must not be autosaved into the authoritative REST baseline.
+    await expect(ownerPage.locator("#review-count")).toHaveText(/[1-9]/, { timeout: 10_000 })
+    const documentId = await ownerPage.locator("[data-document]").first().getAttribute("data-document")
+    await ownerPage.locator("#go-projects").click()
+    const projectId = await ownerPage.locator("[data-project]", { hasText: projectName }).getAttribute("data-project")
+    const baseline = await ownerPage.evaluate(async ({ projectId, documentId }) => {
+      const stored = JSON.parse(localStorage.getItem("nisaba.auth.token") ?? "{}") as { accessToken?: string }
+      const response = await fetch(`/api/projects/${projectId}/documents/${documentId}`, {
+        headers: { authorization: `Bearer ${stored.accessToken ?? ""}` }
+      })
+      return response.json() as Promise<{ body: string }>
+    }, { projectId, documentId })
+    expect(baseline.body).not.toContain("A suggested heading")
 
     await owner.close()
     await reviewer.close()

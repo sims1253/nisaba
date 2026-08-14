@@ -9,6 +9,8 @@
 The local stack runs Keycloak in `start-dev` mode (HTTP, relaxed hostname),
 backed by a dedicated database (`keycloak`) and role inside the shared Postgres
 instance. On first boot it imports `nisaba-realm.json`.
+The small `nisaba` login theme only constrains the oversized development realm
+label on mobile so it cannot cover the sign-in controls.
 
 ## Realm: `nisaba`
 

@@ -11,6 +11,7 @@
   "waitIncrementSeconds": 30,
   "maxFailureWaitSeconds": 900,
   "displayName": "Nisaba - LOCAL DEVELOPMENT ONLY (replace all defaults for production; see deploy/keycloak/README.md)",
+  "loginTheme": "nisaba",
   "roles": {
     "realm": [
       {
