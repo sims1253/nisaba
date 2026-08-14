@@ -863,59 +863,6 @@ async fn document_body(
     Ok(Json(json!({ "body": doc.body })))
 }
 
-async fn materialize_document_body(
-    State(s): State<AppState>,
-    Path(document_id): Path<String>,
-    h: HeaderMap,
-    Json(body): Json<String>,
-) -> Result<StatusCode, AppError> {
-    let value = h
-        .get("authorization")
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    let token = value
-        .to_str()
-        .ok()
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::Unauthorized("bearer token required".into()))?;
-    if !constant_time_token_matches(s.sync_authz_token.as_ref(), token) {
-        return Err(AppError::Forbidden);
-    }
-    let doc_id = id(&document_id)?;
-    let mut doc = s.repo.get_document_by_id(doc_id).await?;
-    validate_body(&body)?;
-    doc.body = body;
-    doc.updated_at = Utc::now();
-    let old_revision = doc.revision;
-    doc.revision += 1;
-    // Record the sync-originated materialization in the audit trail and save
-    // a revision snapshot so the edit history reflects CRDT-materialized text.
-    let audit_event = AuditEvent {
-        id: Uuid::new_v4(),
-        project_id: doc.project_id,
-        actor: "sync".to_string(),
-        action: "materialized".to_string(),
-        resource_type: "document".to_string(),
-        resource_id: doc.id,
-        at: Utc::now(),
-        details: json!({"revision": doc.revision, "source": "crdt_sync"}),
-    };
-    s.repo
-        .save_document_revision(
-            doc.id,
-            doc.project_id,
-            doc.body.clone(),
-            doc.revision,
-            Some("sync".to_string()),
-        )
-        .await
-        .ok();
-    s.repo
-        .update_document(doc, old_revision, Some(audit_event))
-        .await?;
-    Ok(StatusCode::OK)
-}
-
 pub fn router(state: AppState) -> Router {
     let acl_state = state.clone();
     Router::new()
@@ -937,10 +884,6 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/health/ready", get(health_ready))
         .route("/internal/sync/authorize", post(authorize_sync_document))
-        .route(
-            "/internal/document/{document_id}/materialize",
-            post(materialize_document_body),
-        )
         .route("/internal/document/{document_id}/body", get(document_body))
         .route("/api/compile", post(api_compile))
         .route(
