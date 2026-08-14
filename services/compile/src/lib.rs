@@ -329,11 +329,11 @@ async fn compile(
 
     // Opportunistic TTL sweep: drop cache entries that have sat idle past the
     // configured TTL. Runs on every request, cheap (single lock + atomic read).
-    let (new_entry, reused) = {
+    let existing = {
         let mut workers = state.workers.lock().await;
         evict_idle(&mut workers, &state.config);
         // Evict a cached worker whose previous compile timed out: the
-        // underlying thread still holds the worker mutex, so reusing it
+        // underlying task still holds the worker mutex, so reusing it
         // would block the new request until the abandoned compile finishes.
         // Removing it here forces a fresh worker (with its own mutex) below.
         if workers
@@ -344,35 +344,53 @@ async fn compile(
         }
         if let Some(entry) = workers.get(&project_id) {
             entry.touch();
+            Some(Arc::new(entry.clone()))
+        } else {
+            // Reserve room under the lock (LRU eviction when at capacity) and
+            // leave the map WITHOUT building anything: Worker::new parses every
+            // source file and constructs a Typst universe (up to max_sources ×
+            // max_source_bytes of work) — holding the global map lock for that
+            // blocked every compile for every other project.
+            if workers.len() >= state.config.max_workers {
+                evict_lru(&mut workers);
+            }
+            None
+        }
+    };
+
+    let (new_entry, reused) = if let Some(entry) = existing {
+        (entry, true)
+    } else {
+        // Build the new worker with the map lock released (see above).
+        let built = WorkerEntry {
+            worker: Arc::new(StdMutex::new(
+                Worker::new(&request).map_err(internal_error)?,
+            )),
+            last_used: Arc::new(std::sync::atomic::AtomicU64::new(
+                WorkerEntry::now_millis(),
+            )),
+            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        // Double-checked insert: a concurrent first request may have won the
+        // build race (or won it and already timed out) while the lock was
+        // released — use its worker and drop ours.
+        let mut workers = state.workers.lock().await;
+        let raced_poisoned = workers
+            .get(&project_id)
+            .is_some_and(|e| e.poisoned.load(std::sync::atomic::Ordering::Relaxed));
+        if raced_poisoned {
+            workers.remove(&project_id);
+        }
+        if !raced_poisoned
+            && let Some(entry) = workers.get(&project_id)
+        {
+            entry.touch();
             (Arc::new(entry.clone()), true)
         } else {
             if workers.len() >= state.config.max_workers {
                 evict_lru(&mut workers);
             }
-            if workers.len() < state.config.max_workers {
-                // Build outside the map lock. A concurrent first request may
-                // win the insertion race; in that case its worker is used and
-                // this one dropped.
-                let entry = WorkerEntry {
-                    worker: Arc::new(StdMutex::new(
-                        Worker::new(&request).map_err(internal_error)?,
-                    )),
-                    last_used: Arc::new(std::sync::atomic::AtomicU64::new(
-                        WorkerEntry::now_millis(),
-                    )),
-                    poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                };
-                match workers.entry(project_id) {
-                    std::collections::hash_map::Entry::Occupied(entry) => {
-                        entry.get().touch();
-                        (Arc::new(entry.get().clone()), true)
-                    }
-                    std::collections::hash_map::Entry::Vacant(slot) => {
-                        slot.insert(entry.clone());
-                        (Arc::new(entry), false)
-                    }
-                }
-            } else {
+            if workers.len() >= state.config.max_workers {
                 return Err((
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(ErrorResponse {
@@ -380,6 +398,9 @@ async fn compile(
                     }),
                 ));
             }
+            let entry = Arc::new(built);
+            workers.insert(project_id, (*entry).clone());
+            (entry, false)
         }
     };
 
