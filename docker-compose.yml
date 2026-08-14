@@ -282,6 +282,15 @@ services:
       # Reviewer seed verification: app endpoint returning the authoritative
       # document body (empty → deny-all, fail-closed).
       NISABA_SYNC_SEED_VERIFY_URL: ${NISABA_SYNC_SEED_VERIFY_URL:-}
+      # SECURITY (dev default): this makes sync's shared outbound HTTP client
+      # (services/sync/src/http.rs) accept plain http:// for EVERY outbound
+      # call it makes — both the per-document authz call (http://app:8080,
+      # in-cluster and unavoidable without TLS inside Docker) AND the JWKS
+      # refresh from NISABA_SYNC_OIDC_JWKS_URL (http://keycloak:8090). Without
+      # the flag the client is https-only, which is the production posture.
+      # The downgraded traffic never leaves the private Docker networks, but a
+      # real deployment should terminate TLS (e.g. an https issuer + authz URL
+      # behind the reverse proxy) and UNSET this.
       NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME: ${NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:-1}
       # Roles claim path in the JWT. Keycloak's realm-roles mapper emits a
       # top-level "roles" claim; the sync default ("realm_access.roles") will
@@ -337,8 +346,10 @@ services:
         VITE_OIDC_SCOPE: openid profile email
     <<: *common-logging
     depends_on:
-      - app
-      - sync
+      app:
+        condition: service_healthy
+      sync:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-8103}:8080"
     networks: [svc-net]
