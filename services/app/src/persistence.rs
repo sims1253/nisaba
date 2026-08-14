@@ -316,7 +316,7 @@ impl Repository for PostgresRepository {
         .bind(
             subjects
                 .iter()
-                .map(|subject| subject.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<String>>(),
         )
         .fetch_all(&self.pool)

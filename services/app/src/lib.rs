@@ -1022,10 +1022,7 @@ async fn create_project(
         .await?;
     Ok((StatusCode::CREATED, Json(out)))
 }
-async fn list_projects(
-    State(s): State<AppState>,
-    p: Auth,
-) -> Result<Json<Vec<Project>>, AppError> {
+async fn list_projects(State(s): State<AppState>, p: Auth) -> Result<Json<Vec<Project>>, AppError> {
     let principal = p.0;
     permitted(&principal, Permission::Read)?;
     // Match the same sub-then-preferred_username resolution used by
@@ -2159,20 +2156,14 @@ async fn fetch_fulltext(
     blobs: &dyn BlobStore,
     reference_id: Uuid,
 ) -> Result<CoreFullText, FulltextError> {
-    let fulltext = repo
-        .get_fulltext(reference_id)
-        .await
-        .map_err(|e| match e {
-            RepoError::NotFound => FulltextError::Missing,
-            other => FulltextError::Unavailable(other.to_string()),
-        })?;
-    let bytes = blobs
-        .get(reference_id)
-        .await
-        .map_err(|e| match e {
-            RepoError::NotFound => FulltextError::Missing,
-            other => FulltextError::Unavailable(other.to_string()),
-        })?;
+    let fulltext = repo.get_fulltext(reference_id).await.map_err(|e| match e {
+        RepoError::NotFound => FulltextError::Missing,
+        other => FulltextError::Unavailable(other.to_string()),
+    })?;
+    let bytes = blobs.get(reference_id).await.map_err(|e| match e {
+        RepoError::NotFound => FulltextError::Missing,
+        other => FulltextError::Unavailable(other.to_string()),
+    })?;
     if bytes.is_empty() || fulltext.content_type != "application/pdf" {
         return Err(FulltextError::Missing);
     }

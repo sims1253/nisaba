@@ -159,7 +159,7 @@ pub(crate) enum Permission {
     Document,
 }
 impl Permission {
-    /// Whether the principal's IdP roles satisfy this permission tier.
+    /// Whether the principal's `IdP` roles satisfy this permission tier.
     fn allows(self, principal: &Principal) -> bool {
         match self {
             Permission::Read => !principal.roles.is_empty(),
@@ -174,10 +174,7 @@ impl Permission {
 /// Enforce a permission tier against an already-verified principal. The JWT
 /// signature is verified exactly once per request (see [`Auth`]); this only
 /// checks the role claim.
-pub(crate) fn permitted(
-    principal: &Principal,
-    permission: Permission,
-) -> Result<(), AppError> {
+pub(crate) fn permitted(principal: &Principal, permission: Permission) -> Result<(), AppError> {
     if permission.allows(principal) {
         Ok(())
     } else {

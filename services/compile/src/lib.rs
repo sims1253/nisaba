@@ -38,7 +38,7 @@ const DEFAULT_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_SOURCES: usize = 256;
 const DEFAULT_MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 /// Per-compile timeout. COUPLED to the app service's compile HTTP client
-/// (`HttpCompileClient`, services/app/src/compile_client.rs), which gives up
+/// (`HttpCompileClient`, `services/app/src/compile_client.rs`), which gives up
 /// after 150 s: raising this above 150 s via `NISABA_COMPILE_TIMEOUT_MS`
 /// makes clients receive 502s while the abandoned worker still burns a
 /// compile slot. Raise both together.
@@ -371,9 +371,7 @@ async fn compile(
             worker: Arc::new(StdMutex::new(
                 Worker::new(&request).map_err(internal_error)?,
             )),
-            last_used: Arc::new(std::sync::atomic::AtomicU64::new(
-                WorkerEntry::now_millis(),
-            )),
+            last_used: Arc::new(std::sync::atomic::AtomicU64::new(WorkerEntry::now_millis())),
             poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         // Double-checked insert: a concurrent first request may have won the
@@ -386,9 +384,7 @@ async fn compile(
         if raced_poisoned {
             workers.remove(&project_id);
         }
-        if !raced_poisoned
-            && let Some(entry) = workers.get(&project_id)
-        {
+        if !raced_poisoned && let Some(entry) = workers.get(&project_id) {
             entry.touch();
             (Arc::new(entry.clone()), true)
         } else {
