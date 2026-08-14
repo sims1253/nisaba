@@ -411,45 +411,32 @@ async fn compile(
         return Err(internal_error("compile semaphore closed".into()));
     };
     // The global map lock is released before this task starts. The blocking task
-    // takes only this project's lock, so unrelated projects compile concurrently.
-    // Spawn the compile on a dedicated thread and use a
-    // channel to retrieve the result. The semaphore permit stays in this
-    // handler scope (NOT in the thread) so it is dropped when the handler
+    // takes only this project's worker lock, so unrelated projects compile
+    // concurrently. A single spawn_blocking task runs the compile closure
+    // directly — the previous design burned two OS threads per compile (a
+    // dedicated std::thread for the work plus a spawn_blocking task parked on
+    // a channel waiting for it). The semaphore permit stays in this handler
+    // scope (NOT moved into the task) so it is dropped when the handler
     // returns — including on timeout. Previously the permit was moved into
-    // the thread, so a timed-out compile held its slot until the thread
+    // the worker thread, so a timed-out compile held its slot until the thread
     // eventually finished, and 8 such timeouts exhausted every slot,
     // denying the service to all projects.
-    let (tx, rx) = std::sync::mpsc::channel();
     let worker_arc = new_entry.worker.clone();
-    std::thread::spawn(move || {
-        let result = (|| -> Result<CompileResponse, String> {
-            let mut worker = worker_arc
-                .lock()
-                .map_err(|_| "compile worker lock poisoned".to_owned())?;
-            worker.update_sources(&request)?;
-            worker.compile(&request, reused)
-        })();
-        // Result is sent to the channel; if the caller already timed out,
-        // this send fails silently (the receiver was dropped).
-        let _ = tx.send(result);
+    let compile_task = tokio::task::spawn_blocking(move || {
+        let mut worker = worker_arc
+            .lock()
+            .map_err(|_| "compile worker lock poisoned".to_owned())?;
+        worker.update_sources(&request)?;
+        worker.compile(&request, reused)
     });
-    match tokio::time::timeout(
-        state.config.compile_timeout,
-        tokio::task::spawn_blocking(move || {
-            rx.recv()
-                .map_err(|_| "compile worker thread disconnected".to_owned())
-        }),
-    )
-    .await
-    {
-        Ok(Ok(Ok(Ok(response)))) => Ok(Json(response)),
-        Ok(Ok(Ok(Err(error)))) => Err(internal_error(error)),
-        Ok(Ok(Err(error))) => Err(internal_error(format!("compile receiver error: {error}"))),
-        Ok(Err(error)) => Err(internal_error(format!("compile receiver task: {error}"))),
+    match tokio::time::timeout(state.config.compile_timeout, compile_task).await {
+        Ok(Ok(Ok(response))) => Ok(Json(response)),
+        Ok(Ok(Err(error))) => Err(internal_error(error)),
+        Ok(Err(join_error)) => Err(internal_error(format!("compile task failed: {join_error}"))),
         Err(_) => {
             // Mark the cached worker as poisoned so the next request for this
             // project creates a fresh one instead of blocking on the mutex
-            // held by the abandoned thread.
+            // held by the abandoned (still-running) blocking task.
             new_entry
                 .poisoned
                 .store(true, std::sync::atomic::Ordering::Relaxed);
