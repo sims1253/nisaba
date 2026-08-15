@@ -25,7 +25,8 @@ use crate::protocol::CatchUp;
 /// suggestion marks). The web client binds this key (web/src/main.ts), and the
 /// review layer rides in the `review` map container.
 pub const TEXT_CONTAINER: &str = "text";
-/// The container holding the serialized review-item list under the `items` key.
+/// The container holding the review items (one JSON payload per map key,
+/// keyed by item id). The web client binds this key (web/src/review-persistence.ts).
 pub const REVIEW_CONTAINER: &str = "review";
 /// What one inbound update changes in the authority, judged by forking the
 /// authority, applying the update to the fork, and comparing the `text` and
