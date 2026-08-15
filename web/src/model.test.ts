@@ -48,7 +48,7 @@ describe("hybrid allowlist", () => {
     })
 
     it("does not chip a custom template-field call", () => {
-      expect(findConstructs("#custom-field[value]", new Set(["custom-field"]))).toEqual([])
+      expect(findConstructs("#custom-field[value]")).toEqual([])
     })
 
     it("does not mark an incomplete call typed character-by-character", () => {

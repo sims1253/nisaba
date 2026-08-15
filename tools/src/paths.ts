@@ -14,11 +14,6 @@ export function toPosix(p: string): string {
   return p.split(path.sep).join("/");
 }
 
-/** Resolve a path and emit it POSIX-style. */
-export function resolvePosix(p: string): string {
-  return toPosix(path.resolve(p));
-}
-
 /** POSIX-style relative path from `from` to `to`, both absolute. */
 export function relPosix(from: string, to: string): string {
   return toPosix(path.relative(path.resolve(from), path.resolve(to)));
