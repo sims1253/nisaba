@@ -71,7 +71,6 @@ not build identity/login itself.
 
 **Bind address** — resolved in order: `NISABA_SYNC_ADDR` (full `host:port`), then
 `PORT` (bare port, bound on `0.0.0.0`), then the default `0.0.0.0:8080`.
-`NISABA_SYNC_BIND` is accepted as a legacy alias of `NISABA_SYNC_ADDR`.
 
 Environment (connectivity): `NISABA_SYNC_ADDR`, `PORT`, `NISABA_SYNC_DATA_DIR`,
 `NISABA_SYNC_DEV_ALLOW_ALL`, `RUST_LOG`. Authentication variables are listed in
