@@ -158,9 +158,16 @@ impl Project {
         document: Document,
     ) -> &mut ProjectDocument {
         let key = path.clone();
-        self.documents
-            .insert(key.clone(), ProjectDocument::new(path, document));
-        self.documents.get_mut(&key).expect("inserted document")
+        // The entry API stores the value in one step (replacing any previous entry) and
+        // hands back the stored value — no post-insert lookup, no panic path.
+        let value = ProjectDocument::new(path, document);
+        match self.documents.entry(key) {
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                entry.insert(value);
+                entry.into_mut()
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => entry.insert(value),
+        }
     }
 
     /// Find a document by path.

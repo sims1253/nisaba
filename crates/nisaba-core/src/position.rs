@@ -245,7 +245,8 @@ impl TextRange {
         TextRange::point(self.start)
     }
 
-    /// Number of characters spanned. Always `0` for a valid range.
+    /// Number of characters spanned: `0` for an empty range, never negative (an
+    /// inverted range saturates to `0`).
     #[inline]
     #[must_use]
     pub const fn char_len(self) -> u32 {

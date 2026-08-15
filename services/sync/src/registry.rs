@@ -76,18 +76,6 @@ impl DocRegistry {
         &self.access
     }
 
-    /// The configured clock.
-    #[must_use]
-    pub fn clock(&self) -> &Arc<dyn Clock> {
-        &self.clock
-    }
-
-    /// The configured limits.
-    #[must_use]
-    pub fn config(&self) -> &Arc<Config> {
-        &self.config
-    }
-
     /// Get the room for `doc_id`, creating + hydrating it on first access.
     ///
     /// Creating a new room is gated by [`Config::max_rooms`]: once the cap is
@@ -126,12 +114,6 @@ impl DocRegistry {
         );
         let r = self.rooms.entry(doc_id.clone()).or_insert(room);
         Ok(Arc::clone(&r))
-    }
-
-    /// Get an existing room if present.
-    #[must_use]
-    pub fn get(&self, doc_id: &DocId) -> Option<Arc<DocRoom>> {
-        self.rooms.get(doc_id).map(|r| Arc::clone(&r))
     }
 
     /// Number of live rooms.

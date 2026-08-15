@@ -1,6 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { Effect } from "effect"
-import { type AuthTokenService, createPkceAuthorizationRequest, createOidcClient, currentUserDisplayName } from "./auth"
+import {
+  type AuthTokenService,
+  createPkceAuthorizationRequest,
+  createOidcClient,
+  currentUserDisplayName,
+  readStoredToken,
+  refreshAccessToken,
+  scheduleTokenRefresh
+} from "./auth"
 
 describe("OIDC public client", () => {
   it("creates a stateful S256 PKCE request without a client secret", async () => {
@@ -112,5 +120,152 @@ describe("OIDC completeCallback cleanup", () => {
     ))
     expect(failure.message).toMatch(/access_denied/i)
     expect(store["nisaba.oidc.pending"]).toBeUndefined()
+  })
+})
+
+describe("refreshAccessToken", () => {
+  // The jsdom environment used by this suite has no real localStorage (Bun's
+  // node-compat leaves the global undefined), so both storages are stubbed with
+  // in-memory maps — the same approach as the api.test.ts suite.
+  const localStore: Record<string, string> = {}
+  const sessionStore: Record<string, string> = {}
+  const memoryStorage = (store: Record<string, string>): Storage => ({
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, val: string) => { store[key] = val },
+    removeItem: (key: string) => { delete store[key] },
+    clear: () => { for (const key of Object.keys(store)) delete store[key] },
+    key: (index: number) => Object.keys(store)[index] ?? null,
+    get length() { return Object.keys(store).length }
+  })
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_OIDC_ISSUER", "https://id.example/realms/nisaba")
+    vi.stubEnv("VITE_OIDC_CLIENT_ID", "web")
+    vi.stubGlobal("localStorage", memoryStorage(localStore))
+    vi.stubGlobal("sessionStorage", memoryStorage(sessionStore))
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+    for (const key of Object.keys(localStore)) delete localStore[key]
+    for (const key of Object.keys(sessionStore)) delete sessionStore[key]
+  })
+
+  /**
+   * Seeds a stored token the way a completed sign-in would: localStorage (the
+   * channel every read path uses), never sessionStorage.
+   */
+  function seedStoredToken(): void {
+    localStore["nisaba.auth.token"] = JSON.stringify({
+      accessToken: "old-access",
+      refreshToken: "old-refresh",
+      expiresAt: Date.now() + 120_000
+    })
+  }
+
+  it("persists the refreshed token to localStorage (the channel reads use)", async () => {
+    seedStoredToken()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "new-access",
+      expires_in: 300,
+      token_type: "Bearer",
+      refresh_token: "new-refresh"
+    }), { status: 200, headers: { "content-type": "application/json" } }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const token = await refreshAccessToken()
+
+    expect(token?.accessToken).toBe("new-access")
+    expect(token?.refreshToken).toBe("new-refresh")
+    // The refreshed token must be readable through the normal read path: it
+    // lives in localStorage under the shared key (the original bug wrote it to
+    // sessionStorage, so background refresh was a no-op and sessions died at
+    // token expiry).
+    const stored = readStoredToken()
+    expect(stored?.accessToken).toBe("new-access")
+    expect(stored?.refreshToken).toBe("new-refresh")
+    expect(sessionStore["nisaba.auth.token"]).toBeUndefined()
+    // The refresh_token grant carried the refresh token over the wire.
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(String(init.body)).toContain("grant_type=refresh_token")
+    expect(String(init.body)).toContain("refresh_token=old-refresh")
+  })
+
+  it("keeps the previous refresh token when the IdP does not rotate it", async () => {
+    seedStoredToken()
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      access_token: "new-access",
+      expires_in: 300
+    }), { status: 200, headers: { "content-type": "application/json" } })))
+
+    const token = await refreshAccessToken()
+
+    expect(token?.refreshToken).toBe("old-refresh")
+  })
+
+  it("returns undefined and drops the stored token on a failed refresh", async () => {
+    seedStoredToken()
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 400 })))
+
+    const token = await refreshAccessToken()
+
+    expect(token).toBeUndefined()
+    expect(localStore["nisaba.auth.token"]).toBeUndefined()
+  })
+
+  it("re-arms the refresh schedule after a successful refresh", async () => {
+    vi.useFakeTimers()
+    seedStoredToken()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "rotated-access",
+      expires_in: 300,
+      refresh_token: "rotated-refresh"
+    }), { status: 200, headers: { "content-type": "application/json" } }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    // The seeded token expires 120s from now, so the first refresh fires 60s in.
+    scheduleTokenRefresh()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // The refreshed token expires 300s after the first refresh, i.e. another
+    // 240s after the 60s-early mark. If the schedule re-arms (rather than being
+    // one-shot at sign-in), a second refresh fires then.
+    await vi.advanceTimersByTimeAsync(240_000)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(readStoredToken()?.accessToken).toBe("rotated-access")
+  })
+
+  it("spaces refreshes when the IdP issues tokens shorter than the skew window", async () => {
+    vi.useFakeTimers()
+    // Clear any minimum-spacing carry-over from earlier tests (whose fake
+    // clocks can sit ahead of this test's), so the first refresh below is not
+    // itself delayed by the floor.
+    await vi.advanceTimersByTimeAsync(600_000)
+    // The stored token already sits inside the 60s refresh skew window.
+    localStore["nisaba.auth.token"] = JSON.stringify({
+      accessToken: "old-access",
+      refreshToken: "old-refresh",
+      expiresAt: Date.now() + 30_000
+    })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "short-lived",
+      expires_in: 30
+    }), { status: 200, headers: { "content-type": "application/json" } }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    scheduleTokenRefresh()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // The refreshed 30s token is STILL inside the skew window, so the next
+    // refresh must wait out the 30s minimum spacing — without it the
+    // schedule → refresh → schedule chain runs back-to-back with no backoff.
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

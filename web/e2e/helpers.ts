@@ -34,8 +34,10 @@ export async function signIn(page: Page, user: TestUser): Promise<void> {
   await page.locator("#password").fill(user.password)
   await page.getByRole("button", { name: "Sign In" }).click()
 
-  // Wait for redirect back to the app, then for the SPA to process the callback
-  await page.waitForURL("http://127.0.0.1:8103/", { timeout: 15_000 }).catch(() => {})
+  // Wait for redirect back to the app, then for the SPA to process the callback.
+  // Derived from the same E2E_BASE_URL config as BASE_URL (not hardcoded) so an
+  // override doesn't silently mask a wrong redirect target behind this catch.
+  await page.waitForURL(`${BASE_URL}/`, { timeout: 15_000 }).catch(() => {})
   await page.waitForTimeout(3000)
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({ timeout: 10_000 })
 }

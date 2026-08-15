@@ -6,7 +6,6 @@
 
 use std::{
     collections::HashMap,
-    hash::Hash,
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex as StdMutex},
@@ -38,6 +37,11 @@ const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_SOURCES: usize = 256;
 const DEFAULT_MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
+/// Per-compile timeout. COUPLED to the app service's compile HTTP client
+/// (`HttpCompileClient`, `services/app/src/compile_client.rs`), which gives up
+/// after 150 s: raising this above 150 s via `NISABA_COMPILE_TIMEOUT_MS`
+/// makes clients receive 502s while the abandoned worker still burns a
+/// compile slot. Raise both together.
 const DEFAULT_TIMEOUT: Duration = Duration::from_mins(2);
 /// Cap on concurrently cached per-project workers. Once reached, the least
 /// recently used worker is evicted to make room (LRU).
@@ -53,25 +57,10 @@ pub struct CompileRequest {
     project_id: String,
     entry: String,
     sources: HashMap<String, String>,
-    mode: CompileMode,
-    /// An open projection label. The compile service does not interpret it;
-    /// projection happens before this boundary.
+    /// An open projection label. The compile service does not interpret it
+    /// beyond folding it into the per-worker fingerprint; projection happens
+    /// before this boundary.
     view: String,
-    /// Opt-in SVG page frames. Defaults to false because frames are computed
-    /// eagerly for every page and consumed by nobody today.
-    #[serde(default)]
-    include_frames: bool,
-    /// PDF standards to enforce. Defaults to PDF/A-2b when empty.
-    /// This should become a per-project/per-profile lock before production use.
-    #[serde(default)]
-    pdf_standards: Vec<typst_pdf::PdfStandard>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Hash)]
-#[serde(rename_all = "lowercase")]
-enum CompileMode {
-    Document,
-    Full,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +77,26 @@ pub struct ServiceConfig {
     pub worker_idle_ttl: Duration,
     /// Global bound on concurrently running blocking compiles.
     pub max_concurrent_compiles: usize,
+}
+
+impl Default for ServiceConfig {
+    /// The canonical limits, matching `from_env`'s production-mode defaults
+    /// (`NISABA_COMPILE_MODE` unset ⇒ `require_auth: true`, no token). Wiring
+    /// this into a binary fails loudly: `run()` asserts that required auth has
+    /// a token.
+    fn default() -> Self {
+        Self {
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            max_sources: DEFAULT_MAX_SOURCES,
+            max_source_bytes: DEFAULT_MAX_SOURCE_BYTES,
+            compile_timeout: DEFAULT_TIMEOUT,
+            bearer_token: None,
+            require_auth: true,
+            max_workers: DEFAULT_MAX_WORKERS,
+            worker_idle_ttl: DEFAULT_WORKER_IDLE_TTL,
+            max_concurrent_compiles: DEFAULT_MAX_CONCURRENT_COMPILES,
+        }
+    }
 }
 
 impl ServiceConfig {
@@ -124,18 +133,14 @@ impl ServiceConfig {
         })
     }
 
+    /// Test configuration: the defaults plus the intended test delta only (a
+    /// bearer token), so this cannot drift from `ServiceConfig::default()` the
+    /// way the previous field-by-field restatement did.
     #[cfg(test)]
     fn test() -> Self {
         Self {
-            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
-            max_sources: DEFAULT_MAX_SOURCES,
-            max_source_bytes: DEFAULT_MAX_SOURCE_BYTES,
-            compile_timeout: DEFAULT_TIMEOUT,
             bearer_token: Some("test-token".into()),
-            require_auth: true,
-            max_workers: DEFAULT_MAX_WORKERS,
-            worker_idle_ttl: DEFAULT_WORKER_IDLE_TTL,
-            max_concurrent_compiles: DEFAULT_MAX_CONCURRENT_COMPILES,
+            ..ServiceConfig::default()
         }
     }
 }
@@ -329,11 +334,11 @@ async fn compile(
 
     // Opportunistic TTL sweep: drop cache entries that have sat idle past the
     // configured TTL. Runs on every request, cheap (single lock + atomic read).
-    let (new_entry, reused) = {
+    let existing = {
         let mut workers = state.workers.lock().await;
         evict_idle(&mut workers, &state.config);
         // Evict a cached worker whose previous compile timed out: the
-        // underlying thread still holds the worker mutex, so reusing it
+        // underlying task still holds the worker mutex, so reusing it
         // would block the new request until the abandoned compile finishes.
         // Removing it here forces a fresh worker (with its own mutex) below.
         if workers
@@ -344,35 +349,49 @@ async fn compile(
         }
         if let Some(entry) = workers.get(&project_id) {
             entry.touch();
+            Some(Arc::new(entry.clone()))
+        } else {
+            // Reserve room under the lock (LRU eviction when at capacity) and
+            // leave the map WITHOUT building anything: Worker::new parses every
+            // source file and constructs a Typst universe (up to max_sources ×
+            // max_source_bytes of work) — holding the global map lock for that
+            // blocked every compile for every other project.
+            if workers.len() >= state.config.max_workers {
+                evict_lru(&mut workers);
+            }
+            None
+        }
+    };
+
+    let (new_entry, reused) = if let Some(entry) = existing {
+        (entry, true)
+    } else {
+        // Build the new worker with the map lock released (see above).
+        let built = WorkerEntry {
+            worker: Arc::new(StdMutex::new(
+                Worker::new(&request).map_err(internal_error)?,
+            )),
+            last_used: Arc::new(std::sync::atomic::AtomicU64::new(WorkerEntry::now_millis())),
+            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        // Double-checked insert: a concurrent first request may have won the
+        // build race (or won it and already timed out) while the lock was
+        // released — use its worker and drop ours.
+        let mut workers = state.workers.lock().await;
+        let raced_poisoned = workers
+            .get(&project_id)
+            .is_some_and(|e| e.poisoned.load(std::sync::atomic::Ordering::Relaxed));
+        if raced_poisoned {
+            workers.remove(&project_id);
+        }
+        if !raced_poisoned && let Some(entry) = workers.get(&project_id) {
+            entry.touch();
             (Arc::new(entry.clone()), true)
         } else {
             if workers.len() >= state.config.max_workers {
                 evict_lru(&mut workers);
             }
-            if workers.len() < state.config.max_workers {
-                // Build outside the map lock. A concurrent first request may
-                // win the insertion race; in that case its worker is used and
-                // this one dropped.
-                let entry = WorkerEntry {
-                    worker: Arc::new(StdMutex::new(
-                        Worker::new(&request).map_err(internal_error)?,
-                    )),
-                    last_used: Arc::new(std::sync::atomic::AtomicU64::new(
-                        WorkerEntry::now_millis(),
-                    )),
-                    poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                };
-                match workers.entry(project_id) {
-                    std::collections::hash_map::Entry::Occupied(entry) => {
-                        entry.get().touch();
-                        (Arc::new(entry.get().clone()), true)
-                    }
-                    std::collections::hash_map::Entry::Vacant(slot) => {
-                        slot.insert(entry.clone());
-                        (Arc::new(entry), false)
-                    }
-                }
-            } else {
+            if workers.len() >= state.config.max_workers {
                 return Err((
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(ErrorResponse {
@@ -380,6 +399,9 @@ async fn compile(
                     }),
                 ));
             }
+            let entry = Arc::new(built);
+            workers.insert(project_id, (*entry).clone());
+            (entry, false)
         }
     };
 
@@ -390,45 +412,32 @@ async fn compile(
         return Err(internal_error("compile semaphore closed".into()));
     };
     // The global map lock is released before this task starts. The blocking task
-    // takes only this project's lock, so unrelated projects compile concurrently.
-    // Spawn the compile on a dedicated thread and use a
-    // channel to retrieve the result. The semaphore permit stays in this
-    // handler scope (NOT in the thread) so it is dropped when the handler
+    // takes only this project's worker lock, so unrelated projects compile
+    // concurrently. A single spawn_blocking task runs the compile closure
+    // directly — the previous design burned two OS threads per compile (a
+    // dedicated std::thread for the work plus a spawn_blocking task parked on
+    // a channel waiting for it). The semaphore permit stays in this handler
+    // scope (NOT moved into the task) so it is dropped when the handler
     // returns — including on timeout. Previously the permit was moved into
-    // the thread, so a timed-out compile held its slot until the thread
+    // the worker thread, so a timed-out compile held its slot until the thread
     // eventually finished, and 8 such timeouts exhausted every slot,
     // denying the service to all projects.
-    let (tx, rx) = std::sync::mpsc::channel();
     let worker_arc = new_entry.worker.clone();
-    std::thread::spawn(move || {
-        let result = (|| -> Result<CompileResponse, String> {
-            let mut worker = worker_arc
-                .lock()
-                .map_err(|_| "compile worker lock poisoned".to_owned())?;
-            worker.update_sources(&request)?;
-            worker.compile(&request, reused)
-        })();
-        // Result is sent to the channel; if the caller already timed out,
-        // this send fails silently (the receiver was dropped).
-        let _ = tx.send(result);
+    let compile_task = tokio::task::spawn_blocking(move || {
+        let mut worker = worker_arc
+            .lock()
+            .map_err(|_| "compile worker lock poisoned".to_owned())?;
+        worker.update_sources(&request)?;
+        worker.compile(&request, reused)
     });
-    match tokio::time::timeout(
-        state.config.compile_timeout,
-        tokio::task::spawn_blocking(move || {
-            rx.recv()
-                .map_err(|_| "compile worker thread disconnected".to_owned())
-        }),
-    )
-    .await
-    {
-        Ok(Ok(Ok(Ok(response)))) => Ok(Json(response)),
-        Ok(Ok(Ok(Err(error)))) => Err(internal_error(error)),
-        Ok(Ok(Err(error))) => Err(internal_error(format!("compile receiver error: {error}"))),
-        Ok(Err(error)) => Err(internal_error(format!("compile receiver task: {error}"))),
+    match tokio::time::timeout(state.config.compile_timeout, compile_task).await {
+        Ok(Ok(Ok(response))) => Ok(Json(response)),
+        Ok(Ok(Err(error))) => Err(internal_error(error)),
+        Ok(Err(join_error)) => Err(internal_error(format!("compile task failed: {join_error}"))),
         Err(_) => {
             // Mark the cached worker as poisoned so the next request for this
             // project creates a fresh one instead of blocking on the mutex
-            // held by the abandoned thread.
+            // held by the abandoned (still-running) blocking task.
             new_entry
                 .poisoned
                 .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -481,20 +490,10 @@ fn authorized(headers: &HeaderMap, token: Option<&str>) -> bool {
 
 #[cfg(test)]
 fn validate_request(request: &CompileRequest) -> Result<(), String> {
-    validate_request_with_limits(
-        request,
-        &ServiceConfig {
-            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
-            max_sources: DEFAULT_MAX_SOURCES,
-            max_source_bytes: DEFAULT_MAX_SOURCE_BYTES,
-            compile_timeout: DEFAULT_TIMEOUT,
-            bearer_token: None,
-            require_auth: false,
-            max_workers: DEFAULT_MAX_WORKERS,
-            worker_idle_ttl: DEFAULT_WORKER_IDLE_TTL,
-            max_concurrent_compiles: DEFAULT_MAX_CONCURRENT_COMPILES,
-        },
-    )
+    // Only the limit fields matter to validation; the defaults are the
+    // canonical values (previously restated field-by-field, drifting from
+    // ServiceConfig::default()).
+    validate_request_with_limits(request, &ServiceConfig::default())
 }
 
 fn validate_request_with_limits(
@@ -532,6 +531,12 @@ fn validate_request_with_limits(
 }
 
 fn validate_virtual_path(value: &str) -> Result<(), String> {
+    // Deliberately laxer than the app service's valid_document_path
+    // (services/app/src/lib.rs): this guards only the compile service's
+    // per-request virtual filesystem, so `.` segments are tolerated and `..`
+    // is allowed as long as it never climbs above the root. The app rejects
+    // `.`/`..` and control characters as well because stored document paths
+    // are user-facing identifiers; the divergence is intentional.
     let path = Path::new(value);
     if value.is_empty() || path.is_absolute() || value.contains('\\') {
         return Err(format!("invalid virtual path: {value:?}"));
@@ -647,8 +652,8 @@ impl Worker {
         let world = self.universe.snapshot();
         // A single `typst::compile` call: Typst runs its own internal
         // convergence loop (up to 5 passes via comemo constraints), so an outer
-        // loop with full-document hashing here is pure waste — it multiplied
-        // compile time by up to 5x for `full` mode without changing the output.
+        // loop with full-document hashing here is pure waste — an earlier version
+        // multiplied compile time by up to 5x without changing the output.
         let compiled = typst::compile::<PagedDocument>(&world);
         let diagnostics = compiled
             .warnings
@@ -685,15 +690,11 @@ impl Worker {
         };
         let compile_ms = started.elapsed().as_millis();
         let pdf_started = Instant::now();
-        // Set an explicit PDF standard. Defaults to PDF/A-2b
-        // when no standards are specified by the request.
-        let standards = if request.pdf_standards.is_empty() {
-            typst_pdf::PdfStandards::new(&[typst_pdf::PdfStandard::A_2b])
-                .map_err(|e| format!("invalid PDF standards combination: {e:?}"))?
-        } else {
-            typst_pdf::PdfStandards::new(&request.pdf_standards)
-                .map_err(|e| format!("invalid PDF standards combination: {e:?}"))?
-        };
+        // The service always emits PDF/A-2b (the archival profile the export
+        // contract requires). Making this per-project/per-profile is future
+        // work; the old request field for it was never sent by any client.
+        let standards = typst_pdf::PdfStandards::new(&[typst_pdf::PdfStandard::A_2b])
+            .map_err(|e| format!("invalid PDF standards combination: {e:?}"))?;
         let pdf = match typst_pdf::pdf(
             &document,
             &typst_pdf::PdfOptions {
@@ -730,21 +731,12 @@ impl Worker {
             }
         };
         let pdf_ms = pdf_started.elapsed().as_millis();
-        let svg_started = Instant::now();
-        let frames = if request.include_frames {
-            document
-                .pages()
-                .iter()
-                .enumerate()
-                .map(|(page, page_data)| Frame {
-                    page: page + 1,
-                    svg: typst_svg::svg(page_data, &typst_svg::SvgOptions::default()),
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let svg_ms = svg_started.elapsed().as_millis();
+        // SVG page frames are not computed: they were eagerly rendered for
+        // every page and consumed by no client (the old opt-in request flag
+        // defaulted off everywhere). The response field stays for schema
+        // compatibility and is always empty.
+        let svg_ms = 0u128;
+        let frames = Vec::new();
         let mut result = CompileResponse {
             pdf: Some(BASE64.encode(pdf)),
             frames,
@@ -772,7 +764,6 @@ impl Worker {
             worker_reused = reused,
             "compile completed"
         );
-        let _ = request.view;
         Ok(result)
     }
 }
@@ -979,7 +970,6 @@ fn fingerprint(request: &CompileRequest) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     request.entry.hash(&mut hasher);
-    request.mode.hash(&mut hasher);
     request.view.hash(&mut hasher);
     let mut sources = request.sources.iter().collect::<Vec<_>>();
     sources.sort_by(|a, b| a.0.cmp(b.0));
@@ -1052,10 +1042,7 @@ mod tests {
             project_id: "p".into(),
             entry: "main.typ".into(),
             sources: HashMap::from([(String::from("main.typ"), source.into())]),
-            mode: CompileMode::Document,
             view: "public".into(),
-            include_frames: true,
-            pdf_standards: vec![],
         }
     }
 
@@ -1075,68 +1062,14 @@ mod tests {
             .expect("compile");
         let pdf = BASE64.decode(response.pdf.expect("pdf")).expect("base64");
         assert!(pdf.starts_with(b"%PDF-"));
-        assert_eq!(response.frames.len(), 1);
+        assert!(response.frames.is_empty());
         assert!(response.outline.iter().any(|entry| entry.title == "Hello"));
     }
 
     #[test]
-    fn frames_are_empty_by_default() {
-        let mut worker = Worker::new(&CompileRequest {
-            project_id: "p".into(),
-            entry: "main.typ".into(),
-            sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-            mode: CompileMode::Document,
-            view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
-        })
-        .expect("worker");
-        let response = worker
-            .compile(
-                &CompileRequest {
-                    project_id: "p".into(),
-                    entry: "main.typ".into(),
-                    sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-                    mode: CompileMode::Document,
-                    view: "public".into(),
-                    include_frames: false,
-                    pdf_standards: vec![],
-                },
-                false,
-            )
-            .expect("compile");
-        assert!(
-            response.frames.is_empty(),
-            "frames should be empty when include_frames is false"
-        );
-    }
-
-    #[test]
     fn pdf_defaults_to_a2b_standard() {
-        let mut worker = Worker::new(&CompileRequest {
-            project_id: "p".into(),
-            entry: "main.typ".into(),
-            sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-            mode: CompileMode::Document,
-            view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
-        })
-        .expect("worker");
-        let response = worker
-            .compile(
-                &CompileRequest {
-                    project_id: "p".into(),
-                    entry: "main.typ".into(),
-                    sources: HashMap::from([(String::from("main.typ"), "= Hello".into())]),
-                    mode: CompileMode::Document,
-                    view: "public".into(),
-                    include_frames: false,
-                    pdf_standards: vec![],
-                },
-                false,
-            )
-            .expect("compile");
+        let mut worker = Worker::new(&request("= Hello")).expect("worker");
+        let response = worker.compile(&request("= Hello"), false).expect("compile");
         let pdf = BASE64.decode(response.pdf.expect("pdf")).expect("base64");
         assert!(pdf.starts_with(b"%PDF-"));
     }
@@ -1147,36 +1080,9 @@ mod tests {
     /// dictionary entries.
     #[test]
     fn pdf_embeds_fonts() {
-        let mut worker = Worker::new(&CompileRequest {
-            project_id: "p".into(),
-            entry: "main.typ".into(),
-            sources: HashMap::from([(
-                String::from("main.typ"),
-                "= Font Embedding Test\nThis text requires a font.".into(),
-            )]),
-            mode: CompileMode::Document,
-            view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
-        })
-        .expect("worker");
-        let response = worker
-            .compile(
-                &CompileRequest {
-                    project_id: "p".into(),
-                    entry: "main.typ".into(),
-                    sources: HashMap::from([(
-                        String::from("main.typ"),
-                        "= Font Embedding Test\nThis text requires a font.".into(),
-                    )]),
-                    mode: CompileMode::Document,
-                    view: "public".into(),
-                    include_frames: false,
-                    pdf_standards: vec![],
-                },
-                false,
-            )
-            .expect("compile");
+        let source = "= Font Embedding Test\nThis text requires a font.";
+        let mut worker = Worker::new(&request(source)).expect("worker");
+        let response = worker.compile(&request(source), false).expect("compile");
         let pdf = BASE64.decode(response.pdf.expect("pdf")).expect("base64");
 
         // A valid PDF with embedded fonts contains font resource entries.
@@ -1320,20 +1226,14 @@ mod tests {
             project_id: "p".into(),
             entry: "documents/a.typ".into(),
             sources: HashMap::from([(String::from("documents/a.typ"), "= Document A".into())]),
-            mode: CompileMode::Document,
             view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
         })
         .expect("worker");
         let second = CompileRequest {
             project_id: "p".into(),
             entry: "documents/b.typ".into(),
             sources: HashMap::from([(String::from("documents/b.typ"), "= Document B".into())]),
-            mode: CompileMode::Document,
             view: "public".into(),
-            include_frames: false,
-            pdf_standards: vec![],
         };
         worker.update_sources(&second).expect("re-root");
         assert_eq!(worker.known_entry, "documents/b.typ");
@@ -1402,7 +1302,6 @@ mod tests {
             "project_id": project_id,
             "entry": "main.typ",
             "sources": {"main.typ": source},
-            "mode": "document",
             "view": view
         })
     }
@@ -1524,7 +1423,6 @@ mod tests {
             "project_id": "limits",
             "entry": "main.typ",
             "sources": {"main.typ": "ok", "other.typ": "x"},
-            "mode": "document",
             "view": "public"
         });
         assert_eq!(

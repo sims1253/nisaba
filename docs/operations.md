@@ -2,8 +2,10 @@
 
 Day-2 operations for the Nisaba stack: bring-up, health, observability,
 backup/restore, and the production deltas. Pairs with
-[`security.md`](security.md) (least privilege) and [`architecture.md`](architecture.md)
-(service contracts).
+[`security.md`](security.md) (least privilege), [`architecture.md`](architecture.md)
+(service contracts), [`deployment.md`](deployment.md) (the self-hosting
+walkthrough built on the §5 deltas), and
+[`configuration.md`](configuration.md) (the environment-variable reference).
 
 > **Status:** the local infrastructure and application tiers, health probes, and
 > backup scripts run today. Metrics/OTLP export, high-availability deployment, and the
@@ -22,6 +24,7 @@ just up                        # Postgres + SeaweedFS + Keycloak (+ seaweedfs-in
 just compose-validate          # validate compose against .env.example (temp env)
 just smoke                     # bring up infra, probe health + realm, tear down
 docker compose ps
+open http://127.0.0.1:8103     # Nisaba web (sign in: demo / demo)
 open http://127.0.0.1:8090     # Keycloak admin (admin / <KEYCLOAK_ADMIN_PASSWORD>)
 open http://127.0.0.1:9100     # SeaweedFS S3 endpoint (<NISABA_S3_ADMIN_KEY>)
 
@@ -34,7 +37,8 @@ just e2e                        # full app-profile smoke: build images, dev toke
 Run the local CI-equivalent checks:
 
 ```bash
-just ci-local     # fmt-check, clippy, test, deny, audit, verify, web-test
+just ci-local     # fmt-check, clippy, test (incl. doctests), deny, audit,
+                  # verify, web-install, web-test, web-lint, web-build
 ```
 
 ---
@@ -56,8 +60,8 @@ Every HTTP service exposes **`GET /healthz` → `200 ok`** (the Compose
 
 `/healthz` is a **liveness** probe. The app readiness endpoint performs a PostgreSQL
 check, while sync verifies that its configured persistence directory is writable. App readiness
-does not currently probe S3, and compile exposes liveness only; production orchestration should
-not infer those untested dependencies are healthy.
+does not currently probe S3, and compile exposes liveness only; a passing readiness check does not show
+that S3 is healthy (app) or anything beyond liveness (compile).
 
 For the app/sync collaboration path, configure the same non-empty
 `NISABA_SYNC_AUTHZ_TOKEN` in both containers. Production app startup rejects a
@@ -68,8 +72,9 @@ but the internal authorization endpoint remains deny-all.
 
 ## 3. Observability plan
 
-Three signals, all opt-in via environment (wired in `.env.example`; exporters
-ship with the services, not the infra):
+Three signals. Logging is implemented today; metrics and tracing are planned.
+The `OTEL_*` variables in `.env.example` are **reserved** — no service ships an
+OTLP exporter or a `/metrics` endpoint yet:
 
 ### Logs
 - Structured (`tracing`/`tracing-subscriber` in Rust; `RUST_LOG` controls
@@ -153,7 +158,9 @@ checks row/object counts — schedule it as part of release acceptance.
 
 ## 5. Production deployment deltas
 
-The local Compose stack is deliberately close to production shape; the deltas:
+The local Compose stack is deliberately close to production shape; the deltas
+below are turned into a step-by-step self-hosting guide (TLS, secrets,
+Keycloak, upgrade/rollback) in [`deployment.md`](deployment.md):
 
 | Concern            | Local                                   | Production                          |
 |--------------------|-----------------------------------------|-------------------------------------|
@@ -205,8 +212,8 @@ mode is gradual and visible, not sudden.
 
 ## 7. Things deliberately deferred (do not regress into building them)
 
-The complexity budget freed by the proportional performance bar
-goes to references, review and templates — **not** to these:
+The complexity budget freed by the quality bar in
+[`PLAN.md`](../PLAN.md) goes to references, review and templates — **not** to these:
 
 - Cached cross-reference index + staleness flag for document previews.
 - Local WASM browser preview (a latency optimisation against Word, the baseline).

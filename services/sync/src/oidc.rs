@@ -683,12 +683,6 @@ impl OidcAccessResolver {
             tokens,
         }
     }
-
-    /// The shared JWKS cache (so the binary can attach a refresher).
-    #[must_use]
-    pub fn jwks(&self) -> &Arc<JwksCache> {
-        &self.jwks
-    }
 }
 
 #[async_trait]
@@ -718,12 +712,11 @@ impl AccessResolver for OidcAccessResolver {
 mod tests {
     use super::*;
     use crate::config::DocId;
-    use crate::http::{HttpFetch, HttpFetchError, HttpMethod, HttpRequest, HttpResponse};
+    use crate::http::{HttpFetch, HttpFetchError, HttpRequest, HttpResponse};
     use crate::time::ManualClock;
     use jsonwebtoken::jwk::{AlgorithmParameters, CommonParameters, Jwk, OctetKeyParameters};
     use jsonwebtoken::{EncodingKey, Header};
     use serde_json::json;
-    use std::collections::HashMap;
 
     const ISSUER: &str = "https://idp.example/realms/nisaba";
     const AUDIENCE: &str = "nisaba-sync";
@@ -1253,11 +1246,4 @@ mod tests {
             }
         }
     }
-
-    // Silence unused `HashMap` import in non-test mock state if the compiler
-    // ever trims it; keeps the test file self-contained.
-    const _: fn() = || {
-        let _: HashMap<String, String>;
-    };
-    const _: fn(HttpMethod) -> () = |_| ();
 }

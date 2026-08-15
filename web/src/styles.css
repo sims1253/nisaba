@@ -393,13 +393,6 @@ body:not(.has-project) .appbar-tools { display: none }
 .tree-row-wrap .btn-icon { opacity: 0; flex: 0 0 auto; width: 20px; height: 20px; font-size: 14px }
 .tree-row-wrap:hover .btn-icon, .tree-row-wrap:focus-within .btn-icon { opacity: 1 }
 
-.tree-add {
-  width: 100%; display: flex; align-items: center; gap: 6px;
-  border: 0; background: none; cursor: pointer; text-align: left;
-  padding: 5px 10px 5px 12px; color: var(--accent); font-size: 12px;
-}
-.tree-add:hover { background: var(--accent-soft) }
-
 /* --- section outline --------------------------------------------------- */
 
 .outline-row {
@@ -884,8 +877,7 @@ body:not(.has-project) .appbar-tools { display: none }
 }
 .drawer-tabs .tab .n[data-tone="error"] { background: var(--delete) }
 .drawer-tabs .tab .n[data-tone="warn"] { background: var(--comment) }
-.drawer-summary { margin-left: auto; padding: 0 10px; font: 10px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
-.drawer-tabs .btn-icon { margin-right: 4px }
+.drawer-tabs .btn-icon { margin-left: auto; margin-right: 4px }
 .drawer-body { flex: 1; min-height: 0; overflow: auto; background: var(--paper) }
 
 .problem {

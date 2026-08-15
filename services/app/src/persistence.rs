@@ -9,10 +9,28 @@ use super::*;
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use sqlx::{
     PgPool, Row,
-    postgres::{PgPoolOptions, PgRow},
+    postgres::{PgPoolOptions, PgRow, PgTransaction},
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
+
+/// Append one audit event inside a transaction. Every audited repository
+/// method shares this INSERT (it was copy-pasted at each call site).
+async fn insert_audit(tx: &mut PgTransaction<'_>, event: &AuditEvent) -> Result<(), RepoError> {
+    sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
+        .bind(event.id)
+        .bind(event.project_id)
+        .bind(&event.actor)
+        .bind(&event.action)
+        .bind(&event.resource_type)
+        .bind(event.resource_id)
+        .bind(event.at)
+        .bind(&event.details)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    Ok(())
+}
 
 fn db_error(error: sqlx::Error) -> RepoError {
     if let sqlx::Error::Database(e) = &error {
@@ -185,7 +203,7 @@ impl Repository for PostgresRepository {
             .await
             .map_err(db_error)?;
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(v)
@@ -288,6 +306,33 @@ impl Repository for PostgresRepository {
             })
             .collect()
     }
+    async fn list_memberships_for_subjects(
+        &self,
+        subjects: &[&str],
+    ) -> Result<Vec<ProjectMembership>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT project_id, subject, role, created_at FROM project_memberships WHERE subject = ANY($1) ORDER BY subject",
+        )
+        .bind(
+            subjects
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<String>>(),
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        rows.iter()
+            .map(|r| {
+                Ok(ProjectMembership {
+                    project_id: r.try_get("project_id").map_err(db_error)?,
+                    subject: r.try_get("subject").map_err(db_error)?,
+                    role: role(r.try_get::<String, _>("role").map_err(db_error)?.as_str())?,
+                    created_at: r.try_get("created_at").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
     async fn update_project(
         &self,
         v: Project,
@@ -306,7 +351,7 @@ impl Repository for PostgresRepository {
             return Err(RepoError::NotFound);
         }
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(v)
@@ -320,7 +365,7 @@ impl Repository for PostgresRepository {
         // misleading 404 while the project survives. Inserting first, then
         // deleting, keeps both changes atomic and lets the cascade clean up.
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         let n = sqlx::query("DELETE FROM projects WHERE id=$1")
             .bind(id)
@@ -342,7 +387,7 @@ impl Repository for PostgresRepository {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
         sqlx::query("INSERT INTO documents (id,project_id,path,title,body,data,revision,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(v.id).bind(v.project_id).bind(&v.path).bind(&v.title).bind(&v.body).bind(serde_json::to_value(&v.data).map_err(json_error)?).bind(i64::try_from(v.revision).map_err(|_|RepoError::Failure("revision overflow".into()))?).bind(v.updated_at).execute(&mut *tx).await.map_err(db_error)?;
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(v)
@@ -392,7 +437,7 @@ impl Repository for PostgresRepository {
             });
         }
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(v)
@@ -413,7 +458,7 @@ impl Repository for PostgresRepository {
             return Err(RepoError::NotFound);
         }
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(())
@@ -426,7 +471,7 @@ impl Repository for PostgresRepository {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
         sqlx::query("INSERT INTO reference_entries (id,project_id,metadata,provenance,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(v.id).bind(v.project_id).bind(serde_json::to_value(&v.metadata).map_err(json_error)?).bind(v.provenance.as_ref().map(|x|serde_json::to_value(x)).transpose().map_err(json_error)?).bind(v.created_at).bind(v.updated_at).execute(&mut *tx).await.map_err(db_error)?;
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(v)
@@ -464,7 +509,7 @@ impl Repository for PostgresRepository {
             return Err(RepoError::NotFound);
         }
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(v)
@@ -481,7 +526,7 @@ impl Repository for PostgresRepository {
             return Err(RepoError::NotFound);
         }
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(())
@@ -520,7 +565,7 @@ impl Repository for PostgresRepository {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
         sqlx::query("INSERT INTO fulltexts (reference_id,blob_ref,filename,content_type,size_bytes,checksum_sha256,uploaded_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (reference_id) DO UPDATE SET blob_ref=EXCLUDED.blob_ref,filename=EXCLUDED.filename,content_type=EXCLUDED.content_type,size_bytes=EXCLUDED.size_bytes,checksum_sha256=EXCLUDED.checksum_sha256,uploaded_at=EXCLUDED.uploaded_at").bind(v.reference_id).bind(&v.blob_ref).bind(&v.filename).bind(&v.content_type).bind(i64::try_from(v.size_bytes).map_err(|_|RepoError::Failure("blob size overflow".into()))?).bind(&v.checksum_sha256).bind(v.uploaded_at).execute(&mut *tx).await.map_err(db_error)?;
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(v)
@@ -537,13 +582,15 @@ impl Repository for PostgresRepository {
             return Err(RepoError::NotFound);
         }
         if let Some(event) = &audit {
-            sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(event.id).bind(event.project_id).bind(&event.actor).bind(&event.action).bind(&event.resource_type).bind(event.resource_id).bind(event.at).bind(&event.details).execute(&mut *tx).await.map_err(db_error)?;
+            insert_audit(&mut tx, event).await?;
         }
         tx.commit().await.map_err(db_error)?;
         Ok(())
     }
     async fn append_audit(&self, v: AuditEvent) -> Result<AuditEvent, RepoError> {
-        sqlx::query("INSERT INTO audit_events (id,project_id,actor,action,resource_type,resource_id,at,details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(v.id).bind(v.project_id).bind(&v.actor).bind(&v.action).bind(&v.resource_type).bind(v.resource_id).bind(v.at).bind(&v.details).execute(&self.pool).await.map_err(db_error)?;
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        insert_audit(&mut tx, &v).await?;
+        tx.commit().await.map_err(db_error)?;
         Ok(v)
     }
     async fn list_audit(&self, p: Uuid) -> Result<Vec<AuditEvent>, RepoError> {

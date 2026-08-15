@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { EditorView, WidgetType } from "@codemirror/view"
-import { constructAt, findConstructs } from "./model"
+import { findConstructs } from "./model"
 
 // The list/citation widgets ignore the `view` argument to toDOM; a bare object is
 // enough to satisfy the type and let the widget build its DOM in jsdom.
@@ -145,22 +145,14 @@ describe("hybrid allowlist", () => {
     })
   })
 
-  describe("constructAt", () => {
-    it("finds the construct at a given position", () => {
-      const found = findConstructs("*bold* text")
-      expect(constructAt(found, 2)?.kind).toBe("strong")
-    })
-
-    it("returns undefined outside any construct", () => {
-      const found = findConstructs("*bold* text")
-      expect(constructAt(found, 7)).toBeUndefined()
-    })
-
-    it("returns the outermost construct at a boundary", () => {
+  describe("construct ordering (the property main.ts's inline lookup relies on)", () => {
+    it("sorts constructs outer-first for equal `from`", () => {
+      // main.ts looks up "the construct at the cursor" with a plain
+      // .find((item) => head >= item.from && head <= item.to), so the FIRST
+      // construct covering a position must be the outermost one.
       const found = findConstructs("#figure(table(columns: 2, [a], [b]))")
-      // At the opening position, the outer (figure) should be returned first
-      // because constructs are sorted outer-first for equal `from`.
-      expect(constructAt(found, 0)?.kind).toBe("figure")
+      expect(found[0]?.kind).toBe("figure")
+      expect(found.map((item) => item.from)).toEqual(found.map((item) => item.from).sort((a, b) => a - b))
     })
   })
 

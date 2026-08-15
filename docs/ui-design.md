@@ -37,7 +37,7 @@ secondary metadata (tooltips, the history and build surfaces).
 
 | Domain term | UI label | Why |
 |---|---|---|
-| compile | **Update preview** | Writers do not compile. They want the page to catch up. The keyboard hint `⌘↵` is on the button; the tooltip still says "compile". |
+| compile | **Update preview** | Writers do not compile. They want the page to catch up. The keyboard hint `⌘⏎` is on the button; the tooltip still says "compile". |
 | diagnostics | **Problems** | Plain word for "the thing that is wrong on line 12". |
 | build / build id | **Preview** / shown as `#41` in the build drawer only | Build identity matters for provenance, not for drafting. |
 | checkpoint | **version** (History), `c128` shown as metadata | "Restore version from 12:04" reads; "restore checkpoint c128" does not. |
@@ -61,7 +61,7 @@ its backbone is correct for a compile-based writing tool:
 * files on the left, source in the middle, rendered page on the right;
 * one primary action that refreshes the page;
 * review threads docked beside the text, never on top of it;
-* `⌘↵` compiles, click-through between page and source.
+* `⌘⏎` compiles, click-through between page and source.
 
 That backbone is kept. What is reworked is everything Overleaf does *not* have to solve
 and the current Nisaba client solved badly. The mock review ([`ui-mocks/README.md`](ui-mocks/README.md))
@@ -223,7 +223,7 @@ build state it produces.
 *Goal: fix the error that stopped the page from rendering.*
 
 * The primary action is **Update preview** in the status bar, beside the build health it
-  affects. `⌘↵` and `⌘S` both trigger it (`⌘S` saves first — a writer pressing `⌘S` expects
+  affects. `⌘⏎` and `⌘S` both trigger it (`⌘S` saves first — a writer pressing `⌘S` expects
   both).
 * Errors and warnings live in the **build drawer**: a bottom strip with `Problems N` and
   `Log` tabs. It opens itself when a build fails and can be pinned open. Each problem shows
@@ -351,12 +351,12 @@ only carrier of meaning — insertions are underlined, deletions struck, comment
 | Key | Action | Scope |
 |---|---|---|
 | `⌘K` / `Ctrl K` | Command palette | Global |
-| `⌘↵` | Update preview | Global |
+| `⌘⏎` | Update preview | Global |
 | `⌘S` | Save, then update preview | Global |
 | `⌘⇧F` | Focus mode | Global |
 | `⌘⇧R` | Review dock | Global |
 | `⌘B` | Navigator | Global |
-| `⌘=` / `⌘-` | Zoom the preview | Global |
+| `⌘=` / `⌘−` | Zoom the preview | Global |
 | `↑` `↓` `Enter` `A` `R` `C` `Esc` | Triage the review queue | Review dock only |
 | `Esc` | Close the palette, popover, or dock | Contextual |
 

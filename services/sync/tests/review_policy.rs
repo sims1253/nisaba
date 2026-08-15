@@ -140,7 +140,10 @@ async fn reviewer_combined_text_and_review_update_is_accepted() {
     rev.connect(&room, &[]).await;
     rev.drain();
     rev.doc.get_text("text").insert(4, " suggested").unwrap();
-    rev.set_review(r#"[{"id":"r1","kind":"suggestion","change":"insert","text":" suggested","status":"open"}]"#);
+    rev.set_review(&[(
+        "r1",
+        r#"{"id":"r1","kind":"suggestion","change":"insert","text":" suggested","status":"open"}"#,
+    )]);
     // set_review commits; the text insert above is in the same auto-commit
     // transaction, so the first captured update carries both changes.
     rev.submit_first(&room)
@@ -153,19 +156,41 @@ async fn reviewer_combined_text_and_review_update_is_accepted() {
 }
 
 #[tokio::test]
+async fn reviewer_review_only_update_is_accepted() {
+    let room = room_with_verifier(vec![], false).await;
+    let mut rev = SimPeer::new(1, Role::Reviewer);
+    rev.connect(&room, &[]).await;
+    rev.set_review(&[(
+        "r0",
+        r#"{"id":"r0","kind":"comment","from":0,"to":1,"body":"note","author":"rev","status":"open"}"#,
+    )]);
+    rev.submit_result(&room)
+        .await
+        .expect("review-only update accepted");
+    assert!(rev.review_entry("r0").is_some());
+}
+
+#[tokio::test]
 async fn reviewer_first_suggestion_in_empty_room_is_accepted() {
+    // Regression (e2e, 2026-08-15): the web client persists review items as
+    // one JSON item per map key. Detecting review changes by reading one
+    // specific key missed the review half of the combined suggestion update,
+    // classified it as a bare text edit in an empty room, and rejected it as
+    // a mismatched seed — disconnecting every reviewer on their first
+    // suggestion. The empty verifier allow-list guarantees this test fails
+    // if the seed branch is ever taken for a combined update.
     let room = room_with_verifier(vec![], false).await;
     let mut rev = SimPeer::new(3, Role::Reviewer);
     rev.connect(&room, &[]).await;
     rev.drain();
     rev.doc.get_text("text").insert(0, "suggested").unwrap();
-    rev.set_review(
-        r#"[{"id":"r1","kind":"suggestion","change":"insert","text":"suggested","status":"open"}]"#,
-    );
-
+    rev.set_review(&[(
+        "r1",
+        r#"{"id":"r1","kind":"suggestion","change":"insert","text":"suggested","status":"open"}"#,
+    )]);
     rev.submit_first(&room)
         .await
-        .expect("combined first suggestion accepted");
+        .expect("combined suggestion accepted without seed verification");
     assert_eq!(
         room.authority().inner().get_text("text").to_string(),
         "suggested"
@@ -173,13 +198,34 @@ async fn reviewer_first_suggestion_in_empty_room_is_accepted() {
 }
 
 #[tokio::test]
-async fn reviewer_review_only_update_is_accepted() {
+async fn reviewer_review_write_opens_the_text_window() {
+    // The separate-frame suggestion flow: the review frame must open the
+    // peer's review window so the FOLLOW-UP text-only frame is accepted (the
+    // e2e overlap failure: the owner never saw the reviewer's suggestion
+    // because the text frame was rejected as uncorrelated).
     let room = room_with_verifier(vec![], false).await;
-    let mut rev = SimPeer::new(1, Role::Reviewer);
+    let mut author = SimPeer::new(2, Role::Author);
+    author.connect(&room, &[]).await;
+    author.insert(0, "base");
+    author.submit(&room).await;
+
+    let mut rev = SimPeer::new(3, Role::Reviewer);
     rev.connect(&room, &[]).await;
-    rev.set_review(r"[]");
+    rev.drain();
+    // Frame 1: a review-only write (one JSON item per map key).
+    rev.set_review(&[(
+        "r1",
+        r#"{"id":"r1","kind":"suggestion","change":"insert","text":" more","status":"open"}"#,
+    )]);
+    rev.submit_result(&room).await.expect("review-only frame");
+    // Frame 2: the text the suggestion annotates, as its own update.
+    rev.doc.get_text("text").insert(4, " more").unwrap();
+    rev.doc.commit();
     rev.submit_result(&room)
         .await
-        .expect("review-only update accepted");
-    assert!(rev.review_items().is_some());
+        .expect("text frame within the review window");
+    assert_eq!(
+        room.authority().inner().get_text("text").to_string(),
+        "base more"
+    );
 }

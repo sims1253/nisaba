@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(Config::default());
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
-    let access = build_access_resolver(clock.clone())?;
+    let (access, jwks) = build_access_resolver(clock.clone())?;
     let seed_verifier = build_seed_verifier()?;
 
     let registry = DocRegistry::with_seed_verifier(
@@ -68,7 +68,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         access,
         seed_verifier,
     );
-    let router = nisaba_sync::server::build(registry.clone(), config.clone());
+    // Readiness is wired with whatever the runtime actually depends on: the
+    // JWKS cache when OIDC is configured (empty/stale keys mean every token
+    // check fails closed), and the data dir the durable stores live under.
+    let readiness = nisaba_sync::server::Readiness {
+        jwks,
+        data_dir: Some(data_dir),
+    };
+    let router =
+        nisaba_sync::server::build_with_readiness(registry.clone(), config.clone(), readiness);
 
     let interval = nisaba_sync::server::maintenance_interval(&config);
     spawn_maintenance(registry.clone(), interval);
@@ -125,16 +133,21 @@ fn build_seed_verifier() -> Result<Arc<dyn SeedVerifier>, Box<dyn std::error::Er
 /// silent fall-through to deny-all would hide the mistake.
 ///
 /// `clock` is shared with the [`DocRegistry`] (presence TTL); the JWKS
-/// freshness bookkeeping reuses it.
+/// freshness bookkeeping reuses it. Returns the access resolver plus the JWKS
+/// cache when the OIDC path is active (for wiring into the readiness probe).
+#[allow(clippy::type_complexity)]
 fn build_access_resolver(
     clock: Arc<dyn Clock>,
-) -> Result<Arc<dyn AccessResolver>, Box<dyn std::error::Error>> {
+) -> Result<(Arc<dyn AccessResolver>, Option<Arc<JwksCache>>), Box<dyn std::error::Error>> {
     if env::var("NISABA_SYNC_DEV_ALLOW_ALL").is_ok() {
         tracing::warn!(
             "NISABA_SYNC_DEV_ALLOW_ALL is set: every non-empty token is granted author role. \
              Never use in production."
         );
-        return Ok(Arc::new(StaticAccessResolver::allow_all(Role::Author)));
+        return Ok((
+            Arc::new(StaticAccessResolver::allow_all(Role::Author)),
+            None,
+        ));
     }
 
     // An empty variable is treated the same as an unset one (Compose defaults
@@ -165,7 +178,7 @@ fn build_access_resolver(
             "no access resolver configured (NISABA_SYNC_DEV_ALLOW_ALL unset and no OIDC vars): \
              every token will be denied"
         );
-        return Ok(Arc::new(StaticAccessResolver::new()));
+        return Ok((Arc::new(StaticAccessResolver::new()), None));
     };
 
     // Keycloak maps roles under realm_access.roles (see deploy/keycloak realm +
@@ -239,7 +252,7 @@ fn build_access_resolver(
     });
 
     tracing::info!("OIDC access resolver configured (JWT/JWKS + document authorizer)");
-    Ok(resolver)
+    Ok((resolver, Some(jwks)))
 }
 
 /// Build the shared outbound HTTP transport (rustls; never openssl — see

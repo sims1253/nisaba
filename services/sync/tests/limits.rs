@@ -46,6 +46,40 @@ async fn update_size_limit_rejects_oversized_blob() {
 }
 
 #[tokio::test]
+async fn oversized_catchup_payload_rejects_the_join() {
+    // A document whose snapshot exceeds the configured catch-up cap must
+    // reject a fresh peer's join with a Limit error instead of queueing a
+    // giant welcome frame — never by truncating the payload. The cap here is
+    // tiny and the content varied (Loro run-length compresses repeated
+    // characters, so identical text would sneak under any cap).
+    let room = room_with(Config {
+        max_snapshot_bytes: 128,
+        ..Config::default()
+    })
+    .await;
+    let mut author = SimPeer::new(21, Role::Author);
+    author.connect(&room, &[]).await;
+    for i in 0..200 {
+        author.insert(0, &format!("f{i:03} "));
+    }
+    author.submit(&room).await;
+    author.drain();
+
+    let (tx, _rx) = mpsc::channel(64);
+    let err = room
+        .join(
+            PeerId(22),
+            Role::ReadOnly,
+            &[],
+            Vec::new(),
+            tx,
+            nisaba_sync::close_signal(nisaba_sync::CLOSE_NORMAL),
+        )
+        .unwrap_err();
+    assert!(matches!(err, SyncError::Limit(_)), "{err:?}");
+}
+
+#[tokio::test]
 async fn read_only_role_cannot_push_updates() {
     let room = room_with(Config::default()).await;
     let mut ro = SimPeer::new(7, Role::ReadOnly);
@@ -75,7 +109,10 @@ async fn reviewer_can_push_review_layer_updates() {
     let mut rev = SimPeer::new(8, Role::Reviewer);
     rev.connect(&room, &[]).await;
     // Suggestions live in the review container; the relay must accept them.
-    rev.set_review(r#"[{"id":"r1","kind":"suggestion","change":"insert","text":"hi"}]"#);
+    rev.set_review(&[(
+        "r1",
+        r#"{"id":"r1","kind":"suggestion","change":"insert","text":"hi"}"#,
+    )]);
     rev.submit(&room).await;
     rev.drain();
     assert_eq!(room.authority().inner().get_text("text").to_string(), "");
@@ -83,7 +120,7 @@ async fn reviewer_can_push_review_layer_updates() {
         room.authority()
             .inner()
             .get_map("review")
-            .get("items")
+            .get("r1")
             .is_some()
     );
 }

@@ -4,6 +4,8 @@
 //! an attribute of one particular bibliography build, while [`ReferenceId`] is the stable
 //! identity used by attachments and citations.
 
+#![warn(missing_docs)]
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Display, Formatter, Write as _};
 use std::io;
@@ -44,13 +46,18 @@ impl From<ReferenceId> for String {
 /// A CSL-like person name.  `literal` is used for corporate authors.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Person {
+    /// Family name ("Mustermann" in "Mustermann, Erika").
     pub family: Option<String>,
+    /// Given name(s).
     pub given: Option<String>,
+    /// Name suffix ("jr", "III", ...).
     pub suffix: Option<String>,
+    /// A literal, unparsed name; used for corporate authors.
     pub literal: Option<String>,
 }
 
 impl Person {
+    /// A person with only a family name set.
     pub fn family(name: impl Into<String>) -> Self {
         Self {
             family: Some(name.into()),
@@ -74,27 +81,44 @@ impl Person {
 /// A year, or a more precise CSL date when RIS supplied one.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct IssuedDate {
+    /// Year of publication (the only part most RIS exports carry).
     pub year: i32,
+    /// Month, when the source supplied one.
     pub month: Option<u8>,
+    /// Day, when the source supplied one.
     pub day: Option<u8>,
 }
 
 /// Metadata shared by RIS, CSL and bibliography rendering.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Metadata {
+    /// Work title.
     pub title: String,
+    /// Authors in source order.
     pub authors: Vec<Person>,
+    /// Publication date.
     pub issued: Option<IssuedDate>,
+    /// Journal or book title the work appears in.
     pub container_title: Option<String>,
+    /// Publisher.
     pub publisher: Option<String>,
+    /// Volume.
     pub volume: Option<String>,
+    /// Issue.
     pub issue: Option<String>,
+    /// Page range as `start-end` (or just `start`).
     pub pages: Option<String>,
+    /// DOI, normalized on import.
     pub doi: Option<String>,
+    /// `PubMed` database identifier.
     pub pmid: Option<String>,
+    /// External URL.
     pub url: Option<String>,
+    /// Abstract text.
     pub abstract_text: Option<String>,
+    /// Author-supplied keywords.
     pub keywords: Vec<String>,
+    /// Language of the work.
     pub language: Option<String>,
     /// CSL item type (`article-journal`, `book`, `report`, ...).
     pub item_type: Option<String>,
@@ -103,35 +127,48 @@ pub struct Metadata {
 /// A reference as stored in the project library.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReferenceEntry {
+    /// Stable identity of the reference.
     pub id: ReferenceId,
+    /// Descriptive metadata.
     pub metadata: Metadata,
     /// RIS tags not interpreted by the CSL-ish model.  Their order and repetitions survive
     /// import/export, which is important for vendor-specific custom fields.
     pub unknown_ris: Vec<RisTag>,
+    /// Attached full text, when the blob layer supplied one.
     pub fulltext: Option<FullText>,
+    /// Search provenance records (which database, which search, when).
     pub provenance: Vec<Provenance>,
 }
 
+/// The full text attached to a reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FullText {
+    /// Blob-store key the bytes came from.
     pub blob_ref: String,
+    /// Media type of the attachment (expected `application/pdf`).
     pub media_type: String,
     /// The bytes supplied by the blob layer at export time. Keeping this explicit prevents
     /// a blob key from accidentally being emitted as a PDF body.
     pub contents: Vec<u8>,
 }
 
+/// How and where a reference was found (reconstructed from RIS `N1` notes).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Provenance {
+    /// The search string that surfaced the record.
     pub search: String,
+    /// The database that was searched.
     pub database: String,
+    /// When the search ran.
     pub date: String,
 }
 
 /// A raw RIS tag (including the `TY`/`ER` records when requested by a parser).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RisTag {
+    /// Upper-case RIS tag (`TY`, `AU`, `DO`, ...).
     pub tag: String,
+    /// The tag's value, without the `TAG  - ` prefix.
     pub value: String,
 }
 
@@ -139,17 +176,43 @@ pub struct RisTag {
 /// possible even when a tag has no CSL equivalent.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RisRecord {
+    /// The record's tags in source order, beginning with `TY` and ending with `ER`.
     pub tags: Vec<RisTag>,
 }
 
 impl RisRecord {
+    /// Parses RIS records. Wrapped continuation lines (some `EndNote` exports break long
+    /// values across lines without repeating the tag) are joined onto the previous
+    /// tag's value; anything ambiguous — a continuation with no preceding tag, a tag
+    /// before `TY`, or a missing `ER` — is rejected.
     pub fn parse(input: &str) -> Result<Vec<Self>, ReferenceError> {
         let mut records = Vec::new();
-        let mut current = Vec::new();
-        let mut last_tag: Option<usize> = None;
+        let mut current: Vec<RisTag> = Vec::new();
         for (line_no, line) in input.lines().enumerate() {
             let line = line.strip_suffix('\r').unwrap_or(line);
             if line.trim().is_empty() {
+                continue;
+            }
+            if line.starts_with([' ', '\t']) {
+                // A line that begins with whitespace has no tag: it continues the
+                // previous tag's value. An optional leading `- ` is tolerated.
+                let text = line.trim();
+                let text = text.strip_prefix('-').map_or(text, str::trim_start);
+                if text.is_empty() {
+                    continue;
+                }
+                match current.last_mut() {
+                    Some(last) if last.tag != "ER" => {
+                        last.value.push(' ');
+                        last.value.push_str(text);
+                    }
+                    _ => {
+                        return Err(ReferenceError::MalformedRis {
+                            line: line_no + 1,
+                            text: line.to_owned(),
+                        });
+                    }
+                }
                 continue;
             }
             let (tag, rest) = line.split_once(char::is_whitespace).ok_or_else(|| {
@@ -179,17 +242,11 @@ impl RisRecord {
                 records.push(Self {
                     tags: std::mem::take(&mut current),
                 });
-                last_tag = None;
             } else if tag == "TY" || !current.is_empty() {
                 current.push(RisTag {
                     tag,
                     value: value.trim().to_owned(),
                 });
-                last_tag = Some(current.len() - 1);
-            } else if let Some(index) = last_tag {
-                // Some EndNote exports wrap long values without repeating the tag.
-                current[index].value.push(' ');
-                current[index].value.push_str(value.trim());
             } else {
                 return Err(ReferenceError::MalformedRis {
                     line: line_no + 1,
@@ -205,6 +262,8 @@ impl RisRecord {
         Ok(records)
     }
 
+    /// Emits the canonical one-tag-per-line form of every record, rejecting records
+    /// without a `TY` type.
     pub fn write_all(records: &[Self]) -> Result<String, ReferenceError> {
         let mut out = String::new();
         for record in records {
@@ -225,6 +284,14 @@ impl RisRecord {
         Ok(out)
     }
 }
+
+/// RIS tags interpreted by the CSL-ish model.  Tags outside this list are retained
+/// verbatim (order and repetitions preserved) in [`ReferenceEntry::unknown_ris`], which
+/// matters for vendor-specific custom fields.
+const KNOWN_RIS_TAGS: &[&str] = &[
+    "TY", "ER", "AU", "A1", "TI", "T1", "T2", "JF", "JO", "PY", "Y1", "DA", "DP", "VL", "IS", "SP",
+    "EP", "DO", "UR", "AN", "RN", "AB", "LA", "PB", "KW", "PMID",
+];
 
 /// Parses RIS into library entries.  If `id` is absent, `AN` is used; otherwise a stable
 /// deterministic id is made from the metadata (never from citation numbering).
@@ -251,19 +318,13 @@ pub fn import_ris(input: &str) -> Result<Vec<ReferenceEntry>, ReferenceError> {
                 });
             let id =
                 ReferenceId::new(id).or_else(|_| ReferenceId::new(format!("import-{index}")))?;
-            let known: HashSet<&str> = [
-                "TY", "ER", "AU", "A1", "TI", "T1", "T2", "JF", "JO", "PY", "Y1", "DA", "DP", "VL",
-                "IS", "SP", "EP", "DO", "UR", "AN", "RN", "AB", "LA", "PB", "KW", "PMID",
-            ]
-            .into_iter()
-            .collect();
             Ok(ReferenceEntry {
                 id,
                 metadata,
                 unknown_ris: record
                     .tags
                     .into_iter()
-                    .filter(|tag| !known.contains(tag.tag.as_str()))
+                    .filter(|tag| !KNOWN_RIS_TAGS.contains(&tag.tag.as_str()))
                     .collect(),
                 fulltext: None,
                 provenance,
@@ -319,6 +380,8 @@ fn metadata_from_ris(record: &RisRecord) -> Result<Metadata, ReferenceError> {
     })
 }
 
+/// Parses one RIS author value into a [`Person`]: "Family, Given" (with optional
+/// suffix after another comma) when a comma is present, otherwise "Given ... Family".
 pub fn parse_person(value: &str) -> Person {
     if value.contains(',') {
         let mut parts = value.splitn(2, ',');
@@ -597,11 +660,16 @@ fn csl_type_to_ris(value: Option<&str>) -> String {
 /// A canonical deduplication key.  DOI and PMID take precedence over title.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum DuplicateKey {
+    /// Normalized DOI.
     Doi(String),
+    /// Normalized `PubMed` database identifier.
     Pmid(String),
+    /// Normalized title.
     Title(String),
 }
 
+/// The single best deduplication key for a metadata record: DOI, then PMID, then
+/// normalized title.
 #[must_use]
 pub fn dedup_key(metadata: &Metadata) -> DuplicateKey {
     if let Some(doi) = &metadata.doi {
@@ -656,6 +724,8 @@ fn dedup_keys(metadata: &Metadata) -> Vec<DuplicateKey> {
     keys
 }
 
+/// Strips `https://doi.org/`-style prefixes and lower-cases a DOI so the same
+/// identifier from different databases compares equal.
 #[must_use]
 pub fn normalize_doi(value: &str) -> String {
     value
@@ -667,6 +737,8 @@ pub fn normalize_doi(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Strips a case-insensitive `PMID` prefix and separator from a
+/// `PubMed` identifier.
 #[must_use]
 pub fn normalize_pmid(value: &str) -> String {
     value
@@ -680,6 +752,8 @@ pub fn normalize_pmid(value: &str) -> String {
         .to_owned()
 }
 
+/// Lower-cases a title and collapses it to single-spaced alphanumeric words, so
+/// casing and punctuation differences do not defeat deduplication.
 #[must_use]
 pub fn dedup_title(value: &str) -> String {
     value
@@ -702,13 +776,17 @@ fn stable_hash(value: &str) -> u64 {
 /// One citation occurrence extracted from Typst source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Citation {
+    /// The cited reference's stable id.
     pub reference_id: ReferenceId,
     /// Byte offset of the occurrence's key into the concatenated source.
     pub byte_offset: usize,
 }
 
-/// Extracts `@key` and `#cite(<key>, ...)` references.  Comments and quoted strings are
-/// ignored, and keys are returned in source order (repeated citations remain occurrences).
+/// Extracts `@key` and `#cite(<key>, ...)` references.  Comments (including nested
+/// block comments), quoted strings, and raw blocks (triple-backtick fences and
+/// single-backtick inline raw) are ignored — a `@key` shown as an example inside a raw
+/// block is documentation, not a citation — and keys are returned in source order
+/// (repeated citations remain occurrences).
 #[allow(clippy::too_many_lines)]
 pub fn extract_citations(source: &str) -> Result<Vec<Citation>, ReferenceError> {
     let bytes = source.as_bytes();
@@ -725,6 +803,10 @@ pub fn extract_citations(source: &str) -> Result<Vec<Citation>, ReferenceError> 
         }
         if bytes[i] == b'"' {
             i = skip_string(bytes, i + 1, b'"');
+            continue;
+        }
+        if bytes[i] == b'`' {
+            i = skip_raw(bytes, i);
             continue;
         }
         if bytes[i] == b'@' {
@@ -836,11 +918,48 @@ fn skip_line(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 fn skip_block_comment(bytes: &[u8], mut i: usize) -> usize {
+    // Typst block comments nest: `/* /* */ */` is a single comment. An unterminated
+    // comment runs to the end of the input.
+    let mut depth = 1usize;
     while i + 1 < bytes.len() {
-        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-            return i + 2;
+        if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            depth += 1;
+            i += 2;
+        } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+            depth -= 1;
+            i += 2;
+            if depth == 0 {
+                return i;
+            }
+        } else {
+            i += 1;
         }
+    }
+    bytes.len()
+}
+/// Skips a raw block or inline raw span: the opening run of backticks and everything up
+/// to a closing run of at least as many backticks, so a fenced block closes on its own
+/// fence even if the content contains a single backtick. An unterminated raw runs to the
+/// end of the input.
+fn skip_raw(bytes: &[u8], mut i: usize) -> usize {
+    let mut fence = 0usize;
+    while i < bytes.len() && bytes[i] == b'`' {
+        fence += 1;
         i += 1;
+    }
+    while i < bytes.len() {
+        if bytes[i] == b'`' {
+            let mut run = 0usize;
+            while i < bytes.len() && bytes[i] == b'`' {
+                run += 1;
+                i += 1;
+            }
+            if run >= fence {
+                return i;
+            }
+        } else {
+            i += 1;
+        }
     }
     bytes.len()
 }
@@ -890,9 +1009,11 @@ fn matching_paren(bytes: &[u8], open: usize) -> Option<usize> {
     None
 }
 
-/// A bibliography number is derived from the first citation occurrence.  Uncited entries
-/// are appended in stable input order.  Equal positions (possible after source merges) use
-/// the stable reference id as a deterministic tie breaker.
+/// A bibliography number is derived from the first citation occurrence.  Callers pass
+/// citations in source order (the order [`extract_citations`] returns them); numbering
+/// follows first occurrence in that order, uncited entries are appended in stable input
+/// order, and equal first-occurrence positions use the stable reference id as a
+/// deterministic tie breaker.
 pub fn number_bibliography(
     entries: &[ReferenceEntry],
     citations: &[Citation],
@@ -905,9 +1026,7 @@ pub fn number_bibliography(
                 citation.reference_id.clone(),
             ));
         }
-        first
-            .entry(&citation.reference_id)
-            .or_insert(citation.byte_offset.min(position));
+        first.entry(&citation.reference_id).or_insert(position);
     }
     let mut ordered: Vec<&ReferenceEntry> = entries.iter().collect();
     ordered.sort_by(|a, b| {
@@ -921,9 +1040,9 @@ pub fn number_bibliography(
     let mut numbered = BTreeMap::new();
     for (n, entry) in ordered.into_iter().enumerate() {
         let number = u32::try_from(n)
-            .map_err(|_| ReferenceError::InvalidId(entry.id.to_string()))?
+            .map_err(|_| ReferenceError::TooManyEntries)?
             .checked_add(1)
-            .ok_or_else(|| ReferenceError::InvalidId(entry.id.to_string()))?;
+            .ok_or(ReferenceError::TooManyEntries)?;
         numbered.insert(entry.id.clone(), number);
     }
     Ok(numbered)
@@ -940,7 +1059,7 @@ pub fn fulltext_filename(number: u32, metadata: &Metadata) -> String {
             .or(p.literal.as_deref())
             .unwrap_or("UnknownAuthor")
     });
-    let author = safe_filename_component(author);
+    let author = safe_filename_component(author, "UnknownAuthor");
     let year = metadata.issued.as_ref().map_or("0000".to_owned(), |date| {
         if (0..=9999).contains(&date.year) {
             format!("{:04}", date.year)
@@ -995,7 +1114,14 @@ fn fold_to_ascii(c: char) -> Option<&'static str> {
     })
 }
 
-fn safe_filename_component(value: &str) -> String {
+/// Sanitizes one filesystem component: ASCII letters/digits, `-` and `_` survive,
+/// non-ASCII letters fold to their closest ASCII spelling (see [`fold_to_ascii`])
+/// rather than collapsing to `_`, everything else becomes `_`, `..` sequences collapse,
+/// and leading/trailing `.`/`_` are trimmed. Returns `fallback` when nothing usable
+/// remains. This is the crate's single filename-sanitization rule; other crates
+/// (nisaba-export) reuse it so sanitized names behave identically everywhere.
+#[must_use]
+pub fn safe_filename_component(value: &str, fallback: &str) -> String {
     let mut output = value
         .chars()
         .map(|c| {
@@ -1009,11 +1135,11 @@ fn safe_filename_component(value: &str) -> String {
     while output.contains("..") {
         output = output.replace("..", "_");
     }
-    let output = output.trim_matches(['.', '_']).to_owned();
+    let output = output.trim_matches(['.', '_']);
     if output.is_empty() {
-        "UnknownAuthor".to_owned()
+        fallback.to_owned()
     } else {
-        output
+        output.to_owned()
     }
 }
 
@@ -1021,43 +1147,64 @@ fn safe_filename_component(value: &str) -> String {
 /// object store, or a directory without changing numbering/validation logic.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportFile {
+    /// Export-tree-relative path (e.g. `references-1/references.ris`).
     pub path: String,
+    /// File body.
     pub contents: Vec<u8>,
 }
 
+/// One document's bibliography: the entries available to it, the citations found in
+/// its source (in source order), and the directory its export files live under.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bibliography {
+    /// Directory (below the export root) that receives this bibliography's files.
     pub directory: String,
+    /// The entries cited by (or attached to) the document.
     pub entries: Vec<ReferenceEntry>,
+    /// Citations extracted from the document source, in source order.
     pub citations: Vec<Citation>,
 }
 
+/// The files an export produces plus the citation numbering that shaped them.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportManifest {
+    /// Logical files of the export, sorted by path.
     pub files: Vec<ExportFile>,
+    /// Citation number assigned to each reference id in this build.
     pub numbers: BTreeMap<ReferenceId, u32>,
 }
 
+/// A sink an [`ExportManifest`] can be written to (a zip, an object store, a
+/// directory). Implementations decide durability and layout; numbering and validation
+/// stay in the manifest.
 pub trait ExportTree {
+    /// Error type of the underlying sink.
     type Error;
+    /// Write one file at `path` with `contents`.
     fn write_file(&mut self, path: &str, contents: &[u8]) -> Result<(), Self::Error>;
 }
 
 impl ExportManifest {
-    /// Builds RIS and full-text files below the requested directory. Missing full text is an
-    /// error before any files are emitted, so callers never receive a partial export.
+    /// Builds RIS and full-text files below the requested directory. Missing or empty
+    /// full text is an error before any files are emitted, so callers never receive a
+    /// partial export (and a 0-byte PDF is never written for a cited entry).
     pub fn build(bibliography: &Bibliography) -> Result<Self, ReferenceError> {
         let numbers = number_bibliography(&bibliography.entries, &bibliography.citations)?;
+        // Cited ids up front: O(citations), not O(entries x citations).
+        let cited: BTreeSet<&ReferenceId> = bibliography
+            .citations
+            .iter()
+            .map(|c| &c.reference_id)
+            .collect();
         let missing: Vec<_> = bibliography
             .entries
             .iter()
             .filter(|e| {
                 numbers.contains_key(&e.id)
-                    && e.fulltext.is_none()
-                    && bibliography
-                        .citations
-                        .iter()
-                        .any(|c| c.reference_id == e.id)
+                    && cited.contains(&e.id)
+                    && e.fulltext
+                        .as_ref()
+                        .is_none_or(|fulltext| fulltext.contents.is_empty())
             })
             .map(|e| e.id.clone())
             .collect();
@@ -1065,7 +1212,7 @@ impl ExportManifest {
             return Err(ReferenceError::MissingFullText(missing));
         }
         let ris = export_numbered_ris(&bibliography.entries, &numbers)?.into_bytes();
-        let prefix = safe_filename_component(&bibliography.directory);
+        let prefix = safe_filename_component(&bibliography.directory, "UnknownAuthor");
         let mut files = vec![ExportFile {
             path: format!("{prefix}/references.ris"),
             contents: ris,
@@ -1085,6 +1232,7 @@ impl ExportManifest {
         Ok(Self { files, numbers })
     }
 
+    /// Writes every file of the manifest into `tree`, in manifest order.
     pub fn write_to<T: ExportTree>(&self, tree: &mut T) -> Result<(), T::Error> {
         for file in &self.files {
             tree.write_file(&file.path, &file.contents)?;
@@ -1108,7 +1256,7 @@ pub fn validate_export(
             return Err(errors);
         }
     };
-    let prefix = safe_filename_component(&bibliography.directory);
+    let prefix = safe_filename_component(&bibliography.directory, "UnknownAuthor");
     let ris_path = format!("{prefix}/references.ris");
     let ris_file = files.iter().find(|file| file.path == ris_path);
     if ris_file.is_none() {
@@ -1197,7 +1345,9 @@ pub fn validate_export(
             }
         }
     }
-    let expected_paths: Vec<_> = bibliography
+    // One set serves both duplicate detection and the membership test below (which
+    // previously linear-scanned the path list per file).
+    let expected_paths: BTreeSet<String> = bibliography
         .entries
         .iter()
         .filter_map(|e| {
@@ -1206,12 +1356,18 @@ pub fn validate_export(
                 .map(|n| format!("{prefix}/full-text/{}", fulltext_filename(*n, &e.metadata)))
         })
         .collect();
-    if expected_paths.iter().collect::<BTreeSet<_>>().len() != expected_paths.len() {
+    let numbered_entries = bibliography
+        .entries
+        .iter()
+        .filter(|e| numbers.contains_key(&e.id))
+        .count();
+    if expected_paths.len() != numbered_entries {
         errors.push(ValidationError::DuplicateFilename);
     }
+    let fulltext_prefix = format!("{prefix}/full-text/");
     for file in files
         .iter()
-        .filter(|file| file.path.starts_with(&format!("{prefix}/full-text/")))
+        .filter(|file| file.path.starts_with(&fulltext_prefix))
     {
         if !expected_paths.contains(&file.path) {
             errors.push(ValidationError::UnexpectedFile(file.path.clone()));
@@ -1224,52 +1380,169 @@ pub fn validate_export(
     }
 }
 
+/// One problem found when validating a generated export tree against the bibliography
+/// it was built from. Validation runs after a build, so these catch stale or misnamed
+/// attachments the builder itself could not see.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ValidationError {
+    /// Numbering failed outright.
     Numbering(ReferenceError),
+    /// The RIS file is absent from the tree.
     MissingRis(String),
+    /// A cited entry has no usable full text.
     MissingFullText(ReferenceId),
+    /// An expected full-text file is absent.
     MissingFile(String),
+    /// An entry is missing from the exported RIS.
     RisMissingId(ReferenceId),
+    /// The tree contains a file the manifest never produced.
     UnexpectedFile(String),
+    /// Two entries map to one full-text filename.
     DuplicateFilename,
+    /// The exported RIS failed to re-parse.
     InvalidRis(ReferenceError),
+    /// The RIS number disagrees with the manifest.
     RisNumberMismatch {
+        /// The mismatching reference.
         id: ReferenceId,
+        /// Number the manifest assigned.
         expected: u32,
+        /// Number found in the RIS.
         actual: u32,
     },
+    /// The RIS carries no number for an entry.
     MissingRisNumber(ReferenceId),
 }
 
 impl Display for ValidationError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            ValidationError::Numbering(error) => {
+                write!(f, "bibliography numbering failed: {error}")
+            }
+            ValidationError::MissingRis(path) => {
+                write!(f, "the export is missing its RIS file at {path}")
+            }
+            ValidationError::MissingFullText(id) => {
+                write!(f, "cited reference {id} is missing a full-text PDF")
+            }
+            ValidationError::MissingFile(path) => {
+                write!(
+                    f,
+                    "expected full-text file {path} is missing from the export"
+                )
+            }
+            ValidationError::RisMissingId(id) => {
+                write!(f, "the exported RIS does not contain reference {id}")
+            }
+            ValidationError::UnexpectedFile(path) => {
+                write!(f, "unexpected file in the export tree: {path}")
+            }
+            ValidationError::DuplicateFilename => {
+                f.write_str("two references produce the same full-text filename")
+            }
+            ValidationError::InvalidRis(error) => {
+                write!(f, "the exported RIS is invalid: {error}")
+            }
+            ValidationError::RisNumberMismatch {
+                id,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "reference {id} is numbered {actual} in the exported RIS but {expected} in the manifest"
+            ),
+            ValidationError::MissingRisNumber(id) => {
+                write!(f, "the exported RIS has no number for reference {id}")
+            }
+        }
     }
 }
 
+/// Errors produced by reference import, citation extraction, and export building.
+/// Their `Display` forms surface in user-visible errors, so they carry the offending
+/// values with them.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReferenceError {
+    /// An id was empty or contained a path separator.
     InvalidId(String),
-    MalformedRis { line: usize, text: String },
+    /// A line did not follow the `TAG  - value` shape (or was an orphaned
+    /// continuation).
+    MalformedRis {
+        /// One-based line number of the offending line.
+        line: usize,
+        /// The offending line's text.
+        text: String,
+    },
+    /// A record ended without an `ER` terminator.
     MissingRecordTerminator,
+    /// A record had no `TY` type.
     MissingType,
+    /// An entry had no title.
     MissingTitle,
+    /// A citation key did not match any entry.
     UnknownCitation(ReferenceId),
-    UnclosedCitation { byte_offset: usize },
+    /// A `#cite(...)` call was never closed.
+    UnclosedCitation {
+        /// Byte offset where the call begins.
+        byte_offset: usize,
+    },
+    /// Cited entries lacked a usable full text.
     MissingFullText(Vec<ReferenceId>),
+    /// The bibliography has more entries than can be numbered in a `u32`.
+    TooManyEntries,
 }
 
 impl Display for ReferenceError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            ReferenceError::InvalidId(value) => {
+                write!(
+                    f,
+                    "invalid reference id `{value}` (ids must be non-empty and path-free)"
+                )
+            }
+            ReferenceError::MalformedRis { line, text } => {
+                write!(f, "malformed RIS at line {line}: {text}")
+            }
+            ReferenceError::MissingRecordTerminator => {
+                f.write_str("RIS record is missing its ER terminator")
+            }
+            ReferenceError::MissingType => f.write_str("RIS record is missing its TY type"),
+            ReferenceError::MissingTitle => f.write_str("reference is missing a title"),
+            ReferenceError::UnknownCitation(id) => {
+                write!(
+                    f,
+                    "citation {id} does not match any reference in the library"
+                )
+            }
+            ReferenceError::UnclosedCitation { byte_offset } => {
+                write!(f, "unclosed #cite( call at byte {byte_offset}")
+            }
+            ReferenceError::MissingFullText(ids) => {
+                write!(
+                    f,
+                    "cited references are missing a non-empty full-text PDF: {}",
+                    ids.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            ReferenceError::TooManyEntries => {
+                f.write_str("too many bibliography entries to number")
+            }
+        }
     }
 }
 impl std::error::Error for ReferenceError {}
 
 /// A small in-memory writer useful to callers and tests.
 #[derive(Default)]
-pub struct MemoryTree(pub BTreeMap<String, Vec<u8>>);
+pub struct MemoryTree(
+    /// The written files, keyed by path.
+    pub BTreeMap<String, Vec<u8>>,
+);
 impl ExportTree for MemoryTree {
     type Error = io::Error;
     fn write_file(&mut self, path: &str, contents: &[u8]) -> Result<(), Self::Error> {
@@ -1329,6 +1602,101 @@ mod tests {
             RisRecord::parse("TY  - JOUR\nTI  - x\n"),
             Err(ReferenceError::MissingRecordTerminator)
         );
+    }
+
+    #[test]
+    fn ris_wrapped_continuation_lines_join_previous_value() {
+        let source = "TY  - JOUR\nTI  - A title\nAB  - First part of a long abstract\n      continued on the wrapped line\nER  -\n";
+        let records = RisRecord::parse(source).unwrap();
+        let ab = records[0].tags.iter().find(|tag| tag.tag == "AB").unwrap();
+        assert_eq!(
+            ab.value,
+            "First part of a long abstract continued on the wrapped line"
+        );
+        // The canonical writer emits one line per tag; re-parsing is stable (round trip).
+        let canonical = RisRecord::write_all(&records).unwrap();
+        let reparsed = RisRecord::parse(&canonical).unwrap();
+        assert_eq!(reparsed, records);
+    }
+
+    #[test]
+    fn ris_continuation_without_preceding_tag_is_rejected() {
+        // No record, no tag to continue: ambiguous garbage stays an error.
+        assert!(matches!(
+            RisRecord::parse("  - orphaned continuation\n"),
+            Err(ReferenceError::MalformedRis { line: 1, .. })
+        ));
+        // A continuation after the record terminator cannot re-open the record.
+        assert!(matches!(
+            RisRecord::parse("TY  - JOUR\nER  -\n  - after end\n"),
+            Err(ReferenceError::MalformedRis { line: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn error_display_messages_are_readable() {
+        // These strings surface in user-visible HTTP errors; they must say what went
+        // wrong, not dump a Debug payload.
+        let malformed = ReferenceError::MalformedRis {
+            line: 7,
+            text: "garbage line".to_owned(),
+        };
+        let text = malformed.to_string();
+        assert!(text.contains("line 7"), "{text}");
+        assert!(text.contains("garbage line"), "{text}");
+        assert!(
+            ReferenceError::MissingFullText(vec![ReferenceId::new("a").unwrap()])
+                .to_string()
+                .contains('a'),
+            "missing-fulltext should name the ids"
+        );
+        assert_eq!(
+            ValidationError::MissingRis("references/references.ris".to_owned()).to_string(),
+            "the export is missing its RIS file at references/references.ris"
+        );
+    }
+
+    #[test]
+    fn citations_in_raw_blocks_are_ignored() {
+        let source = "See @real and consider it.\n\n```typst\n@fake and #cite(<fake>)\n```\nInline `@alsowithfake` stays raw.\nReal again: #cite(<real2>)";
+        let citations = extract_citations(source).unwrap();
+        assert_eq!(
+            citations
+                .iter()
+                .map(|c| c.reference_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["real", "real2"]
+        );
+    }
+
+    #[test]
+    fn nested_block_comments_are_skipped() {
+        let source = "/* outer @one /* inner @two */ still the comment @three */ See @real";
+        let citations = extract_citations(source).unwrap();
+        assert_eq!(
+            citations
+                .iter()
+                .map(|c| c.reference_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["real"]
+        );
+    }
+
+    #[test]
+    fn empty_fulltext_blocks_export_before_files_exist() {
+        // An empty-but-present fulltext is as useless as a missing one; reject it in
+        // build so no 0-byte "PDF" is ever written.
+        let mut e = entry("r", "One", "Alpha", 2020);
+        e.fulltext.as_mut().unwrap().contents.clear();
+        let b = Bibliography {
+            directory: "references".to_owned(),
+            citations: extract_citations("@r").unwrap(),
+            entries: vec![e],
+        };
+        assert!(matches!(
+            ExportManifest::build(&b),
+            Err(ReferenceError::MissingFullText(_))
+        ));
     }
 
     #[test]

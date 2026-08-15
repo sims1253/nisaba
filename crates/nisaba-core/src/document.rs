@@ -181,14 +181,14 @@ impl Document {
         crate::position::char_len(&self.text)
     }
 
-    /// Set the text layer (replacing it wholesale). The mark layer is cleared, because
-    /// wholesale replacement invalidates every mark anchor; callers that edit text should
-    /// go through the CRDT binding which maps changes to mark remapping.
+    /// Set the text layer (replacing it wholesale). The mark layer is always cleared —
+    /// including for an empty replacement — because wholesale replacement invalidates
+    /// every mark anchor (otherwise stale marks would point past the end of the new
+    /// text); callers that edit text should go through the CRDT binding which maps
+    /// changes to mark remapping.
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
-        if !self.text.is_empty() {
-            self.marks = MarkSet::new();
-        }
+        self.marks = MarkSet::new();
     }
 
     /// Insert a mark.
@@ -331,5 +331,24 @@ mod tests {
         assert!(!doc.is_valid());
         // projection still works (clamped).
         assert_eq!(doc.project(View::Proposed), "AB");
+    }
+
+    #[test]
+    fn set_text_clears_marks_even_for_empty_replacement() {
+        // A wholesale replacement always invalidates mark anchors; keeping marks around
+        // an empty text would leave them anchored past the end.
+        let mut doc = Document::from_text("ABCDE");
+        doc.add_mark(change(1, MarkKind::Insert, 1, 3));
+        doc.set_text("");
+        assert_eq!(doc.text(), "");
+        assert!(
+            doc.marks().is_empty(),
+            "marks must not survive a wholesale replacement"
+        );
+        assert!(doc.is_valid());
+        // And a non-empty replacement clears them too.
+        doc.add_mark(change(2, MarkKind::Delete, 0, 1));
+        doc.set_text("xyz");
+        assert!(doc.marks().is_empty());
     }
 }

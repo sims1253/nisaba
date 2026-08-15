@@ -139,7 +139,3 @@ export function findConstructs(source: string, _functions: ReadonlySet<string> =
   findConstructsCacheValue = result
   return result
 }
-
-export function constructAt(constructs: readonly Construct[], position: number): Construct | undefined {
-  return constructs.find((construct) => position >= construct.from && position <= construct.to)
-}

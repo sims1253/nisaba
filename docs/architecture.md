@@ -98,8 +98,8 @@ policy where egress restriction is required.
    in the configured filesystem data directory. Convergence is a CRDT property; syntactic
    validity is not, so the editor reparses on every keystroke.
 3. **Project (app).** `app` owns path-addressed documents and references in Postgres,
-   and authorises the request
-   against the OIDC token, and orchestrates compiles and exports.
+   authorizes the request against the OIDC token, and orchestrates compiles and
+   exports.
 4. **Compile (compile).** `app` sends the **projection** of the document to `compile` as plain Typst sources. `compile` knows nothing
    about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, span
    map, and (opt-in) page frames. Warm state is keyed by `project_id`.
@@ -125,13 +125,11 @@ Content-Type: application/json
   "project_id": "uuid",
   "entry": "m3/3-2-1.typ",
   "sources": { "<path>": "<typst source>", ... },   // the projection, not the CRDT
-  "mode": "document" | "full",
-  "view": "baseline" | "proposed" | "redline",
-  "include_frames": false                             // opt-in, default false
+  "view": "baseline" | "proposed" | "redline"
 }
 → 200 {
   "pdf"?:       "<base64 bytes>",
-  "frames"?:    [ ... ],                              // empty unless include_frames is true
+  "frames"?:    [ ... ],
   "span_map":   [ ... ],
   "diagnostics":[ ... ],
   "outline":    [ ... ],
@@ -140,12 +138,10 @@ Content-Type: application/json
 }
 ```
 
-- `mode: "document"` compiles the entry standalone; cross-references to other
-  document fragments render unresolved (acceptable for the current preview).
-- `mode: "full"` compiles the full project.
+- This is the app→compile wire; the app's own public `POST /api/compile` keeps a
+  wider request shape (including a `mode` field) and narrows it to these four
+  fields before calling compile.
 - Warm `comemo` caches persist across calls for the same `project_id`.
-- SVG page frames are **opt-in** (`include_frames: true`); they default to off
-  (frames were previously computed eagerly for every page and consumed by nobody).
 
 ### 4.2 `sync` — WebSocket
 
@@ -180,19 +176,27 @@ Routes (the machine-readable truth is `GET /openapi.json` on the app service):
 - `POST /api/compile` (proxied verbatim by nginx; also reachable on the app
   port), `GET /healthz`, `GET /health/ready`, `GET /openapi.json`
 - Internal (machine-token only, never proxied): `POST /internal/sync/authorize`,
-  `POST /internal/document/{document_id}/materialize`
+  `GET /internal/document/{document_id}/body`
 
 Reference payloads are structured JSON (`metadata` with `title`, `authors`,
 `year`, `doi`, `pmid`, `journal`, and a mandatory `extra` object) — the API does
 not parse RIS text. Project-scoped DOIs must be unique (409 on duplicates).
+
+Document-body persistence: the web client persists the editor's text with a
+debounced `PATCH /projects/{p}/documents/{d}` (autosave) — that is the write
+path of record for document bodies. The sync relay carries live collaborative
+edits between peers and *reads* the authoritative body from the app (via
+`GET /internal/document/{document_id}/body`) to seed/verify rooms; it never
+writes document bodies back to the database.
 
 Export layout: the archive contains the compiled PDF, the projected document
 sources (paths flattened with `/` → `_`), and per-document RIS bibliographies +
 full-text PDFs under `references-<n>/`. The generated master `main.typ`
 includes every document by its full project-relative path, so documents in
 subdirectories export and compile correctly. Exports require every cited
-reference to have an uploaded full-text PDF (409 otherwise) and are restricted
-to owners/authors (reviewers may compile but not export).
+reference to have an uploaded full-text PDF (409 otherwise). Owners, authors,
+and reviewers may export (reviewers need it to export review copies;
+read-only members may compile but not export).
 
 ### 4.4 Health — `GET /healthz` (all HTTP services)
 
@@ -230,7 +234,7 @@ browser ──(4) code → app (or direct token exchange) ─────▶ tok
 browser ──(5) GET /api/... Authorization: Bearer <access> ─▶ app (validates, routes by role)
 ```
 
-- Realm `nisaba`, client `nisaba-web` (**public**, authorisation-code +
+- Realm `nisaba`, client `nisaba-web` (**public**, authorization-code +
   PKCE `S256` — no client secret is exposed to the browser), roles `author` /
   `reviewer` / `read-only`.
 - Roles are mapped into the access token as a **top-level `roles`** claim.
@@ -254,8 +258,9 @@ Capabilities come from the **IdP role claim** (`author` / `reviewer` /
 | Edit baseline (PATCH body) | ✓ | ✓ | — (suggest only) | — |
 | Create / rename / delete documents | ✓ | ✓ | — | — |
 | Accept / reject / comment (review layer) | ✓ | ✓ | ✓ | — |
-| Compile / see diagnostics | ✓ | ✓ | ✓ | — |
-| Manage members / share links / export / delete project | ✓ | ✓ | — | — |
+| Compile / see diagnostics | ✓ | ✓ | ✓ | ✓ |
+| Export project | ✓ | ✓ | ✓ | — |
+| Manage members / share links / delete project | ✓ | ✓ | — | — |
 
 Reviewers are locked into suggesting mode: their edits become tracked
 suggestions in the review layer (synced over the CRDT relay) and are **never

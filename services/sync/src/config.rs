@@ -2,8 +2,17 @@
 //!
 //! This component is the single source of truth for every configured bound the
 //! transport enforces. Keeping them here makes the `DoS` / fuzz surface auditable
-//! in one place: any untrusted byte stream entering the server is bounded by one
-//! of the constants below before it touches the `CRDT` or the filesystem.
+//! in one place: every untrusted byte stream entering the server is bounded
+//! before it touches the `CRDT` or the filesystem —
+//!
+//! * every inbound frame (including each of its length-prefixed blobs) by
+//!   [`Config::max_update_bytes`] at decode time,
+//! * the HELLO `token` by [`MAX_TOKEN_BYTES`] and its `last_vv` by
+//!   [`MAX_VV_BYTES`] after decode, before the token is handed to the access
+//!   resolver (session handshake),
+//! * presence payloads by [`MAX_PRESENCE_BYTES`] (room),
+//! * the outbound welcome catch-up payload (incremental updates or a full
+//!   snapshot) by [`Config::max_snapshot_bytes`] (room join).
 
 use crate::error::SyncError;
 
@@ -14,12 +23,15 @@ pub const MAX_PEERS_PER_DOC: usize = 64;
 /// Maximum size of a single CRDT update frame, in bytes (4 MiB).
 pub const MAX_UPDATE_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum size of an encoded version vector sent in a HELLO, in bytes.
+/// Enforced after HELLO decode in the session handshake: a larger vector is
+/// rejected with a `TOO_LARGE` error frame before it reaches the authority.
 pub const MAX_VV_BYTES: usize = 64 * 1024;
 /// Maximum size of a presence payload, in bytes.
 pub const MAX_PRESENCE_BYTES: usize = 16 * 1024;
 /// Maximum size of the token carried in a HELLO frame, in bytes. Kept far below
 /// [`MAX_UPDATE_BYTES`] so a pre-auth peer cannot force a large allocation or a
-/// long token holding a resolver task alive.
+/// long token holding a resolver task alive. Enforced after HELLO decode in
+/// the session handshake, before the token is handed to the access resolver.
 pub const MAX_TOKEN_BYTES: usize = 16 * 1024;
 /// Minimum spacing (ms) between presence roster re-broadcasts per room; bursts
 /// of presence frames are coalesced down to one broadcast per interval.
@@ -41,7 +53,11 @@ pub const HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
 /// alone would still let an attacker burn CPU on frame decode + op-log append +
 /// fan-out. Generous for real collaboration (typing bursts are far below this).
 pub const MAX_FRAMES_PER_SECOND: u32 = 200;
-/// Maximum size of a server→client snapshot, in bytes (64 MiB).
+/// Maximum size of a server→client snapshot (the welcome catch-up payload:
+/// incremental updates or a full snapshot), in bytes (64 MiB). Enforced in
+/// [`crate::room::DocRoom::join`]: a larger payload rejects the join with a
+/// `Limit` error — it is never truncated, since silently modifying CRDT state
+/// would corrupt the peer.
 pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 /// Presence entry is considered expired after this many milliseconds without a
 /// heartbeat.
@@ -129,7 +145,6 @@ pub fn validate_doc_id(id: &str) -> Result<&str, SyncError> {
             return Err(SyncError::InvalidDocId(id.to_string()));
         }
     }
-    let _ = id;
     Ok(id)
 }
 
@@ -138,12 +153,16 @@ const fn is_allowed_doc_id_byte(b: u8) -> bool {
     matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-')
 }
 
-/// Bounded configuration. All fields have safe defaults; production overrides via
-/// [`Config::from_env`] (kept minimal for M2 — full config management is app's job).
+/// Bounded configuration. All fields have safe defaults; the binary runs
+/// [`Config::default`] (tuning happens in this crate or via its constructor —
+/// there is no env-var override surface, unlike the app service).
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Max inbound update size.
     pub max_update_bytes: usize,
+    /// Max size of the outbound welcome catch-up payload (updates or full
+    /// snapshot); [`MAX_SNAPSHOT_BYTES`] by default.
+    pub max_snapshot_bytes: usize,
     /// Max live peers per document.
     pub max_peers_per_doc: usize,
     /// Presence TTL (milliseconds).
@@ -169,6 +188,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             max_update_bytes: MAX_UPDATE_BYTES,
+            max_snapshot_bytes: MAX_SNAPSHOT_BYTES,
             max_peers_per_doc: MAX_PEERS_PER_DOC,
             presence_ttl_ms: PRESENCE_TTL_MS,
             presence_sweep_ms: PRESENCE_SWEEP_MS,
@@ -189,6 +209,19 @@ impl Config {
             return Err(SyncError::Limit(format!(
                 "update of {len} bytes exceeds limit of {}",
                 self.max_update_bytes
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reject a HELLO field length against its bound (token: [`MAX_TOKEN_BYTES`],
+    /// version vector: [`MAX_VV_BYTES`]). Called after frame decode but before
+    /// the field is used, so oversized pre-auth input cannot drive the access
+    /// resolver or the authority.
+    pub fn check_hello_field_size(kind: &str, len: usize, max: usize) -> Result<(), SyncError> {
+        if len > max {
+            return Err(SyncError::Limit(format!(
+                "{kind} of {len} bytes exceeds limit of {max}"
             )));
         }
         Ok(())

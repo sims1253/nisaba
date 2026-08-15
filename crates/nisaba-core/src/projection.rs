@@ -43,9 +43,9 @@ pub const FLAG_SECRET: u8 = 1 << 2;
 
 /// The projection view to compute.
 ///
-/// The five supported views are "BASELINE / PROPOSED / REDLINE / PUBLIC
-/// / EDITOR"). `Public` is kept open even though its *use* is post-MVP, so the enum does
-/// not need to change later.
+/// The five supported views are `baseline`, `proposed`, `redline`, `public`, and
+/// `editor`. `Public` is kept even though its *use* is post-MVP, so the enum does not
+/// need to change later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum View {
     /// Reject all pending changes: drop insertions, keep deletions. The last agreed

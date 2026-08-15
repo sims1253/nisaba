@@ -42,7 +42,7 @@ Opening a project gives you five regions:
   into).
 - Inside a project, **Files** lists the documents at their paths
   (`chapters/01-intro.typ`). Folders come from the paths, so creating a document
-  with a nested path organises it. The file the preview builds from carries a
+  with a nested path organizes it. The file the preview builds from carries a
   **MAIN** tag.
 - **＋** in the Files header adds a file; click a file to open it; double-click
   it to rename it.
@@ -54,16 +54,20 @@ Opening a project gives you five regions:
 
 ## Roles
 
-What you can do depends on your **project role** (set by the owner in the Share
-panel):
+What you can do depends on two things: your **identity-provider role**
+(`author`, `reviewer`, or `read-only`, from your sign-in) and your **project
+role** (set by the owner in the Share panel) — both must allow an action. The
+table below is the plain-language summary; [`architecture.md`](architecture.md)
+§6.1 is the normative role model.
 
 | Action | Owner | Author | Reviewer | Read-only |
 |--------|:-----:|:------:|:--------:|:---------:|
-| Read and compile | ✓ | ✓ | ✓ | ✓ |
+| Read (documents, history, audit, members) and compile | ✓ | ✓ | ✓ | ✓ |
 | Edit the text directly | ✓ | ✓ | — (suggest only) | — |
 | Accept / reject / comment on suggestions | ✓ | ✓ | ✓ | — |
 | Create / rename / delete documents | ✓ | ✓ | — | — |
-| Invite / remove members, share links, export, delete project | ✓ | ✓ | — | — |
+| Export the project | ✓ | ✓ | ✓ | — |
+| Invite / remove members, share links, delete project | ✓ | ✓ | — | — |
 
 If an action is not available to your role it is hidden; if you call it through
 the API you get a 403 with the message "You don't have permission to do that".

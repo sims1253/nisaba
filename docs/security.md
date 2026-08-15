@@ -5,9 +5,9 @@ shaped toward. This complements [`architecture.md`](architecture.md) (data flow)
 and [`operations.md`](operations.md) (day-2 hardening/backups).
 
 > **Status:** the controls below are **implemented in the local stack** unless
-> marked *future*. The application services themselves are skeletons; their
-> in-process security (authorisation enforcement, input validation) is the
-> responsibility of the service streams and is out of scope here.
+> marked *future*. Application-layer security is included: authorization
+> enforcement (`auth.rs::permitted`, `auth.rs::project_acl`, the sync reviewer
+> text gate) and input validation are implemented and documented in §2.
 
 ---
 
@@ -20,7 +20,7 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
    silent insecure default.
 3. **No secrets in the repo.** `.env` is gitignored; only `.env.example`
    (placeholders) is committed.
-4. **Defence in depth, but proportional.** Nisaba is not multi-tenant and does
+4. **Defense in depth, but proportional.** Nisaba is not multi-tenant and does
    not hold payment data. Controls target an honest, authenticated
    user base and private-document integrity — not a public SaaS perimeter.
 
@@ -33,12 +33,12 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
 | `postgres` (superuser) | bootstrap + migrations only; never used by app | Compose `POSTGRES_USER`             |
 | `nisaba_app`           | owns `nisaba` DB; no SUPERUSER/CREATEDB       | `deploy/postgres/init/10-init-databases.sh` |
 | `keycloak`             | owns `keycloak` DB only                       | same init script                    |
-| SeaweedFS admin (`nisaba-admin`) | bootstrap + admin only; never used by app | `deploy/seaweedfs/s3.json` (static identity) |
-| `nisaba-app` S3 account| read/write/list/tag on `nisaba-*` buckets only | `deploy/seaweedfs/s3.json` (static identity) |
+| SeaweedFS admin (`nisaba-admin`) | bootstrap + admin only; never used by app | generated at seaweedfs start from env (`generate-s3-identities.sh`) |
+| `nisaba-app` S3 account| read/write/list/tag on `nisaba-*` buckets only | generated at seaweedfs start from env (`generate-s3-identities.sh`) |
 | Keycloak demo users    | local dev only (`demo`/`reviewer`/`reader`)   | `deploy/keycloak/nisaba-realm.json` |
 
 - OIDC roles `author` / `reviewer` / `read-only` are mapped into access tokens
-  and are the authorisation input for `app`.
+  and are the authorization input for `app`.
 - Brute-force protection is enabled in the realm (`bruteForceProtected: true`).
 - **Future:** rotate demo credentials; enforce MFA for `reviewer` in trials.
 
@@ -193,7 +193,7 @@ as a hardening task; not MVP-blocking.
 - `.env` is the single source for local secrets and is gitignored
   (`.gitignore`: `.env`, `.env.*`, `!.env.example`).
 - **No web client secret exists.** `nisaba-web` is a **public** OIDC client
-  using authorisation-code + PKCE (`S256`); the browser proves possession of
+  using authorization-code + PKCE (`S256`); the browser proves possession of
   the code verifier instead of a shared secret. The app verifies tokens by
   **signature** against the JWKS in `NISABA_OIDC_JWKS_JSON` (read inline at
   startup; empty → deny all), never by client secret.
@@ -248,7 +248,7 @@ See `.github/workflows/`. The intended gates:
 
 - `rust`: `cargo fmt --check`, `cargo clippy --workspace`, `cargo test --workspace`,
   `cargo deny check`.
-- `web`: build + test + lint (once the web stream provides configs).
+- `web`: build + test + lint (once the web workspace provides lint configs).
 - `security`: `cargo audit` on schedule and on PRs.
 - `tools`: `tools/verify.sh` when present.
 

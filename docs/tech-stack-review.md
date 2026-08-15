@@ -142,8 +142,8 @@ consider whether the binding is thin enough to vendor/fork if it stalls.
 
 ### oxlint (linter)
 **✅ Right choice.** Modern, fast Rust-based linter from the Oxc project.
-Updated daily (1.78.0). Good replacement for ESLint with less configuration
-overhead.
+Updated daily (pinned at 1.77.0 in `bun.lock`). Good replacement for ESLint
+with less configuration overhead.
 
 ### Vitest 4 / Playwright 1.52 (testing)
 **✅ Right choice.** Vitest is the standard Vite-native test runner. Playwright
@@ -167,8 +167,8 @@ runs `server -s3` (master + volume + filer + S3 gateway in a single process),
 which fits the one-machine self-hosting baseline. The app keeps using the
 standard S3 API via `aws-sdk-s3`, so the swap required **no application code
 changes** — only infrastructure: the compose service, the `seaweedfs-init`
-bootstrap (now `amazon/aws-cli` instead of `minio/mc`), statically-declared
-identities in `deploy/seaweedfs/s3.json`, and `.env` values
+bootstrap (now `amazon/aws-cli` instead of `minio/mc`), identities generated
+at container start (`deploy/seaweedfs/generate-s3-identities.sh`), and `.env` values
 (`NISABA_S3_*` / `SEAWEEDFS_HOST_S3_PORT` replacing `MINIO_ROOT_*`).
 
 Why MinIO had to go (the problem that motivated the swap):

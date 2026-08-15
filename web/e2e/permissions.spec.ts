@@ -96,10 +96,11 @@ test.describe("Role UI gates (real DOM selectors)", () => {
     for (let i = 0; i < count; i++) {
       await expect(deleteBtns.nth(i)).toBeHidden(HIDDEN)
     }
-    // Share button (member management) is owner/author-only too; Compile stays
-    // enabled (reviewers can compile).
+    // Share button (member management) is owner/author-only; Compile stays
+    // enabled (reviewers can compile), and Export is visible to reviewers too
+    // (the server grants them export for review copies).
     await expect(page.locator("#share-button")).toBeHidden(HIDDEN)
-    await expect(page.locator("#export-button")).toBeHidden(HIDDEN)
+    await expect(page.locator("#export-button")).toBeVisible()
     await expect(page.locator("#compile-button")).toBeEnabled()
 
     await owner.close()

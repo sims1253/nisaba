@@ -24,5 +24,5 @@ except Exception:
     fi
     sleep 3
 done
-echo "timed out waiting for ${container} to become healthy" >&2
+echo "timed out waiting for ${container} to become healthy after ${i} attempts" >&2
 exit 1

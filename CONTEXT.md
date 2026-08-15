@@ -5,7 +5,9 @@ tests, and user-facing text should use these terms consistently.
 
 ## Terms
 
-- **Organization** — security and billing boundary containing members and projects.
+- **Organization** *(planned)* — security and billing boundary containing members and
+  projects. No code implements organizations today; multi-tenancy is deliberately
+  deferred (see [`ROADMAP.md`](ROADMAP.md)).
 - **Project** — collaborative workspace containing files, references, settings, checkpoints,
   and build artifacts.
 - **Document** — editable text file at a stable project-relative path. It owns collaborative
@@ -17,10 +19,16 @@ tests, and user-facing text should use these terms consistently.
 - **Reference** — structured citation metadata attached to a project.
 - **Review mark** — typed range annotation representing a suggestion or other review state.
 - **Thread** — anchored discussion with messages and resolution state.
-- **Checkpoint** — immutable record of exact project inputs at a point in time.
-- **Build** — isolated compiler execution over checkpointed inputs.
-- **Artifact** — immutable output of a build, with provenance and diagnostics.
-- **Share link** — revocable, scoped capability granting read-only access to selected output.
+- **Checkpoint** *(planned)* — immutable record of exact project inputs at a point in time.
+  Checkpoints as the build/history input remain roadmap work.
+- **Build** *(planned)* — isolated compiler execution over checkpointed inputs.
+- **Artifact** *(planned)* — immutable output of a build, with provenance and diagnostics.
+  Compilation returns PDFs directly today; content-addressed artifact storage is
+  roadmap work.
+- **Share link** — revocable capability granting a chosen project role (up to `author`)
+  to any signed-in user who redeems it. The effective role is the least privileged
+  of the link's role and the redeemer's identity-provider role (see
+  [`docs/security.md`](docs/security.md) §2).
 
 ## Boundaries
 

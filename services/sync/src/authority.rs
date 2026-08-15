@@ -25,10 +25,9 @@ use crate::protocol::CatchUp;
 /// suggestion marks). The web client binds this key (web/src/main.ts), and the
 /// review layer rides in the `review` map container.
 pub const TEXT_CONTAINER: &str = "text";
-/// The container holding the serialized review-item list under the `items` key.
+/// The container holding the review items (one JSON payload per map key,
+/// keyed by item id). The web client binds this key (web/src/review-persistence.ts).
 pub const REVIEW_CONTAINER: &str = "review";
-pub const REVIEW_ITEMS_KEY: &str = "items";
-
 /// What one inbound update changes in the authority, judged by forking the
 /// authority, applying the update to the fork, and comparing the `text` and
 /// `review` containers before/after.
@@ -41,10 +40,11 @@ pub struct ReviewDelta {
     pub text_before: String,
     /// Text after the update (fork).
     pub text_after: String,
-    /// Serialized review `items` value before the update (None when absent).
-    pub review_before: Option<String>,
-    /// Serialized review `items` value after the update (None when absent).
-    pub review_after: Option<String>,
+    /// Fingerprint of the review container before the update (see
+    /// [`review_fingerprint`]).
+    pub review_before: String,
+    /// Fingerprint of the review container after the update (fork).
+    pub review_after: String,
 }
 
 /// Wraps an authoritative [`LoroDoc`] for one document.
@@ -104,11 +104,11 @@ impl AuthorityDoc {
     /// surfaces that as a protocol error).
     pub fn review_delta(&self, bytes: &[u8]) -> SyncResult<ReviewDelta> {
         let text_before = self.doc.get_text(TEXT_CONTAINER).to_string();
-        let review_before = review_items(&self.doc);
+        let review_before = review_fingerprint(&self.doc);
         let fork = self.doc.fork();
         fork.import(bytes)?;
         let text_after = fork.get_text(TEXT_CONTAINER).to_string();
-        let review_after = review_items(&fork);
+        let review_after = review_fingerprint(&fork);
         Ok(ReviewDelta {
             touches_text: text_before != text_after,
             touches_review: review_before != review_after,
@@ -159,15 +159,21 @@ impl AuthorityDoc {
     }
 }
 
-/// Read the serialized review-item list stored under `items` in the `review`
-/// map container, if any.
-fn review_items(doc: &LoroDoc) -> Option<String> {
-    doc.get_map(REVIEW_CONTAINER)
-        .get(REVIEW_ITEMS_KEY)
-        .and_then(|value| match value.get_deep_value() {
-            loro::LoroValue::String(s) => Some(s.to_string()),
-            _ => None,
-        })
+/// A deterministic fingerprint of every entry in the `review` map container.
+///
+/// The reviewer-text gate only needs to know whether an update CHANGED the
+/// review container, not what it holds. The web client stores review items as
+/// one JSON payload per map key; fingerprinting ALL entries detects any change
+/// to the container regardless of key layout, where reading one specific key
+/// would risk misclassifying a reviewer's suggestion as a bare text edit
+/// (rejected by the seed/graft policy).
+fn review_fingerprint(doc: &LoroDoc) -> String {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    doc.get_map(REVIEW_CONTAINER).for_each(|key, value| {
+        entries.push((key.to_string(), format!("{:?}", value.get_deep_value())));
+    });
+    entries.sort();
+    format!("{entries:?}")
 }
 
 impl Default for AuthorityDoc {
