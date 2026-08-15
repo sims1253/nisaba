@@ -166,18 +166,11 @@ fn env_u64(name: &str, default: u64) -> Result<u64, String> {
 #[derive(Debug, Serialize)]
 pub struct CompileResponse {
     pdf: Option<String>,
-    frames: Vec<Frame>,
     span_map: Vec<SpanMapEntry>,
     diagnostics: Vec<Diagnostic>,
     outline: Vec<OutlineEntry>,
     build_id: String,
     instrumentation: Instrumentation,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Frame {
-    page: usize,
-    svg: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -209,7 +202,6 @@ pub struct OutlineEntry {
 pub struct Instrumentation {
     compile_ms: u128,
     pdf_ms: u128,
-    svg_ms: u128,
     worker_reused: bool,
     worker_compiles: u64,
     cache_hits: u64,
@@ -672,14 +664,12 @@ impl Worker {
                     .collect();
                 return Ok(CompileResponse {
                     pdf: None,
-                    frames: Vec::new(),
                     span_map: source_span_map(None, &world, &request.sources),
                     diagnostics,
                     outline: outline(&request.sources),
                     build_id: build_id(self.compile_count),
                     instrumentation: instrumentation(
                         started,
-                        0,
                         0,
                         reused,
                         self,
@@ -714,7 +704,6 @@ impl Worker {
                     .collect();
                 return Ok(CompileResponse {
                     pdf: None,
-                    frames: Vec::new(),
                     span_map: source_span_map(Some(&document), &world, &request.sources),
                     diagnostics,
                     outline: outline(&request.sources),
@@ -722,7 +711,6 @@ impl Worker {
                     instrumentation: instrumentation(
                         started,
                         pdf_started.elapsed().as_millis(),
-                        0,
                         reused,
                         self,
                         convergence_passes,
@@ -731,33 +719,18 @@ impl Worker {
             }
         };
         let pdf_ms = pdf_started.elapsed().as_millis();
-        // SVG page frames are not computed: they were eagerly rendered for
-        // every page and consumed by no client (the old opt-in request flag
-        // defaulted off everywhere). The response field stays for schema
-        // compatibility and is always empty.
-        let svg_ms = 0u128;
-        let frames = Vec::new();
         let mut result = CompileResponse {
             pdf: Some(BASE64.encode(pdf)),
-            frames,
             span_map: source_span_map(Some(&document), &world, &request.sources),
             diagnostics,
             outline: outline(&request.sources),
             build_id: build_id(self.compile_count),
-            instrumentation: instrumentation(
-                started,
-                pdf_ms,
-                svg_ms,
-                reused,
-                self,
-                convergence_passes,
-            ),
+            instrumentation: instrumentation(started, pdf_ms, reused, self, convergence_passes),
         };
         result.instrumentation.compile_ms = compile_ms;
         tracing::info!(
             compile_ms,
             pdf_ms,
-            svg_ms,
             pages = document.pages().len(),
             cache_hits = self.cache_hits,
             cache_misses = self.cache_misses,
@@ -771,19 +744,13 @@ impl Worker {
 fn instrumentation(
     started: Instant,
     pdf_ms: u128,
-    svg_ms: u128,
     reused: bool,
     worker: &Worker,
     convergence_passes: u8,
 ) -> Instrumentation {
     Instrumentation {
-        compile_ms: started
-            .elapsed()
-            .as_millis()
-            .saturating_sub(pdf_ms)
-            .saturating_sub(svg_ms),
+        compile_ms: started.elapsed().as_millis().saturating_sub(pdf_ms),
         pdf_ms,
-        svg_ms,
         worker_reused: reused,
         worker_compiles: worker.compile_count,
         cache_hits: worker.cache_hits,
@@ -1062,7 +1029,6 @@ mod tests {
             .expect("compile");
         let pdf = BASE64.decode(response.pdf.expect("pdf")).expect("base64");
         assert!(pdf.starts_with(b"%PDF-"));
-        assert!(response.frames.is_empty());
         assert!(response.outline.iter().any(|entry| entry.title == "Hello"));
     }
 

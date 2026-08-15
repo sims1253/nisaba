@@ -101,28 +101,27 @@ describe("app service contract", () => {
 
   it("posts the generic project export request", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ok({
-      compile: { pdf_base64: null, frames: [], span_map: [], diagnostics: [], outline: [], build_id: "b1" },
+      compile: { pdf_base64: null, span_map: [], diagnostics: [], outline: [], build_id: "b1" },
       references: { files: [] }, zip_base64: null, zip_filename: null
     })))
-    const result = await Effect.runPromise(api.exportProject("p1", "chapters/main.typ", "full", "proposed"))
+    const result = await Effect.runPromise(api.exportProject("p1", "chapters/main.typ", "proposed"))
     expect(result.compile.build_id).toBe("b1")
     const [url, request] = vi.mocked(fetch).mock.calls[0] ?? []
     expect(url).toBe("/api/projects/p1/exports")
-    expect(JSON.parse(String(request?.body))).toEqual({ entry: "chapters/main.typ", mode: "full", view: "proposed" })
+    expect(JSON.parse(String(request?.body))).toEqual({ entry: "chapters/main.typ", view: "proposed" })
   })
 
-  it("compiles in document mode by default and attaches the bearer token", async () => {
+  it("compiles and attaches the bearer token", async () => {
     vi.stubGlobal("localStorage", {
       getItem: () => JSON.stringify({ accessToken: "token-1" }), setItem: () => undefined, removeItem: () => undefined
     })
     vi.stubGlobal("fetch", vi.fn(async () => ok({
-      pdf_base64: "JVBERg==", frames: [], span_map: [], diagnostics: [], outline: [], build_id: "b2"
+      pdf_base64: "JVBERg==", span_map: [], diagnostics: [], outline: [], build_id: "b2"
     })))
     await Effect.runPromise(api.compile({ projectId: "p1", entry: "main.typ", sources: { "main.typ": "= Hi" } }))
     const [url, request] = vi.mocked(fetch).mock.calls[0] ?? []
     expect(url).toBe("/api/compile")
     expect(new Headers(request?.headers).get("authorization")).toBe("Bearer token-1")
-    expect(JSON.parse(String(request?.body)).mode).toBe("document")
   })
 
   it("surfaces structured API errors", async () => {

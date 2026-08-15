@@ -101,8 +101,8 @@ policy where egress restriction is required.
    authorizes the request against the OIDC token, and orchestrates compiles and
    exports.
 4. **Compile (compile).** `app` sends the **projection** of the document to `compile` as plain Typst sources. `compile` knows nothing
-   about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, span
-   map, and (opt-in) page frames. Warm state is keyed by `project_id`.
+   about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, and span
+   map. Warm state is keyed by `project_id`.
 5. **Store reference files (seaweedfs).** Uploaded full-text PDFs land in
    `nisaba-blobs`. Object keys are opaque ids — **never citation numbers**. Compile/export artifacts are still returned directly;
    content-addressed artifact storage is roadmap work.
@@ -129,7 +129,6 @@ Content-Type: application/json
 }
 → 200 {
   "pdf"?:       "<base64 bytes>",
-  "frames"?:    [ ... ],
   "span_map":   [ ... ],
   "diagnostics":[ ... ],
   "outline":    [ ... ],
@@ -138,9 +137,9 @@ Content-Type: application/json
 }
 ```
 
-- This is the app→compile wire; the app's own public `POST /api/compile` keeps a
-  wider request shape (including a `mode` field) and narrows it to these four
-  fields before calling compile.
+- This is the app→compile wire; the app's own public `POST /api/compile` accepts
+  marks alongside these fields, applies the `view` projection server-side, and
+  sends only the projected sources here.
 - Warm `comemo` caches persist across calls for the same `project_id`.
 
 ### 4.2 `sync` — WebSocket

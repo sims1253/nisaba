@@ -50,9 +50,6 @@ impl CompileClient for HttpCompileClient {
             CompileView::Public => "public",
             CompileView::Redline => "redline",
         };
-        // `mode` is intentionally not forwarded: the compile service removed
-        // the field (it never changed behaviour), and serde ignores unknown
-        // fields there, so old and new services interoperate either way.
         let payload = json!({
             "project_id": request.project_id.to_string(),
             "entry": request.entry,
@@ -90,7 +87,6 @@ impl CompileClient for HttpCompileClient {
             .map_err(|error| AppError::Dependency(format!("invalid compile response: {error}")))?;
         Ok(CompileResponse {
             pdf_base64: body.pdf,
-            frames: body.frames,
             span_map: body.span_map,
             diagnostics: body.diagnostics,
             outline: body.outline,
@@ -101,7 +97,6 @@ impl CompileClient for HttpCompileClient {
 #[derive(Debug, Deserialize)]
 struct CompileWireResponse {
     pdf: Option<String>,
-    frames: Vec<Value>,
     span_map: Vec<Value>,
     diagnostics: Vec<Value>,
     outline: Vec<Value>,

@@ -3106,7 +3106,7 @@ function openExport(): void {
     setText("#export-result", "Saving current edits…")
     void saveBeforeServerSnapshot().then(() => {
       setText("#export-result", "Exporting…")
-      run(api.exportProject(project.id, entry, "full", state.view), (result) => {
+      run(api.exportProject(project.id, entry, state.view), (result) => {
       if (exportButton) exportButton.disabled = false
       const files = result.references.files
       const pdf = result.compile.pdf_base64
@@ -4295,7 +4295,6 @@ function compileCurrent(): void {
       entry,
       sources: { [entry]: editor.state.doc.toString() },
       marks: { [entry]: marks },
-      mode: "document",
       view: state.view
     }).pipe(
       Effect.tap(() => Effect.sync(() => { compiling = false; setCompileButtonBusy(false); drainPendingCompile() })),
@@ -4405,7 +4404,6 @@ function compileForDiagnostics(): void {
       entry,
       sources: { [entry]: editor.state.doc.toString() },
       marks: { [entry]: marks },
-      mode: "document",
       view: state.view
     }).pipe(
       Effect.tap(() => Effect.sync(() => { compiling = false; drainPendingCompile() })),

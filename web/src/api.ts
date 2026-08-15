@@ -88,7 +88,6 @@ export type Fulltext = typeof Fulltext.Type
 
 const CompileResponse = Schema.Struct({
   pdf_base64: Schema.NullOr(Schema.String),
-  frames: Schema.Array(Schema.Unknown),
   span_map: Schema.Array(Schema.Unknown),
   diagnostics: Schema.Array(Schema.Unknown),
   outline: Schema.Array(Schema.Unknown),
@@ -109,7 +108,6 @@ const ExportResponse = Schema.Struct({
 })
 export type ExportResponse = typeof ExportResponse.Type
 
-export type CompileMode = "document" | "full"
 export type CompileView = "baseline" | "proposed" | "redline" | "public"
 
 // ---------------------------------------------------------------------------
@@ -363,10 +361,9 @@ export const deleteFulltext = (projectId: string, referenceId: string): Effect.E
 export const exportProject = (
   projectId: string,
   entry: string,
-  mode: CompileMode = "full",
   view: CompileView = "proposed"
 ): Effect.Effect<ExportResponse, ApiError> =>
-  request(path("projects", projectId, "exports"), decoder(ExportResponse), json({ entry, mode, view }))
+  request(path("projects", projectId, "exports"), decoder(ExportResponse), json({ entry, view }))
 
 /**
  * Compiles sources to a PDF.
@@ -379,7 +376,6 @@ export const compile = (input: {
   readonly entry: string
   readonly sources: Readonly<Record<string, string>>
   readonly marks?: Readonly<Record<string, readonly MarkInput[]>>
-  readonly mode?: CompileMode
   readonly view?: CompileView
 }): Effect.Effect<CompileResponse, ApiError> =>
   request(
@@ -390,7 +386,6 @@ export const compile = (input: {
       entry: input.entry,
       sources: input.sources,
       marks: input.marks ?? {},
-      mode: input.mode ?? "document",
       view: input.view ?? "proposed"
     })
   )

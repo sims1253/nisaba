@@ -2292,7 +2292,6 @@ async fn export_project(
         entry: master_path,
         sources,
         marks: BTreeMap::new(),
-        mode: r.mode,
         view: r.view,
     };
     inject_per_document_bibliography(&mut compile_request, &doc_yaml);
