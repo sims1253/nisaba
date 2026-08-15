@@ -146,7 +146,7 @@ impl SimPeer {
     }
 
     /// Write the review container's `items` value (a JSON string) and commit,
-    /// exactly like the web client's `persistReview`.
+    /// exactly like the web client's legacy schema-v1 `persistReview`.
     pub fn set_review(&self, items_json: &str) {
         self.doc
             .get_map(nisaba_sync::authority::REVIEW_CONTAINER)
@@ -155,6 +155,23 @@ impl SimPeer {
                 items_json.to_string(),
             )
             .unwrap();
+        self.doc.commit();
+    }
+
+    /// Write review items the way the web client's schema-v2 persistence does:
+    /// a `__schema: 2` marker, one JSON item per map key (the item id), and the
+    /// legacy `items` blob deleted. Commits. Mirrors
+    /// `web/src/review-persistence.ts` `writeReviewItemsToMap`.
+    pub fn set_review_v2(&self, items: &[(&str, &str)]) {
+        let map = self.doc.get_map(nisaba_sync::authority::REVIEW_CONTAINER);
+        map.insert("__schema", 2).unwrap();
+        for (id, json) in items {
+            map.insert(id, json.to_string()).unwrap();
+        }
+        if map.get(nisaba_sync::authority::REVIEW_ITEMS_KEY).is_some() {
+            map.delete(nisaba_sync::authority::REVIEW_ITEMS_KEY)
+                .unwrap();
+        }
         self.doc.commit();
     }
 

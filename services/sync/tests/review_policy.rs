@@ -183,3 +183,66 @@ async fn reviewer_review_only_update_is_accepted() {
         .expect("review-only update accepted");
     assert!(rev.review_items().is_some());
 }
+
+#[tokio::test]
+async fn reviewer_first_suggestion_in_empty_room_with_v2_review_keys_is_accepted() {
+    // Regression (e2e, 2026-08-15): the web client's schema-v2 review
+    // persistence writes one JSON item per map key and carries no legacy
+    // `items` blob. Detecting review changes by reading only `items` missed
+    // the review half of the combined suggestion update, classified it as a
+    // bare text edit in an empty room, and rejected it as a mismatched seed —
+    // disconnecting every reviewer on their first suggestion. The empty
+    // verifier allow-list guarantees this test fails if the seed branch is
+    // ever taken for a combined update.
+    let room = room_with_verifier(vec![], false).await;
+    let mut rev = SimPeer::new(3, Role::Reviewer);
+    rev.connect(&room, &[]).await;
+    rev.drain();
+    rev.doc.get_text("text").insert(0, "suggested").unwrap();
+    rev.set_review_v2(&[(
+        "r1",
+        r#"{"id":"r1","kind":"suggestion","change":"insert","text":"suggested","status":"open"}"#,
+    )]);
+    rev.submit_first(&room)
+        .await
+        .expect("combined v2 suggestion accepted without seed verification");
+    assert_eq!(
+        room.authority().inner().get_text("text").to_string(),
+        "suggested"
+    );
+}
+
+#[tokio::test]
+async fn reviewer_v2_review_write_opens_the_text_window() {
+    // The separate-frame suggestion flow under schema v2: the review frame
+    // must open the peer's review window so the FOLLOW-UP text-only frame is
+    // accepted (the e2e overlap failure: the owner never saw the reviewer's
+    // suggestion because the text frame was rejected as uncorrelated).
+    let room = room_with_verifier(vec![], false).await;
+    let mut author = SimPeer::new(2, Role::Author);
+    author.connect(&room, &[]).await;
+    author.insert(0, "base");
+    author.submit(&room).await;
+
+    let mut rev = SimPeer::new(3, Role::Reviewer);
+    rev.connect(&room, &[]).await;
+    rev.drain();
+    // Frame 1: a review-only v2 write (per-item keys, no legacy blob).
+    rev.set_review_v2(&[(
+        "r1",
+        r#"{"id":"r1","kind":"suggestion","change":"insert","text":" more","status":"open"}"#,
+    )]);
+    rev.submit_result(&room)
+        .await
+        .expect("review-only v2 frame");
+    // Frame 2: the text the suggestion annotates, as its own update.
+    rev.doc.get_text("text").insert(4, " more").unwrap();
+    rev.doc.commit();
+    rev.submit_result(&room)
+        .await
+        .expect("text frame within the review window");
+    assert_eq!(
+        room.authority().inner().get_text("text").to_string(),
+        "base more"
+    );
+}
