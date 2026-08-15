@@ -3202,8 +3202,10 @@ function toggleSuggesting(): void {
  *   every body edit they make is recorded as a suggestion rather than a silent
  *   overwrite. The lock is enforced here (UI) and relies on the server already
  *   permitting reviewer document writes (needed for suggestion-mode edits).
- * - M4: reviewers and read-only viewers cannot export (the server returns 403),
- *   so the Export button is hidden up-front rather than failing on click.
+ * - M4: read-only viewers cannot export (the server returns 403), so the
+ *   Export button is hidden up-front rather than failing on click. Reviewers
+ *   CAN export (the server grants them Permission::Document for review
+ *   copies), so the button is shown to them.
  */
 function applyRoleGates(): void {
   // Outside a project the membership role is unknown; gate the project list
@@ -3219,7 +3221,7 @@ function applyRoleGates(): void {
     || (state.role === "reviewer" && !reviewerSyncReady)
     || (state.role === undefined ? !globalCanManage && !(Array.isArray(tokenRoles) && tokenRoles.includes("reviewer")) : state.role === "read-only")
   const exportButton = el<HTMLElement>("#export-button")
-  if (exportButton) exportButton.hidden = !canManage
+  if (exportButton) exportButton.hidden = !(canManage || state.role === "reviewer")
   // Share/Invite is available to owners and authors (the roles the server allows
   // to manage members). Reviewers and read-only viewers can't add members, so
   // the button stays hidden for them (L3).

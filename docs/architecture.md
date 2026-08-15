@@ -125,13 +125,11 @@ Content-Type: application/json
   "project_id": "uuid",
   "entry": "m3/3-2-1.typ",
   "sources": { "<path>": "<typst source>", ... },   // the projection, not the CRDT
-  "mode": "document" | "full",
-  "view": "baseline" | "proposed" | "redline",
-  "include_frames": false                             // opt-in, default false
+  "view": "baseline" | "proposed" | "redline"
 }
 → 200 {
   "pdf"?:       "<base64 bytes>",
-  "frames"?:    [ ... ],                              // empty unless include_frames is true
+  "frames"?:    [ ... ],
   "span_map":   [ ... ],
   "diagnostics":[ ... ],
   "outline":    [ ... ],
@@ -140,12 +138,10 @@ Content-Type: application/json
 }
 ```
 
-- `mode: "document"` compiles the entry standalone; cross-references to other
-  document fragments render unresolved (acceptable for the current preview).
-- `mode: "full"` compiles the full project.
+- This is the app→compile wire; the app's own public `POST /api/compile` keeps a
+  wider request shape (including a `mode` field) and narrows it to these four
+  fields before calling compile.
 - Warm `comemo` caches persist across calls for the same `project_id`.
-- SVG page frames are **opt-in** (`include_frames: true`); they default to off
-  (frames were previously computed eagerly for every page and consumed by nobody).
 
 ### 4.2 `sync` — WebSocket
 
@@ -263,7 +259,8 @@ Capabilities come from the **IdP role claim** (`author` / `reviewer` /
 | Create / rename / delete documents | ✓ | ✓ | — | — |
 | Accept / reject / comment (review layer) | ✓ | ✓ | ✓ | — |
 | Compile / see diagnostics | ✓ | ✓ | ✓ | ✓ |
-| Manage members / share links / export / delete project | ✓ | ✓ | — | — |
+| Export project | ✓ | ✓ | ✓ | — |
+| Manage members / share links / delete project | ✓ | ✓ | — | — |
 
 Reviewers are locked into suggesting mode: their edits become tracked
 suggestions in the review layer (synced over the CRDT relay) and are **never

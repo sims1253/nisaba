@@ -35,12 +35,14 @@ Conventions:
 
 ## SeaweedFS + bucket init
 
-Identities are **static**, declared in `deploy/seaweedfs/s3.json` — changing
-the key material means editing that file, not just the environment.
+Identities are **generated at container start** from these variables
+(`deploy/seaweedfs/generate-s3-identities.sh`) — changing the key material
+means changing the environment and recreating the container; no identity
+file is committed to the repo.
 
 | Variable | Default (compose) | What it does | Read by |
 |----------|-------------------|--------------|---------|
-| `NISABA_S3_ADMIN_KEY` | `nisaba-admin` | Admin identity used only by the bucket bootstrap | `deploy/seaweedfs/init-buckets.sh` (and must match `s3.json`) |
+| `NISABA_S3_ADMIN_KEY` | `nisaba-admin` | Admin identity used only by the bucket bootstrap | `deploy/seaweedfs/init-buckets.sh` (feeds the generated admin identity) |
 | `NISABA_S3_ADMIN_SECRET` | — **required** | Admin secret | same |
 | `SEAWEEDFS_HOST_S3_PORT` | `9100` | Host-side S3 port (`127.0.0.1`) | `docker-compose.yml` |
 | `NISABA_S3_BUCKET_BLOBS` | `nisaba-blobs` | Reference full-text bucket (created + versioned on first boot) | init script, `app` |
@@ -65,7 +67,7 @@ replacement is documented in [`deploy/keycloak/README.md`](../deploy/keycloak/RE
 |----------|---------|--------------|---------|
 | `DATABASE_URL` | — **required** | Postgres connection string; migrations run at startup | `PostgresRepository::from_env` (`services/app/src/persistence.rs`) |
 | `NISABA_S3_ENDPOINT` | — **required** | S3 endpoint as seen from the container (`http://seaweedfs:8333`) | `S3BlobStore::from_env` |
-| `NISABA_S3_ACCESS_KEY` / `NISABA_S3_SECRET_KEY` | — **required** | App S3 identity (must exist in `deploy/seaweedfs/s3.json`) | same |
+| `NISABA_S3_ACCESS_KEY` / `NISABA_S3_SECRET_KEY` | — **required** | App S3 identity (generated at seaweedfs start) | same |
 | `NISABA_S3_REGION` | `us-east-1` (code) / `local` (compose) | S3 region label | same |
 | `NISABA_S3_BUCKET_BLOBS` | — **required** | Full-text bucket | same |
 | `NISABA_OIDC_ISSUER` | `https://issuer.invalid` (code) | Expected `iss` claim; must match the token issuer exactly | `services/app/src/main.rs` |
@@ -118,6 +120,9 @@ Tuning variables (`NISABA_SYNC_OIDC_ALGORITHMS`, `..._LEEWAY_SECS`,
 | `NISABA_COMPILE_MODE` | `production` | `development`/`test` additionally disable auth — never use these modes in production |
 | `NISABA_COMPILE_TOKEN` | — **required** in production | Bearer secret enforced on `POST /compile` |
 | `NISABA_COMPILE_TIMEOUT_MS` | `120000` | Request compile timeout |
+| `NISABA_COMPILE_MAX_WORKERS` | `256` | Maximum cached Typst workers (LRU + idle-TTL evicted) |
+| `NISABA_COMPILE_WORKER_IDLE_TTL_MS` | `1800000` | Idle TTL before a cached worker is evicted |
+| `NISABA_COMPILE_MAX_CONCURRENT_COMPILES` | `8` | Global cap on concurrently running compiles |
 | `NISABA_COMPILE_MAX_BODY_BYTES` | `8388608` | Request body limit |
 | `NISABA_COMPILE_MAX_SOURCES` | `256` | Maximum source files |
 | `NISABA_COMPILE_MAX_SOURCE_BYTES` | `4194304` | Aggregate source bytes |

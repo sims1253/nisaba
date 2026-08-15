@@ -23,7 +23,6 @@ Request:
   "project_id": "project-1",
   "entry": "m3/3-2-1.typ",
   "sources": {"chapters/intro.typ": "= Introduction"},
-  "mode": "document",
   "view": "public"
 }
 ```
@@ -45,16 +44,21 @@ instrumentation including RSS when available.
 | `NISABA_COMPILE_MAX_BODY_BYTES` | `8388608` | Axum request body limit. |
 | `NISABA_COMPILE_MAX_SOURCES` | `256` | Maximum number of source files. |
 | `NISABA_COMPILE_MAX_SOURCE_BYTES` | `4194304` | Maximum sum of UTF-8 source bytes. |
+| `NISABA_COMPILE_MAX_WORKERS` | `256` | Maximum cached Typst workers (LRU + idle-TTL evicted). |
+| `NISABA_COMPILE_WORKER_IDLE_TTL_MS` | `1800000` | Idle TTL before a cached worker is evicted. |
+| `NISABA_COMPILE_MAX_CONCURRENT_COMPILES` | `8` | Global cap on concurrently running compiles. |
 
 The production default deliberately listens on `0.0.0.0:8080` for deployment. Put the
 service behind the deployment network boundary and configure a strong token; this token
 is an internal service credential, not an end-user OIDC credential.
 
-Workers are retained by `project_id` with no eviction. The global worker map is only held
-while looking up or inserting a worker. Compilation runs on Tokio's blocking pool and
-holds only that project's mutex, so projects can compile concurrently while requests for
-the same project serialize. RSS and worker/cache counters remain in response
-instrumentation. Eviction and project caps remain future work.
+Workers are cached by `project_id` and evicted by an LRU + idle-TTL policy under the
+`NISABA_COMPILE_MAX_WORKERS` cap, with a global concurrency semaphore
+(`NISABA_COMPILE_MAX_CONCURRENT_COMPILES`). The global worker map is only held while
+looking up or inserting an entry — building a new worker (parsing every source) happens
+outside the lock. Compilation runs on Tokio's blocking pool and holds only that project's
+mutex, so projects can compile concurrently while requests for the same project
+serialize. RSS and worker/cache counters remain in response instrumentation.
 
 The timeout bounds how long the HTTP request waits, but `spawn_blocking` tasks cannot be
 force-killed safely. A timed-out Typst compile may continue consuming a blocking-pool

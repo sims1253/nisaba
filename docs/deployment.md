@@ -78,9 +78,10 @@ Notes:
   a blank `NISABA_SYNC_AUTHZ_TOKEN` aborts app startup in production mode.
 - The machine secrets (`NISABA_COMPILE_TOKEN`, `NISABA_SYNC_AUTHZ_TOKEN`,
   S3 keys) must be different from any local-dev value.
-- SeaweedFS identities are declared statically in
-  `deploy/seaweedfs/s3.json` — change the key material there to match the
-  generated secrets before first boot.
+- SeaweedFS identities are generated at seaweedfs container start from the
+  `NISABA_S3_*` values (`deploy/seaweedfs/generate-s3-identities.sh`); set the
+  generated secrets in the environment file before first boot — they take
+  effect on the next container start.
 - Docker/orchestrator secrets (`secrets: external: true`) are future work
   (see [`security.md`](security.md) §5); environment files are today's mechanism.
 - The `just` recipes and `deploy/backup/*.sh` scripts source the repo-root

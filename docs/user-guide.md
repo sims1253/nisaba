@@ -66,7 +66,8 @@ table below is the plain-language summary; [`architecture.md`](architecture.md)
 | Edit the text directly | ✓ | ✓ | — (suggest only) | — |
 | Accept / reject / comment on suggestions | ✓ | ✓ | ✓ | — |
 | Create / rename / delete documents | ✓ | ✓ | — | — |
-| Invite / remove members, share links, export, delete project | ✓ | ✓ | — | — |
+| Export the project | ✓ | ✓ | ✓ | — |
+| Invite / remove members, share links, delete project | ✓ | ✓ | — | — |
 
 If an action is not available to your role it is hidden; if you call it through
 the API you get a 403 with the message "You don't have permission to do that".

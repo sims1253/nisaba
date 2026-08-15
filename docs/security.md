@@ -33,8 +33,8 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
 | `postgres` (superuser) | bootstrap + migrations only; never used by app | Compose `POSTGRES_USER`             |
 | `nisaba_app`           | owns `nisaba` DB; no SUPERUSER/CREATEDB       | `deploy/postgres/init/10-init-databases.sh` |
 | `keycloak`             | owns `keycloak` DB only                       | same init script                    |
-| SeaweedFS admin (`nisaba-admin`) | bootstrap + admin only; never used by app | `deploy/seaweedfs/s3.json` (static identity) |
-| `nisaba-app` S3 account| read/write/list/tag on `nisaba-*` buckets only | `deploy/seaweedfs/s3.json` (static identity) |
+| SeaweedFS admin (`nisaba-admin`) | bootstrap + admin only; never used by app | generated at seaweedfs start from env (`generate-s3-identities.sh`) |
+| `nisaba-app` S3 account| read/write/list/tag on `nisaba-*` buckets only | generated at seaweedfs start from env (`generate-s3-identities.sh`) |
 | Keycloak demo users    | local dev only (`demo`/`reviewer`/`reader`)   | `deploy/keycloak/nisaba-realm.json` |
 
 - OIDC roles `author` / `reviewer` / `read-only` are mapped into access tokens

@@ -218,12 +218,7 @@ impl Config {
     /// version vector: [`MAX_VV_BYTES`]). Called after frame decode but before
     /// the field is used, so oversized pre-auth input cannot drive the access
     /// resolver or the authority.
-    pub fn check_hello_field_size(
-        &self,
-        kind: &str,
-        len: usize,
-        max: usize,
-    ) -> Result<(), SyncError> {
+    pub fn check_hello_field_size(kind: &str, len: usize, max: usize) -> Result<(), SyncError> {
         if len > max {
             return Err(SyncError::Limit(format!(
                 "{kind} of {len} bytes exceeds limit of {max}"

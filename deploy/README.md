@@ -13,8 +13,9 @@ deploy/
   Dockerfile.web                       # multi-stage web image (bun → nginx)
   Dockerfile.web.dockerignore
   web/nginx.conf                       # non-root nginx: SPA + /api→app + /sync→sync + /healthz
+  web/nginx-security-headers.conf      # security headers + CSP Report-Only (included by nginx.conf)
   postgres/init/10-init-databases.sh   # least-privilege roles + databases
-  seaweedfs/s3.json                    # static S3 identities (access keys + actions)
+  seaweedfs/generate-s3-identities.sh  # S3 identities generated from env at container start
   seaweedfs/init-buckets.sh            # buckets + versioning (one-shot)
   keycloak/nisaba-realm.json           # OIDC realm (DEV-ONLY): client, roles, demo users
   keycloak/README.md                   # incl. production replacement checklist

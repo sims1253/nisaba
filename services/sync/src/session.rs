@@ -300,7 +300,7 @@ async fn handshake(
             crate::config::MAX_VV_BYTES,
         ),
     ] {
-        if let Err(e) = state.config.check_hello_field_size(kind, len, max) {
+        if let Err(e) = Config::check_hello_field_size(kind, len, max) {
             let _ = send_error(socket, codes::TOO_LARGE, &e.to_string()).await;
             return None;
         }
