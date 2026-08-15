@@ -3,8 +3,8 @@
 This document describes how the Nisaba services fit together: the service
 boundaries, the data flow for the core authoring loop, the storage model, and
 the externally-visible service APIs. It is the operational complement to
-[`PLAN.md`](../PLAN.md) (which is the *what/why*) and [`docs/security.md`](security.md)
-/ [`docs/operations.md`](operations.md) (the *how to run it safely*).
+[`docs/security.md`](security.md) / [`docs/operations.md`](operations.md)
+(the *how to run it safely*).
 
 > **Regenerated from the actual codebase.** A CI check (see `.github/workflows/`)
 > validates that the service inventory below matches the workspace members.
@@ -105,7 +105,7 @@ policy where egress restriction is required.
    map. Warm state is keyed by `project_id`.
 5. **Store reference files (seaweedfs).** Uploaded full-text PDFs land in
    `nisaba-blobs`. Object keys are opaque ids — **never citation numbers**. Compile/export artifacts are still returned directly;
-   content-addressed artifact storage is roadmap work.
+   content-addressed artifact storage is future work.
 
 The projection is the seam that keeps the compiler pure: `project(text, marks,
 view) -> String`. It is golden-file tested.

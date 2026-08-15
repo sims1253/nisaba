@@ -4,9 +4,9 @@
 # Run with: `cargo deny check` (or `just deny`).
 # Docs: https://embarkstudios.github.io/cargo-deny/
 #
-# Nisaba is AGPL-3.0-only (PLAN.md §2.6) and must stay compatible with:
+# Nisaba is AGPL-3.0-only and must stay compatible with:
 #   Apache-2.0 (Typst, hayagriva), MIT (Loro, CodeMirror, loro-codemirror),
-#   and the AGPL-3.0 Overleaf semantics we port (§2.5).
+#   and the AGPL-3.0 Overleaf semantics we port.
 # =============================================================================
 
 [graph]

@@ -8,8 +8,8 @@ walkthrough built on the §5 deltas), and
 [`configuration.md`](configuration.md) (the environment-variable reference).
 
 > **Status:** the local infrastructure and application tiers, health probes, and
-> backup scripts run today. Metrics/OTLP export, high-availability deployment, and the
-> production failure drills in the release checklist remain planned. Treat the Compose
+> backup scripts run today. Metrics/OTLP export, high-availability deployment, and
+> production failure drills remain planned. Treat the Compose
 > configuration as a local development stack, not a production manifest.
 
 ---
@@ -212,8 +212,7 @@ mode is gradual and visible, not sudden.
 
 ## 7. Things deliberately deferred (do not regress into building them)
 
-The complexity budget freed by the quality bar in
-[`PLAN.md`](../PLAN.md) goes to references, review and templates — **not** to these:
+The complexity budget goes to references, review and templates — **not** to these:
 
 - Cached cross-reference index + staleness flag for document previews.
 - Local WASM browser preview (a latency optimisation against Word, the baseline).

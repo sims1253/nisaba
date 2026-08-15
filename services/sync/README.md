@@ -2,8 +2,8 @@
 
 The sync service for Nisaba: a Loro 1.13.x CRDT **authority and relay** keyed by
 document id, with presence/awareness, an append-only op log, periodic snapshots,
-and a pluggable snapshot store. It implements the collaborative-editing core of the
-[product direction](../../PLAN.md) (see "Core model" and "Authoring loop").
+and a pluggable snapshot store. It implements the collaborative-editing core of
+the product.
 
 ## Capabilities
 
@@ -155,7 +155,7 @@ is **not** the end-user's access token (sync validates that separately in stage 
 ## Design invariants
 
 - **Opaque transport** — sync never inspects or re-serialises Loro state (a
-  core-model principle in `PLAN.md`). In particular, review-layer soft deletes (marks over CRDT positions,
+  core-model principle). In particular, review-layer soft deletes (marks over CRDT positions,
   review semantics) pass through untouched: **no physical deletion assumptions**.
 - **Presence is ephemeral** — never written to the op log or snapshots; it
   expires without a heartbeat.

@@ -1,5 +1,5 @@
 //! Persistence boundary: the op log + snapshot store reconstruct the authority
-//! document after a restart. This is the M2 "op log → snapshots" contract; the
+//! document after a restart — the "op log → snapshots" contract; the
 //! filesystem stores stand in for the S3-compatible blob boundary.
 
 mod common;

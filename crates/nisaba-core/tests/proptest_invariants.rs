@@ -2,9 +2,9 @@
 //!
 //! These properties express the load-bearing invariants of the pure model. They are
 //! deliberately independent of any CRDT: they hold for *every* `(text, marks)` snapshot a
-//! CRDT could converge on, so the M2 fuzz acceptance ("never produces a mark whose range is
-//! invalid against the text") is satisfied compositionally — each single resolution
-//! preserves it here.
+//! CRDT could converge on, so the fuzz acceptance criterion ("never produces a mark
+//! whose range is invalid against the text") is satisfied compositionally — each
+//! single resolution preserves it here.
 
 use nisaba_core::position::slice_chars;
 use nisaba_core::prelude::*;
@@ -159,7 +159,7 @@ proptest! {
     }
 
     /// After any single accept or reject, every surviving mark range stays within the new
-    /// text bounds and remains well ordered — the M2 invariant, one resolution at a time.
+    /// text bounds and remains well ordered — the core invariant, one resolution at a time.
     #[test]
     fn ranges_stay_valid_after_resolution((text, marks) in any_text_marks(6)) {
         let marks: MarkSet = marks.into_iter().collect();

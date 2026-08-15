@@ -1,6 +1,6 @@
 //! Nisaba sync service — Loro CRDT authority, relay, presence, and snapshots.
 //!
-//! This crate implements the M2 sync layer described in `PLAN.md` §4 / §8:
+//! This crate implements the Nisaba sync layer:
 //!
 //! * a WebSocket **authority/relay** keyed by document ids,
 //! * **binary CRDT update import/export** (opaque bytes; sync never inspects

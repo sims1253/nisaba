@@ -60,7 +60,7 @@ adds a full app-profile smoke (dev token + compile-through-nginx + sync WS).
 ```bash
 just image nisaba-compile        # = docker build -f deploy/Dockerfile.rust \
                                  #         --build-arg SERVICE=nisaba-compile -t nisaba-compile .
-just image-web                   # builds the SPA image (needs web/ to have a vite config)
+just image-web                   # builds the SPA image
 ```
 
 ## Health checks

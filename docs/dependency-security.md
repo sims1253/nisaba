@@ -15,5 +15,4 @@ is upgraded, and at least before each release.
 | RUSTSEC-2023-0089, RUSTSEC-2025-0141, RUSTSEC-2025-0057, RUSTSEC-2024-0436, RUSTSEC-2026-0206, RUSTSEC-2026-0192, RUSTSEC-2024-0320 | Typst/Tinymist rendering and syntax stack | These are maintenance warnings rather than known exploitable vulnerabilities; compiler inputs remain bounded and isolated from credentials | The owning upstream stack migrates to maintained replacements |
 
 Exceptions do not make the current compiler suitable for hostile multi-tenant use. Supervised
-worker-process isolation and hard resource limits remain release blockers in
-[`ROADMAP.md`](../ROADMAP.md).
+worker-process isolation and hard resource limits remain release blockers.

@@ -668,13 +668,7 @@ impl Worker {
                     diagnostics,
                     outline: outline(&request.sources),
                     build_id: build_id(self.compile_count),
-                    instrumentation: instrumentation(
-                        started,
-                        0,
-                        reused,
-                        self,
-                        convergence_passes,
-                    ),
+                    instrumentation: instrumentation(started, 0, reused, self, convergence_passes),
                 });
             }
         };

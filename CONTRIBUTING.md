@@ -55,5 +55,3 @@ Use focused commits and describe:
 - migration or compatibility impact,
 - tests run,
 - security, durability, or compatibility implications where relevant.
-
-By contributing, you agree that your contribution is licensed under AGPL-3.0-only.
