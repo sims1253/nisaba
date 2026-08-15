@@ -226,6 +226,10 @@ docker compose --env-file /etc/nisaba/env logs -f app
   `BACKUP_LOCAL_DIR`; see [`operations.md`](operations.md) §4 for the
   production backup deltas — off-host, immutable targets, scheduled restore
   drills).
+- Tabs open across the upgrade keep running the previous build's code (the SPA
+  is cached in the browser) and can write stale-shaped data through the sync
+  relay. There is deliberately no cross-version compatibility before the first
+  release: tell users to reload open tabs after an upgrade lands.
 - The upgrade path (forward migration on existing data) is a release-checklist
   item that has **not** been evidence-verified; test the upgrade on a copy of
   production data before doing it live.

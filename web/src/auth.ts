@@ -76,19 +76,27 @@ export function readStoredAccessToken(): string | undefined {
   return readStoredToken()?.accessToken
 }
 
-/** The full stored token, or `undefined` when absent, malformed, or expired. */
-export function readStoredToken(): AuthToken | undefined {
+/** The stored token without the expiry gate. The refresh grant can recover an
+ * already-expired access token, so the refresh paths must read it even when
+ * [`readStoredToken`] would treat it as gone (and clear it). */
+function readStoredTokenRaw(): AuthToken | undefined {
   try {
     const raw = storage()?.getItem(storageKey)
     if (!raw) return undefined
     const token = JSON.parse(raw) as AuthToken
-    if (typeof token.accessToken !== "string") return undefined
-    if (isTokenExpired(token)) {
-      clearStoredToken()
-      return undefined
-    }
-    return token
+    return typeof token.accessToken === "string" ? token : undefined
   } catch { return undefined }
+}
+
+/** The full stored token, or `undefined` when absent, malformed, or expired. */
+export function readStoredToken(): AuthToken | undefined {
+  const token = readStoredTokenRaw()
+  if (!token) return undefined
+  if (isTokenExpired(token)) {
+    clearStoredToken()
+    return undefined
+  }
+  return token
 }
 
 /** A token without an `expiresAt` (unexpected but tolerated) is never "expired". */
@@ -274,7 +282,10 @@ export function decodedTokenPayload(): Record<string, unknown> | undefined {
 export async function refreshAccessToken(): Promise<AuthToken | undefined> {
   const config = oidcConfigFromEnv()
   if (!config) return undefined
-  const stored = readStoredToken()
+  // Raw read (no expiry gate): refreshing an ALREADY-EXPIRED token is the
+  // recovery path — the refresh grant is still valid even when the access
+  // token is not.
+  const stored = readStoredTokenRaw()
   if (!stored?.refreshToken) return undefined
   const endpoint = config.tokenEndpoint ?? `${config.issuer.replace(/\/$/, "")}/protocol/openid-connect/token`
   const response = await fetch(endpoint, {
@@ -307,7 +318,9 @@ export async function refreshAccessToken(): Promise<AuthToken | undefined> {
   try { storage()?.setItem(storageKey, JSON.stringify(token)) } catch { /* storage unavailable */ }
   // A successful refresh arms the NEXT refresh: scheduleTokenRefresh is one-shot
   // (armed at sign-in/boot), so without re-arming here the token dies at the end
-  // of the refreshed lifetime. This clears and re-derives the module timer.
+  // of the refreshed lifetime. This clears and re-derives the module timer; the
+  // timestamp also spaces the next refresh (see REFRESH_MIN_SPACING_MS).
+  lastRefreshAt = Date.now()
   scheduleTokenRefresh()
   return token
 }
@@ -321,14 +334,32 @@ export async function refreshAccessToken(): Promise<AuthToken | undefined> {
  */
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 
+/**
+ * Minimum spacing between refreshes, even when the IdP issues access tokens
+ * no longer than the 60s refresh skew window. Without it, an `expires_in` of
+ * 60s or less keeps `msUntilRefresh <= 0` after every refresh and the
+ * schedule → refresh → schedule chain runs back-to-back, gated only by the
+ * token-endpoint round trip and with no backoff. Keycloak's 5-minute default
+ * never hits this; the floor exists for realms configured with 1-minute
+ * tokens.
+ */
+const REFRESH_MIN_SPACING_MS = 30_000
+let lastRefreshAt = 0
+
 export function scheduleTokenRefresh(): void {
   if (refreshTimer !== undefined) clearTimeout(refreshTimer)
-  const stored = readStoredToken()
+  // Raw read: the schedule must keep arming for expired tokens too (the
+  // refresh grant can recover them), not only for unexpired ones.
+  const stored = readStoredTokenRaw()
   if (!stored?.expiresAt || !stored?.refreshToken) return
   const msUntilRefresh = stored.expiresAt - Date.now() - 60_000
-  if (msUntilRefresh <= 0) {
-    void refreshAccessToken()
+  if (msUntilRefresh > 0) {
+    refreshTimer = setTimeout(() => void refreshAccessToken(), msUntilRefresh)
     return
   }
-  refreshTimer = setTimeout(() => void refreshAccessToken(), msUntilRefresh)
+  // The token is already inside the refresh skew window. An IdP issuing
+  // tokens shorter than the window would otherwise refresh back-to-back, so
+  // space consecutive refreshes by REFRESH_MIN_SPACING_MS.
+  const wait = Math.max(0, REFRESH_MIN_SPACING_MS - (Date.now() - lastRefreshAt))
+  refreshTimer = setTimeout(() => void refreshAccessToken(), wait)
 }

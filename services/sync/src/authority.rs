@@ -27,11 +27,6 @@ use crate::protocol::CatchUp;
 pub const TEXT_CONTAINER: &str = "text";
 /// The container holding the serialized review-item list under the `items` key.
 pub const REVIEW_CONTAINER: &str = "review";
-/// The legacy schema-v1 review key: the whole item list as one JSON string.
-/// The web client's schema-v2 persistence stores one JSON item per map key
-/// instead (and deletes this blob on migration); kept for the v1 test harness.
-pub const REVIEW_ITEMS_KEY: &str = "items";
-
 /// What one inbound update changes in the authority, judged by forking the
 /// authority, applying the update to the fork, and comparing the `text` and
 /// `review` containers before/after.
@@ -166,14 +161,11 @@ impl AuthorityDoc {
 /// A deterministic fingerprint of every entry in the `review` map container.
 ///
 /// The reviewer-text gate only needs to know whether an update CHANGED the
-/// review container, not what it holds. The web client has shipped two
-/// layouts: v1 stored the whole item list as one JSON string under
-/// [`REVIEW_ITEMS_KEY`]; v2 (current) stores one JSON item per map key plus a
-/// `__schema` marker and deletes the v1 blob. Fingerprinting ALL entries
-/// detects a change under either layout — including the v1→v2 migration —
-/// where reading only the `items` key would miss every v2 write and
-/// misclassify a reviewer's suggestion as a bare text edit (rejected by the
-/// seed/graft policy).
+/// review container, not what it holds. The web client stores review items as
+/// one JSON payload per map key; fingerprinting ALL entries detects any change
+/// to the container regardless of key layout, where reading one specific key
+/// would risk misclassifying a reviewer's suggestion as a bare text edit
+/// (rejected by the seed/graft policy).
 fn review_fingerprint(doc: &LoroDoc) -> String {
     let mut entries: Vec<(String, String)> = Vec::new();
     doc.get_map(REVIEW_CONTAINER).for_each(|key, value| {

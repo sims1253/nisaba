@@ -2415,9 +2415,9 @@ function renderReviewUpdate(update: ViewUpdate): void {
 
 /**
  * Writes the current review items into the active replica's "review" LoroMap
- * (per-item schema v2 — see review-persistence.ts for the layout and why it
- * replaced the single-blob v1 write), so they survive reload and sync to every
- * collaborator through the existing WebSocket relay.
+ * (one JSON item per map key — see review-persistence.ts for the layout and
+ * why per-item keys replaced the single-blob write), so they survive reload
+ * and sync to every collaborator through the existing WebSocket relay.
  *
  * It is guarded so it does NOT run while:
  *   * applying a remote review update (applyingRemoteReview) — would echo back;

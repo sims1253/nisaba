@@ -237,4 +237,35 @@ describe("refreshAccessToken", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(readStoredToken()?.accessToken).toBe("rotated-access")
   })
+
+  it("spaces refreshes when the IdP issues tokens shorter than the skew window", async () => {
+    vi.useFakeTimers()
+    // Clear any minimum-spacing carry-over from earlier tests (whose fake
+    // clocks can sit ahead of this test's), so the first refresh below is not
+    // itself delayed by the floor.
+    await vi.advanceTimersByTimeAsync(600_000)
+    // The stored token already sits inside the 60s refresh skew window.
+    localStore["nisaba.auth.token"] = JSON.stringify({
+      accessToken: "old-access",
+      refreshToken: "old-refresh",
+      expiresAt: Date.now() + 30_000
+    })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "short-lived",
+      expires_in: 30
+    }), { status: 200, headers: { "content-type": "application/json" } }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    scheduleTokenRefresh()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // The refreshed 30s token is STILL inside the skew window, so the next
+    // refresh must wait out the 30s minimum spacing — without it the
+    // schedule → refresh → schedule chain runs back-to-back with no backoff.
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })

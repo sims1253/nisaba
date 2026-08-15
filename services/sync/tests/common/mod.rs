@@ -145,41 +145,22 @@ impl SimPeer {
         std::mem::take(&mut *self.pending.lock().unwrap())
     }
 
-    /// Write the review container's `items` value (a JSON string) and commit,
-    /// exactly like the web client's legacy schema-v1 `persistReview`.
-    pub fn set_review(&self, items_json: &str) {
-        self.doc
-            .get_map(nisaba_sync::authority::REVIEW_CONTAINER)
-            .insert(
-                nisaba_sync::authority::REVIEW_ITEMS_KEY,
-                items_json.to_string(),
-            )
-            .unwrap();
-        self.doc.commit();
-    }
-
-    /// Write review items the way the web client's schema-v2 persistence does:
-    /// a `__schema: 2` marker, one JSON item per map key (the item id), and the
-    /// legacy `items` blob deleted. Commits. Mirrors
+    /// Write review items the way the web client's persistence does: one JSON
+    /// item per map key (the item id). Commits. Mirrors
     /// `web/src/review-persistence.ts` `writeReviewItemsToMap`.
-    pub fn set_review_v2(&self, items: &[(&str, &str)]) {
+    pub fn set_review(&self, items: &[(&str, &str)]) {
         let map = self.doc.get_map(nisaba_sync::authority::REVIEW_CONTAINER);
-        map.insert("__schema", 2).unwrap();
         for (id, json) in items {
             map.insert(id, json.to_string()).unwrap();
         }
-        if map.get(nisaba_sync::authority::REVIEW_ITEMS_KEY).is_some() {
-            map.delete(nisaba_sync::authority::REVIEW_ITEMS_KEY)
-                .unwrap();
-        }
         self.doc.commit();
     }
 
-    /// The peer's current review `items` value, if any.
-    pub fn review_items(&self) -> Option<String> {
+    /// The peer's persisted review item with `id`, if any (the JSON payload).
+    pub fn review_entry(&self, id: &str) -> Option<String> {
         self.doc
             .get_map(nisaba_sync::authority::REVIEW_CONTAINER)
-            .get(nisaba_sync::authority::REVIEW_ITEMS_KEY)
+            .get(id)
             .and_then(|value| match value.get_deep_value() {
                 loro::LoroValue::String(s) => Some(s.to_string()),
                 _ => None,

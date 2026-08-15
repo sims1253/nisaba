@@ -109,7 +109,10 @@ async fn reviewer_can_push_review_layer_updates() {
     let mut rev = SimPeer::new(8, Role::Reviewer);
     rev.connect(&room, &[]).await;
     // Suggestions live in the review container; the relay must accept them.
-    rev.set_review(r#"[{"id":"r1","kind":"suggestion","change":"insert","text":"hi"}]"#);
+    rev.set_review(&[(
+        "r1",
+        r#"{"id":"r1","kind":"suggestion","change":"insert","text":"hi"}"#,
+    )]);
     rev.submit(&room).await;
     rev.drain();
     assert_eq!(room.authority().inner().get_text("text").to_string(), "");
@@ -117,7 +120,7 @@ async fn reviewer_can_push_review_layer_updates() {
         room.authority()
             .inner()
             .get_map("review")
-            .get("items")
+            .get("r1")
             .is_some()
     );
 }

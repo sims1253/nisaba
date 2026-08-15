@@ -4,7 +4,7 @@
  * Previously the entire review collection was stored as a single JSON string in
  * one LoroMap key ("items"), so concurrent reviewers overwrote each other
  * wholesale via last-writer-wins semantics. Each item is now keyed by its ID
- * (schema v2; see review-persistence.ts).
+ * (see review-persistence.ts).
  *
  * These tests exercise the PRODUCTION read/write functions (imported from
  * review-persistence.ts — the same code main.ts's persistReview/loadPersistedReview
@@ -47,18 +47,17 @@ describe("per-item review CRDT entities", () => {
     expect(final2.map((item) => item.id)).toEqual(["c1", "c2"])
   })
 
-  it("writes the schema marker and one map key per item id", () => {
+  it("writes one map key per item id", () => {
     const doc = new LoroDoc()
     writeReviewItemsToMap(doc, [comment("a", "alice", 1000), comment("b", "alice", 2000)])
     doc.commit()
 
     const map = doc.getMap(REVIEW_CONTAINER)
-    expect(map.get("__schema")).toBe(2)
-    // Each item is its own map entry (JSON payload keyed by item id).
+    // Each item is its own map entry (JSON payload keyed by item id), so
+    // concurrent additions to DIFFERENT items write different keys and cannot
+    // clobber each other under last-writer-wins.
     expect(JSON.parse(String(map.get("a"))).body).toBe("note from alice")
     expect(JSON.parse(String(map.get("b"))).id).toBe("b")
-    // The legacy whole-list blob must be gone.
-    expect(map.get("items")).toBeUndefined()
   })
 
   it("reads come back in a deterministic creation order regardless of key iteration order", () => {
@@ -72,27 +71,6 @@ describe("per-item review CRDT entities", () => {
     expect(ids).toEqual(["a", "b", "z"])
     // Stable across repeated reads.
     expect(readReviewItemsFromMap(doc).map((item) => item.id)).toEqual(ids)
-  })
-
-  it("migrates a legacy single-blob layout: items are re-keyed per id and the blob is removed", () => {
-    const doc = new LoroDoc()
-    // Legacy v1 format: one JSON string under "items".
-    const legacy = [comment("old-1", "alice", 1000), comment("old-2", "bob", 2000)]
-    doc.getMap(REVIEW_CONTAINER).set("items", JSON.stringify(legacy))
-    doc.commit()
-
-    // A v1 reader (pre-upgrade build) still reads the legacy layout.
-    expect(readReviewItemsFromMap(doc).map((item) => item.id)).toEqual(["old-1", "old-2"])
-
-    // The next production write migrates: per-item keys carry the union, the
-    // blob is deleted so a stale legacy read cannot resurrect old items.
-    writeReviewItemsToMap(doc, [comment("new", "carol", 3000)])
-    doc.commit()
-
-    const map = doc.getMap(REVIEW_CONTAINER)
-    expect(map.get("__schema")).toBe(2)
-    expect(map.get("items")).toBeUndefined()
-    expect(readReviewItemsFromMap(doc).map((item) => item.id)).toEqual(["old-1", "old-2", "new"])
   })
 
   it("a local update to an item wins over the persisted copy without dropping peer items", () => {
