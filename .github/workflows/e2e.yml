@@ -18,10 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.3'
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -36,7 +38,7 @@ jobs:
           cp .env.example "$tmp"
           # Fetch Keycloak JWKS after infra is up
           docker compose --env-file "$tmp" up -d
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8090/realms/nisaba/protocol/openid-connect/certs >/dev/null 2>&1; then
               break
             fi
@@ -52,7 +54,7 @@ jobs:
           for svc in postgres seaweedfs keycloak app sync compile web; do
             echo "waiting for $svc..."
             ok=""
-            for i in $(seq 1 60); do
+            for _ in $(seq 1 60); do
               status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' nisaba-$svc-1 2>/dev/null || echo none)
               if [ "$status" = healthy ]; then echo "$svc healthy"; ok=1; break; fi
               sleep 3
@@ -79,7 +81,7 @@ jobs:
 
       - name: Upload test artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-results
           path: web/e2e/test-results/
@@ -98,4 +100,51 @@ jobs:
           echo "Tearing down compose stack (profile app, volumes + orphans)"
           docker compose --env-file "$tmp" --profile app down -v --remove-orphans \
             || echo "::warning::compose teardown failed; containers left running for inspection"
+          rm -f "$tmp"
+
+  # The deepest stack regression test: deploy/e2e-app.sh builds the full
+  # app-profile stack, verifies real OIDC token signatures (dev-token-minted
+  # RSA key + JWKS), the nginx /api/ proxy ordering, a compile→PDF round trip,
+  # and the 2026-08-09 regression assertions. Until now it was only
+  # shellchecked (tools.yml infra-lint) and run by hand — its assertions could
+  # rot silently.
+  stack-e2e:
+    runs-on: ubuntu-latest
+    # Same cold image builds as browser-e2e (three cargo-chef Rust builds, no
+    # layer cache on ephemeral runners) plus the Keycloak-dependent probe
+    # suite, so budget more than browser-e2e's 30 minutes.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # e2e-app.sh hard-requires uv: it runs deploy/dev-token.py and
+      # deploy/sync-handshake.py as PEP 723 scripts (both stdlib-only).
+      # jq, python3, openssl, and docker are preinstalled on ubuntu-latest.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      # Self-contained: the script brings up its OWN throwaway compose project
+      # (-p nisaba-e2e-$$, env derived from .env.example, dev-token JWKS
+      # injected), waits for health, runs the probes, and tears itself down
+      # via an EXIT trap — so this job must NOT duplicate browser-e2e's
+      # bring-up (two stacks would fight over the same published ports).
+      - name: Run the full stack e2e (deploy/e2e-app.sh)
+        run: ./deploy/e2e-app.sh
+
+      # Safety net for the cases the script's own EXIT trap cannot cover: the
+      # job was cancelled mid-build, or the trap's `compose down` itself
+      # failed. The env file is recreated because compose :?-interpolation
+      # requires it even for `down` — same trick as the teardown above.
+      - name: Tear down leftover e2e project
+        if: always()
+        run: |
+          tmp="$(mktemp)"
+          cp .env.example "$tmp"
+          leftover="$(docker compose ls -a --format json 2>/dev/null \
+            | jq -r '.[]?.Name?' | grep '^nisaba-e2e' || true)"
+          printf '%s\n' "$leftover" | while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            echo "::warning::e2e project '$p' still exists; tearing down"
+            docker compose --env-file "$tmp" -p "$p" --profile app down -v --remove-orphans || true
+          done
           rm -f "$tmp"
