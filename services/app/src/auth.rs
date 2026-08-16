@@ -20,6 +20,10 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::types::{AppError, MembershipRole};
 
+// The role vocabulary is shared with the sync service (`nisaba-auth`) so a
+// deployment's role spellings mean the same thing on both planes.
+pub use nisaba_auth::Role;
+
 #[derive(Debug, Clone)]
 pub struct Principal {
     pub subject: String,
@@ -27,22 +31,6 @@ pub struct Principal {
     /// The `preferred_username` claim (e.g. "demo"), used for membership
     /// lookups when the sharing UI invited by username rather than OIDC sub.
     pub preferred_username: Option<String>,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Role {
-    Author,
-    Reviewer,
-    ReadOnly,
-}
-impl Role {
-    fn parse(s: &str) -> Option<Self> {
-        match s {
-            "author" => Some(Self::Author),
-            "reviewer" => Some(Self::Reviewer),
-            "read-only" | "readonly" | "read_only" => Some(Self::ReadOnly),
-            _ => None,
-        }
-    }
 }
 
 #[async_trait]

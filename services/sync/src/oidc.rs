@@ -45,7 +45,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::auth::{AccessResolver, AuthError, Identity, Role};
+use crate::auth::{AccessResolver, AuthError, Identity, Role, RoleCapabilities};
 use crate::config::DocId;
 use crate::http::{HttpFetch, HttpFetchError, HttpMethod, HttpRequest};
 use crate::time::Clock;

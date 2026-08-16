@@ -49,6 +49,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # the app service, so they add no new registry entries.
 async-trait = "0.1"
 jsonwebtoken = "9"
+# The shared Role vocabulary (token spellings + the app authorization
+# endpoint's role answers). Vocabulary only — authorization policy stays in
+# each service.
+nisaba-auth = { path = "../../crates/nisaba-auth" }
 
 # Server-only deps (kept optional so the pure CRDT core is testable headless).
 axum = { version = "0.8", features = ["ws"], optional = true }

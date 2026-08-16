@@ -44,7 +44,7 @@ use dashmap::DashMap;
 use loro::VersionVector;
 use tokio::sync::mpsc;
 
-use crate::auth::{AuthError, Role};
+use crate::auth::{AuthError, Role, RoleCapabilities};
 use crate::authority::AuthorityDoc;
 use crate::config::{Config, DocId, PeerId};
 use crate::error::{SyncError, SyncResult};

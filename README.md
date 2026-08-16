@@ -21,6 +21,7 @@ Folders are derived from those paths, so Nisaba does not impose a content-specif
 
 ## Repository layout
 
+- `crates/nisaba-auth` — shared role vocabulary used by the app and sync services
 - `crates/nisaba-core` — document projections, marks, review, and validation
 - `crates/nisaba-references` — RIS, bibliography numbering, and reference validation
 - `crates/nisaba-export` — deterministic project-archive assembly

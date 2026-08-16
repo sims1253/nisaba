@@ -23,6 +23,7 @@ The following table is validated by CI against the Cargo workspace members
 | `nisaba-sync`      | Rust        | Loro CRDT authority, relay, presence, op-log      | impl. (`/healthz`, `/health/ready`) |
 | `nisaba-app`       | Rust        | CRUD, references, export orchestration, auth      | impl. (`/healthz`, `/health/ready`; Postgres + S3, inline JWKS) |
 | `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
+| `nisaba-auth`      | Rust (lib)  | Shared role vocabulary (`Role` spellings for tokens and the app/sync authz contract) | impl. |
 | `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
 | `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
 | `@nisaba/web`      | TypeScript  | CodeMirror 6 editor, paginated preview            | impl. |
@@ -39,6 +40,7 @@ boundary regardless.
 ### Rust workspace members
 
 ```
+crates/nisaba-auth        — shared role vocabulary (Role spellings)
 crates/nisaba-core        — pure domain: Position, projection, marks
 crates/nisaba-references  — RIS reference format
 crates/nisaba-export      — export utilities

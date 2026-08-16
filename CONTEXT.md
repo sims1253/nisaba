@@ -33,6 +33,9 @@ tests, and user-facing text should use these terms consistently.
 ## Boundaries
 
 - `nisaba-core` owns pure document, review, projection, and resolution behavior.
+- `nisaba-auth` owns the shared role vocabulary (the `author`/`reviewer`/`read-only`
+  spellings parsed from tokens and the app/sync authorization contract); authorization
+  decisions remain in each service.
 - `app` owns authorization and project metadata.
 - `sync` owns durable collaborative state and presence.
 - `compile` owns isolated compiler execution, not project semantics.

@@ -3534,6 +3534,7 @@ dependencies = [
  "hex",
  "http 1.5.0",
  "jsonwebtoken",
+ "nisaba-auth",
  "nisaba-core",
  "nisaba-export",
  "nisaba-references",
@@ -3550,6 +3551,10 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
 ]
+
+[[package]]
+name = "nisaba-auth"
+version = "0.1.0"
 
 [[package]]
 name = "nisaba-compile"
@@ -3605,6 +3610,7 @@ dependencies = [
  "futures-util",
  "jsonwebtoken",
  "loro",
+ "nisaba-auth",
  "reqwest",
  "serde",
  "serde_json",

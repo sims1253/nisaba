@@ -12,7 +12,8 @@ use common::SimPeer;
 use nisaba_sync::protocol::Frame;
 use nisaba_sync::{
     AccessResolver, AuthError, CapabilitySet, Config, DocId, DocRoom, MemoryOpLogStore,
-    MemorySnapshotStore, PeerId, Role, StaticAccessResolver, SyncError, SystemClock,
+    MemorySnapshotStore, PeerId, Role, RoleCapabilities, StaticAccessResolver, SyncError,
+    SystemClock,
 };
 use tokio::sync::mpsc;
 
