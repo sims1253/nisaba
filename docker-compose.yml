@@ -210,7 +210,7 @@ services:
       dockerfile: deploy/Dockerfile.rust
       args:
         SERVICE: nisaba-app
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     depends_on:
       postgres:
         condition: service_healthy
@@ -264,7 +264,7 @@ services:
       dockerfile: deploy/Dockerfile.rust
       args:
         SERVICE: nisaba-sync
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     environment:
       <<: *rust-env
       # Bind address the nisaba-sync binary reads (NOT a generic PORT).
@@ -319,7 +319,7 @@ services:
       dockerfile: deploy/Dockerfile.rust
       args:
         SERVICE: nisaba-compile
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     environment:
       <<: *rust-env
       # Bind address the nisaba-compile binary reads (NOT a generic PORT).
@@ -344,7 +344,7 @@ services:
         VITE_OIDC_ISSUER: ${NISABA_OIDC_ISSUER:-http://localhost:8090/realms/nisaba}
         VITE_OIDC_CLIENT_ID: ${NISABA_OIDC_CLIENT_ID:-nisaba-web}
         VITE_OIDC_SCOPE: openid profile email
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     depends_on:
       app:
         condition: service_healthy

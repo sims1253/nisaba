@@ -42,7 +42,7 @@ deployment deltas"). The ones that change what you do:
 | OIDC issuer | split browser/container hostnames | one external URL (§5 below) |
 | Keycloak | `start-dev --import-realm`, demo realm | `start --optimized`, own realm, no demo users |
 | Secrets | `.env` beside the checkout | generated secrets, kept outside the repo (§4) |
-| Restart policy | infra: `unless-stopped`; app tier: none | add `restart: unless-stopped` for the app tier (§7) |
+| Restart policy | all services: `unless-stopped` | already the Compose default (§7) |
 | Backups | local dir | off-host copies of every snapshot (§8) |
 
 ## 3. Host prerequisites
@@ -198,10 +198,10 @@ docker compose --env-file /etc/nisaba/env ps               # wait for "healthy"
   the sync WebSocket end to end. (`just e2e` does the same against a
   throwaway stack with a dev token.)
 - Take a first backup (§8) and **verify** it while the system is still small.
-- For unattended hosts: the app-tier services currently define no `restart:`
-  policy in `docker-compose.yml` (the infra services use `unless-stopped`).
-  Add `restart: unless-stopped` for app/sync/compile/web via a Compose overlay
-  until the default changes upstream.
+- For unattended hosts: every service (infra and app tier) ships
+  `restart: unless-stopped` in docker-compose.yml, so containers come back
+  after crashes and host reboots once the Docker daemon is enabled
+  (`systemctl enable docker`).
 
 ## 8. Upgrade procedure
 
