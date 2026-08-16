@@ -9,6 +9,12 @@
 # Project root (where this justfile lives).
 export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "target")
 
+# Load .env (same file compose interpolates) so recipes like psql, s3, and
+# migrate see NISABA_DB_USER / NISABA_S3_ADMIN_* / DATABASE_URL. Values already
+# present in the environment win, matching compose interpolation precedence.
+# A missing .env is not an error.
+set dotenv-load := true
+
 # Default: list available recipes.
 default:
     @just --list --unsorted
@@ -104,8 +110,12 @@ check:
     cargo check --workspace --all-targets
 
 test:
-    cargo test --workspace --all-targets
-    cargo test --workspace --doc
+    # DATABASE_URL from .env points at the Docker-internal hostname (for the
+    # app container). Drop it so the live_api tests fall back to their own
+    # .env parse, which builds the host-reachable 127.0.0.1:{POSTGRES_HOST_PORT}
+    # URL — otherwise dotenv-load would make them skip "no reachable database".
+    env -u DATABASE_URL cargo test --workspace --all-targets
+    env -u DATABASE_URL cargo test --workspace --doc
 
 # Fast feedback build of all binaries.
 build:
@@ -113,8 +123,9 @@ build:
 
 # Postgres-backed live API integration tests for the app service (the compose
 # stack must be running; skips cleanly when no database is reachable).
+# env -u DATABASE_URL: same reason as `test` — .env's value is container-facing.
 test-live:
-    cargo test -p nisaba-app --test live_api
+    env -u DATABASE_URL cargo test -p nisaba-app --test live_api
 
 clippy:
     cargo clippy --workspace --all-targets
