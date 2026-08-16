@@ -5,7 +5,7 @@
 # so cargo-audit and cargo-deny can never drift apart.
 set -euo pipefail
 
-ignored=($(sed -n '/^\[advisories\]/,/^\[licenses\]/p' deny.toml | grep -oE 'RUSTSEC-[0-9]{4}-[0-9]+' | sort -u))
+mapfile -t ignored < <(sed -n '/^\[advisories\]/,/^\[licenses\]/p' deny.toml | grep -oE 'RUSTSEC-[0-9]{4}-[0-9]+' | sort -u)
 
 args=()
 for advisory in "${ignored[@]}"; do
