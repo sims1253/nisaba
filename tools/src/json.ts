@@ -3,9 +3,8 @@
  *
  * "Deterministic" here means: the same logical value always produces byte-identical
  * output, regardless of key insertion order or which platform produced it. This is
- * what makes golden files and CI diffs trustworthy — see PLAN.md §9
- * ("Emitter/template stability — generated Typst must be deterministic or every
- * unrelated compile produces spurious diffs").
+ * what makes golden files and CI diffs trustworthy — generated Typst must be
+ * deterministic or every unrelated compile produces spurious diffs.
  *
  * Rules implemented:
  *   - Object keys are sorted with a plain code-unit comparison (stable across

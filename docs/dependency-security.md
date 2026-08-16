@@ -13,7 +13,7 @@ is upgraded, and at least before each release.
 | RUSTSEC-2026-0194, RUSTSEC-2026-0195 | Hayagriva/Typst → `quick-xml` | Inputs are size-limited at service boundaries; XML-based imports remain untrusted and must not bypass those limits | Upstream accepts `quick-xml >=0.41` |
 | RUSTSEC-2026-0098, -0099, -0104 | AWS SDK → rustls 0.21 → `rustls-webpki` 0.101 | S3 endpoints are operator-configured; production must use a trusted, controlled endpoint | AWS SDK graph removes rustls 0.21 |
 | RUSTSEC-2023-0089, RUSTSEC-2025-0141, RUSTSEC-2025-0057, RUSTSEC-2024-0436, RUSTSEC-2026-0206, RUSTSEC-2026-0192, RUSTSEC-2024-0320 | Typst/Tinymist rendering and syntax stack | These are maintenance warnings rather than known exploitable vulnerabilities; compiler inputs remain bounded and isolated from credentials | The owning upstream stack migrates to maintained replacements |
+| RUSTSEC-2026-0247 | Loro → `imbl` → `bitmaps` | `im` was patched to the maintained `imbl` fork via the `vendor/im` shim; `bitmaps` rides along with `imbl` and has no independent consumer | `imbl` drops `bitmaps` (tracked at jneem/imbl#170) |
 
 Exceptions do not make the current compiler suitable for hostile multi-tenant use. Supervised
-worker-process isolation and hard resource limits remain release blockers in
-[`ROADMAP.md`](../ROADMAP.md).
+worker-process isolation and hard resource limits remain release blockers.

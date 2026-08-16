@@ -324,7 +324,6 @@ impl CompileClient for RecordingCompile {
         *self.0.lock().unwrap() = Some(request);
         Ok(CompileResponse {
             pdf_base64: Some("JVBERi0xLjQ=".into()),
-            frames: vec![],
             span_map: vec![],
             diagnostics: vec![],
             outline: vec![],
@@ -374,7 +373,6 @@ async fn compile_proxy_converts_markdown_headings_like_export() {
             "project_id": project.id,
             "entry": "main.typ",
             "sources": {"main.typ": "# Hello\n### Sub"},
-            "mode": "document",
             "view": "baseline"
         })),
     )
@@ -426,7 +424,6 @@ async fn compile_proxy_projects_review_marks_before_forwarding() {
                 "id": 1, "start": 1, "end": 2, "kind": "insert",
                 "author": "alice", "timestamp": 1
             }]},
-            "mode": "document",
             "view": "baseline"
         })),
     )

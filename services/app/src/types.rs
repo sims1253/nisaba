@@ -192,9 +192,6 @@ pub struct ReferenceMetadataPatch {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FulltextInput {
-    /// Retained for wire compatibility; the server derives the object key from the reference ID.
-    #[serde(default)]
-    pub blob_ref: String,
     pub filename: String,
     pub content_type: String,
     pub size_bytes: u64,
@@ -210,7 +207,6 @@ pub struct CompileRequest {
     pub sources: BTreeMap<String, String>,
     #[serde(default)]
     pub marks: BTreeMap<String, Vec<MarkInput>>,
-    pub mode: CompileMode,
     pub view: CompileView,
 }
 
@@ -227,13 +223,6 @@ pub struct MarkInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum CompileMode {
-    Document,
-    Full,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum CompileView {
     Baseline,
     Proposed,
@@ -244,7 +233,6 @@ pub enum CompileView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileResponse {
     pub pdf_base64: Option<String>,
-    pub frames: Vec<Value>,
     pub span_map: Vec<Value>,
     pub diagnostics: Vec<Value>,
     pub outline: Vec<Value>,
@@ -265,7 +253,6 @@ pub struct ExportFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportRequest {
     pub entry: String,
-    pub mode: CompileMode,
     pub view: CompileView,
 }
 

@@ -2,7 +2,7 @@
  * Navigator structure: the file tree and the open document's section outline.
  *
  * Both are derived, never stored. A project is a flat set of path-addressed
- * documents (see PLAN.md, "Projects contain files"), so folders exist only
+ * documents, so folders exist only
  * because paths contain slashes — `buildFileTree` recovers that hierarchy for
  * display without the model growing a folder concept. Section headings are
  * parsed from the live source so the outline tracks typing, rather than only

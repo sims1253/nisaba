@@ -96,7 +96,7 @@ variables `.env.example` sets for the local stack:
 
 | Variable | Default | What it does |
 |----------|---------|--------------|
-| `NISABA_SYNC_ADDR` (legacy alias `NISABA_SYNC_BIND`) / `PORT` | `0.0.0.0:8080` | Bind address resolution order |
+| `NISABA_SYNC_ADDR` / `PORT` | `0.0.0.0:8080` | Bind address resolution order |
 | `SYNC_HOST_PORT` | `8101` | Host-side port (`127.0.0.1`), compose |
 | `NISABA_SYNC_DATA_DIR` | `data` (compose: `/data` volume) | Op-log + snapshot directory |
 | `NISABA_SYNC_DEV_ALLOW_ALL` | unset | **Never in production**: grants `author` to any non-empty token |

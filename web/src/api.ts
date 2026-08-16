@@ -33,6 +33,12 @@ export type Project = typeof Project.Type
 // role is project-scoped (from membership), distinct from the IdP roles in the
 // JWT: it's what the client uses to gate reviewer UX (suggesting lock, export).
 export type MembershipRole = "owner" | "author" | "reviewer" | "read-only"
+const MEMBERSHIP_ROLES: readonly MembershipRole[] = ["owner", "author", "reviewer", "read-only"]
+/** Narrow the wire role to the known union; an unexpected value falls back to
+ *  "read-only" (least privilege) so a future server role never accidentally
+ *  grants a reviewer author powers. */
+const asMembershipRole = (raw: string): MembershipRole =>
+  (MEMBERSHIP_ROLES as readonly string[]).includes(raw) ? (raw as MembershipRole) : "read-only"
 const Membership = Schema.Struct({
   project_id: Schema.String,
   subject: Schema.String,
@@ -88,7 +94,6 @@ export type Fulltext = typeof Fulltext.Type
 
 const CompileResponse = Schema.Struct({
   pdf_base64: Schema.NullOr(Schema.String),
-  frames: Schema.Array(Schema.Unknown),
   span_map: Schema.Array(Schema.Unknown),
   diagnostics: Schema.Array(Schema.Unknown),
   outline: Schema.Array(Schema.Unknown),
@@ -109,7 +114,6 @@ const ExportResponse = Schema.Struct({
 })
 export type ExportResponse = typeof ExportResponse.Type
 
-export type CompileMode = "document" | "full"
 export type CompileView = "baseline" | "proposed" | "redline" | "public"
 
 // ---------------------------------------------------------------------------
@@ -220,28 +224,19 @@ export const deleteProject = (projectId: string): Effect.Effect<void, ApiError> 
 // read their own role; non-members get 403. Drives the reviewer UX gates (H1/M4).
 export const getMembership = (projectId: string): Effect.Effect<Membership, ApiError> =>
   request(path("projects", projectId, "membership"), decoder(Membership)).pipe(
-    // The wire role is a kebab-case string; narrow to the known union. An
-    // unexpected value falls back to "read-only" (least privilege) so a future
-    // server role never accidentally grants a reviewer author powers.
-    Effect.map((m) => ({ ...m, role: (["owner", "author", "reviewer", "read-only"] as const).includes(m.role as MembershipRole) ? (m.role as MembershipRole) : "read-only" }))
+    Effect.map((m) => ({ ...m, role: asMembershipRole(m.role) }))
   )
 
 // Manage project membership (Share/Invite UI, L3). Both routes require the
 // caller to have Manage permission (author/owner), enforced server-side.
 export const listMembers = (projectId: string): Effect.Effect<readonly Membership[], ApiError> =>
   request(path("projects", projectId, "members"), decoder(Schema.Array(Membership))).pipe(
-    Effect.map((members) => members.map((m) => ({
-      ...m,
-      role: (["owner", "author", "reviewer", "read-only"] as const).includes(m.role as MembershipRole) ? (m.role as MembershipRole) : "read-only"
-    })))
+    Effect.map((members) => members.map((m) => ({ ...m, role: asMembershipRole(m.role) })))
   )
 
 export const addMember = (projectId: string, subject: string, role: MembershipRole): Effect.Effect<Membership, ApiError> =>
   request(path("projects", projectId, "members"), decoder(Membership), json({ subject, role })).pipe(
-    Effect.map((m) => ({
-      ...m,
-      role: (["owner", "author", "reviewer", "read-only"] as const).includes(m.role as MembershipRole) ? (m.role as MembershipRole) : "read-only"
-    }))
+    Effect.map((m) => ({ ...m, role: asMembershipRole(m.role) }))
   )
 
 /** Removes a member (owner/author only; the owner row itself cannot be removed). */
@@ -363,10 +358,9 @@ export const deleteFulltext = (projectId: string, referenceId: string): Effect.E
 export const exportProject = (
   projectId: string,
   entry: string,
-  mode: CompileMode = "full",
   view: CompileView = "proposed"
 ): Effect.Effect<ExportResponse, ApiError> =>
-  request(path("projects", projectId, "exports"), decoder(ExportResponse), json({ entry, mode, view }))
+  request(path("projects", projectId, "exports"), decoder(ExportResponse), json({ entry, view }))
 
 /**
  * Compiles sources to a PDF.
@@ -379,7 +373,6 @@ export const compile = (input: {
   readonly entry: string
   readonly sources: Readonly<Record<string, string>>
   readonly marks?: Readonly<Record<string, readonly MarkInput[]>>
-  readonly mode?: CompileMode
   readonly view?: CompileView
 }): Effect.Effect<CompileResponse, ApiError> =>
   request(
@@ -390,7 +383,6 @@ export const compile = (input: {
       entry: input.entry,
       sources: input.sources,
       marks: input.marks ?? {},
-      mode: input.mode ?? "document",
       view: input.view ?? "proposed"
     })
   )

@@ -2,9 +2,7 @@
 
 ## Project status
 
-Nisaba is pre-production software. Do not use it for production documents or sensitive data
-until the applicable items in [`docs/release-checklist.md`](docs/release-checklist.md) have been
-verified for your deployment.
+Nisaba is pre-production software. Do not use it for production documents or sensitive data.
 
 ## Reporting a vulnerability
 

@@ -8,8 +8,7 @@ The core model is deliberately flat: a project contains documents identified by 
 Folders are derived from those paths, so Nisaba does not impose a content-specific hierarchy.
 
 > [!WARNING]
-> Nisaba is under active development. It is not ready for production data. See the
-> [roadmap](ROADMAP.md) and [release checklist](docs/release-checklist.md) for the known gaps.
+> Nisaba is under active development. It is not ready for production data.
 
 ## Capabilities
 
@@ -88,8 +87,6 @@ prerequisites.
 - [Dependency security](docs/dependency-security.md)
 - [Tech stack review](docs/tech-stack-review.md)
 - [Deploy definitions](deploy/README.md)
-- [Roadmap](ROADMAP.md)
-- [Product direction](PLAN.md)
 
 ## Contributing and security
 

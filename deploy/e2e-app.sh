@@ -169,7 +169,7 @@ echo "[e2e] created project ${proj_id}"
 payload="$(jq -nc --arg pid "$proj_id" \
     '{project_id:$pid, entry:"main.typ",
       sources:{"main.typ":"#set page(width: 10cm, height: auto)\nHello e2e"},
-      mode:"full", view:"baseline"}')"
+      view:"baseline"}')"
 echo "[e2e] compile → PDF (app POST /api/compile → compile)"
 compile_json="$(printf '%s' "$payload" \
     | "${COMPOSE[@]}" exec -T app curl -sS -X POST http://127.0.0.1:8080/api/compile \
@@ -264,7 +264,7 @@ echo "[e2e] regression: member removal ok (204)"
 
 echo "[e2e] regression: nested-document export compiles (was 409 file-not-found)"
 api POST "/projects/${proj_id}/documents"     '{"path":"chapters/01-intro.typ","title":"Intro","body":"= Chapter One","data":{}}' >/dev/null
-export_json="$(api POST "/projects/${proj_id}/exports"     '{"entry":"main.typ","mode":"full","view":"baseline"}')"
+export_json="$(api POST "/projects/${proj_id}/exports"     '{"entry":"main.typ","view":"baseline"}')"
 export_zip="$(printf '%s' "$export_json" | jq -r '.zip_base64 // empty')"
 [ -n "$export_zip" ] || { echo "[e2e] nested export returned no zip; response: ${export_json}" >&2; exit 1; }
 echo "[e2e] regression: nested-document export ok (zip present)"

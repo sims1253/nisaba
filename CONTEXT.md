@@ -7,7 +7,7 @@ tests, and user-facing text should use these terms consistently.
 
 - **Organization** *(planned)* — security and billing boundary containing members and
   projects. No code implements organizations today; multi-tenancy is deliberately
-  deferred (see [`ROADMAP.md`](ROADMAP.md)).
+  deferred.
 - **Project** — collaborative workspace containing files, references, settings, checkpoints,
   and build artifacts.
 - **Document** — editable text file at a stable project-relative path. It owns collaborative
@@ -20,11 +20,11 @@ tests, and user-facing text should use these terms consistently.
 - **Review mark** — typed range annotation representing a suggestion or other review state.
 - **Thread** — anchored discussion with messages and resolution state.
 - **Checkpoint** *(planned)* — immutable record of exact project inputs at a point in time.
-  Checkpoints as the build/history input remain roadmap work.
+  Checkpoints as the build/history input remain future work.
 - **Build** *(planned)* — isolated compiler execution over checkpointed inputs.
 - **Artifact** *(planned)* — immutable output of a build, with provenance and diagnostics.
   Compilation returns PDFs directly today; content-addressed artifact storage is
-  roadmap work.
+  future work.
 - **Share link** — revocable capability granting a chosen project role (up to `author`)
   to any signed-in user who redeems it. The effective role is the least privileged
   of the link's role and the redeemer's identity-provider role (see

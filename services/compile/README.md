@@ -29,7 +29,7 @@ Request:
 
 `sources` is a complete in-memory projection. The entry must be present. Virtual paths
 must be relative, use `/`, and must not escape their virtual root. The response contains
-PDF (base64), SVG frames, source span map, diagnostics, outline, build ID, and
+PDF (base64), source span map, diagnostics, outline, build ID, and
 instrumentation including RSS when available.
 
 ## Runtime configuration

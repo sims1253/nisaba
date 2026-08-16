@@ -622,7 +622,6 @@
           "project_id",
           "entry",
           "sources",
-          "mode",
           "view"
         ],
         "properties": {
@@ -650,13 +649,6 @@
               }
             }
           },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "document",
-              "full"
-            ]
-          },
           "view": {
             "type": "string",
             "enum": [
@@ -680,12 +672,6 @@
               "null"
             ],
             "format": "byte"
-          },
-          "frames": {
-            "type": "array",
-            "items": {
-              "type": "object"
-            }
           },
           "span_map": {
             "type": "array",
@@ -714,20 +700,12 @@
         "type": "object",
         "required": [
           "entry",
-          "mode",
           "view"
         ],
         "properties": {
           "entry": {
             "type": "string",
             "description": "A document path in this project; the archive always contains every document"
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "document",
-              "full"
-            ]
           },
           "view": {
             "type": "string",

@@ -41,9 +41,6 @@ pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8080";
 /// 1. `NISABA_SYNC_ADDR` — a full `host:port` socket address.
 /// 2. `PORT` — a bare port number, bound on `0.0.0.0`.
 /// 3. [`DEFAULT_BIND_ADDR`] (`0.0.0.0:8080`).
-///
-/// `NISABA_SYNC_BIND` is accepted as a legacy alias for `NISABA_SYNC_ADDR` so
-/// existing deployments keep working.
 pub fn resolve_bind_addr() -> Result<std::net::SocketAddr, std::net::AddrParseError> {
     resolve_bind_addr_from(|k| std::env::var(k).ok())
 }
@@ -55,10 +52,7 @@ pub fn resolve_bind_addr_from<V>(var: V) -> Result<std::net::SocketAddr, std::ne
 where
     V: Fn(&str) -> Option<String>,
 {
-    if let Some(addr) = var("NISABA_SYNC_ADDR")
-        .or_else(|| var("NISABA_SYNC_BIND"))
-        .filter(|s| !s.trim().is_empty())
-    {
+    if let Some(addr) = var("NISABA_SYNC_ADDR").filter(|s| !s.trim().is_empty()) {
         return addr.trim().parse();
     }
     if let Some(port) = var("PORT").filter(|s| !s.trim().is_empty()) {
@@ -240,12 +234,6 @@ mod tests {
         let addr = resolve_bind_addr_from(env_of(&[("PORT", "5000")])).unwrap();
         assert_eq!(addr.ip().to_string(), "0.0.0.0");
         assert_eq!(addr.port(), 5000);
-    }
-
-    #[test]
-    fn legacy_nisaba_sync_bind_is_accepted() {
-        let addr = resolve_bind_addr_from(env_of(&[("NISABA_SYNC_BIND", "1.2.3.4:1234")])).unwrap();
-        assert_eq!(addr.to_string(), "1.2.3.4:1234");
     }
 
     #[test]

@@ -93,9 +93,6 @@ function findFunctionConstructs(source: string): Construct[] {
   return constructs
 }
 
-// Accepted for call-site compatibility but no longer selects anything for chipping.
-const noFunctions = new Set<string>()
-
 // Single-entry memo. `findConstructs` is a pure function of `source`, but it is
 // invoked more than once per edit: the hybrid-editor StateField re-parses on
 // every doc-change transaction, and main.ts's selection listener parses again
@@ -131,8 +128,7 @@ function findConstructsImpl(source: string): Construct[] {
   return constructs.sort((a, b) => a.from - b.from || b.to - a.to)
 }
 
-export function findConstructs(source: string, _functions: ReadonlySet<string> = noFunctions): Construct[] {
-  void _functions
+export function findConstructs(source: string): Construct[] {
   if (source === findConstructsCacheKey) return findConstructsCacheValue
   const result = findConstructsImpl(source)
   findConstructsCacheKey = source

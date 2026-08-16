@@ -33,7 +33,7 @@ export AWS_ACCESS_KEY_ID="${NISABA_S3_ADMIN_KEY}"
 export AWS_SECRET_ACCESS_KEY="${NISABA_S3_ADMIN_SECRET}"
 export AWS_ENDPOINT_URL="${ENDPOINT}"
 
-# Buckets (object keys are opaque ids, never citation numbers — PLAN.md §6.3).
+# Buckets (object keys are opaque ids, never citation numbers).
 for bucket in "${NISABA_S3_BUCKET_BLOBS}" "${NISABA_S3_BUCKET_OPLOG}"; do
     # Create the bucket if it doesn't exist (ignore BucketAlreadyOwnedByYou).
     aws s3api create-bucket --bucket "${bucket}" 2>/dev/null || true

@@ -11,7 +11,7 @@ environment-variable reference is [`configuration.md`](configuration.md).
 > stack that is deliberately close to production shape. Everything below is
 > written from the actual configuration, but the **full procedure has not been
 > exercised on a production host**; the upgrade/rollback and failure-drill
-> items in [`release-checklist.md`](release-checklist.md) are still unchecked.
+> procedures below are not evidence-verified.
 > Nisaba is pre-release software — do not trust it with irreplaceable data.
 
 ---
@@ -230,8 +230,8 @@ docker compose --env-file /etc/nisaba/env logs -f app
   is cached in the browser) and can write stale-shaped data through the sync
   relay. There is deliberately no cross-version compatibility before the first
   release: tell users to reload open tabs after an upgrade lands.
-- The upgrade path (forward migration on existing data) is a release-checklist
-  item that has **not** been evidence-verified; test the upgrade on a copy of
+- The upgrade path (forward migration on existing data) has **not** been
+  evidence-verified; test the upgrade on a copy of
   production data before doing it live.
 
 ## 9. Rollback procedure
@@ -260,7 +260,7 @@ docker compose --env-file /etc/nisaba/env --profile app up -d
 which reloads the Postgres dump, re-syncs the SeaweedFS buckets, and unpacks
 the sync op-log/snapshot tar. Expect to lose everything written between the
 snapshot and the rollback — which is why the backup in §8 step 1 is not
-optional. A tested rollback is itself an open release-checklist item; treat
+optional. A tested rollback is itself unproven; treat
 this as the procedure to rehearse, not a proven one.
 
 ## 10. Deliberately not covered here

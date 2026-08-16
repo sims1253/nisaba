@@ -68,7 +68,7 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
  * the document. Zero-width delete suggestions are drawn as anchors, not orphans,
  * because their target text is already gone by design.
  */
-export function isOrphaned(item: ReviewItem, textLength: number): boolean {
+function isOrphaned(item: ReviewItem, textLength: number): boolean {
   return (
     (item.kind === "suggestion" && item.change === "insert" && item.to <= item.from) ||
     item.from > textLength ||
