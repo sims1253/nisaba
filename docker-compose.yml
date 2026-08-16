@@ -282,16 +282,19 @@ services:
       # Reviewer seed verification: app endpoint returning the authoritative
       # document body (empty → deny-all, fail-closed).
       NISABA_SYNC_SEED_VERIFY_URL: ${NISABA_SYNC_SEED_VERIFY_URL:-}
-      # SECURITY (dev default): this makes sync's shared outbound HTTP client
-      # (services/sync/src/http.rs) accept plain http:// for EVERY outbound
-      # call it makes — both the per-document authz call (http://app:8080,
-      # in-cluster and unavoidable without TLS inside Docker) AND the JWKS
-      # refresh from NISABA_SYNC_OIDC_JWKS_URL (http://keycloak:8090). Without
-      # the flag the client is https-only, which is the production posture.
-      # The downgraded traffic never leaves the private Docker networks, but a
-      # real deployment should terminate TLS (e.g. an https issuer + authz URL
-      # behind the reverse proxy) and UNSET this.
-      NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME: ${NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:-1}
+      # SECURITY: unset by default — sync's shared outbound HTTP client
+      # (services/sync/src/http.rs) is then https-only, the production
+      # posture. The null value makes compose pass the variable through from
+      # .env when set and omit it from the container entirely when not; an
+      # empty-string default (`${VAR:-}`) would not work, because sync treats
+      # any present value — including "" — as opt-in (its check is
+      # env::var_os(...).is_some()). The local dev stack sets it to 1 in .env
+      # (.env.example ships it): sync's per-document authz call
+      # (http://app:8080) and its JWKS refresh (http://keycloak:8090) are plain
+      # http inside the private Docker networks, which is unavoidable without
+      # TLS inside Docker. A real deployment should terminate TLS and keep
+      # this unset (docs/security.md).
+      NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:
       # Roles claim path in the JWT. Keycloak's realm-roles mapper emits a
       # top-level "roles" claim; the sync default ("realm_access.roles") will
       # never match and every token is rejected.
