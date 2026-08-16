@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Keep digest-pinned Docker images and pinned GitHub Actions versions up to date. PRs only — nothing is merged automatically.",
+  "description": "Keep digest-pinned Docker images and digest-pinned GitHub Actions up to date. PRs only — nothing is merged automatically.",
   "extends": ["config:recommended"],
   "timezone": "Etc/UTC",
   "schedule": ["before 5am on the first day of the month"],
@@ -15,9 +15,10 @@
       "pinDigests": true
     },
     {
-      "description": "GitHub Actions: one grouped PR for pinned action versions.",
+      "description": "GitHub Actions are digest-pinned like the Docker images; Renovate must keep updating tag+digest pairs (and re-pin any action that lands unpinned, e.g. a refreshed vendor template), one grouped PR.",
       "matchManagers": ["github-actions"],
-      "groupName": "github-actions"
+      "groupName": "github-actions",
+      "pinDigests": true
     }
   ]
 }
