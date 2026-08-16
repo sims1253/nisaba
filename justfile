@@ -192,7 +192,9 @@ e2e-up:
         exit 1
     fi
     # Read KEYCLOAK_HTTP_PORT from .env (the same file compose interpolates), so
-    # a non-default port works here too. just does not export .env itself.
+    # a non-default port works here too. dotenv-load already exports it; the
+    # explicit sourcing keeps the script correct when just is invoked with
+    # --no-dotenv.
     # shellcheck disable=SC1091
     set -a && . ./.env && set +a
     KC_PORT="${KEYCLOAK_HTTP_PORT:-8090}"

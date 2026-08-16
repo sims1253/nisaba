@@ -73,9 +73,11 @@ docker compose --env-file /etc/nisaba/env --profile app up -d --build
 
 Notes:
 
-- `POSTGRES_PASSWORD`, `NISABA_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD`,
-  `NISABA_COMPILE_TOKEN` are hard-required (`${VAR:?}` in `docker-compose.yml`);
-  a blank `NISABA_SYNC_AUTHZ_TOKEN` aborts app startup in production mode.
+- `${VAR:?}` in `docker-compose.yml` hard-requires `POSTGRES_PASSWORD`,
+  `NISABA_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`,
+  `NISABA_S3_SECRET_KEY`, `NISABA_S3_ADMIN_SECRET`, `NISABA_COMPILE_TOKEN`,
+  and `NISABA_SYNC_AUTHZ_TOKEN`: compose fails at interpolation time, naming
+  the missing variable.
 - The machine secrets (`NISABA_COMPILE_TOKEN`, `NISABA_SYNC_AUTHZ_TOKEN`,
   S3 keys) must be different from any local-dev value.
 - SeaweedFS identities are generated at seaweedfs container start from the
@@ -158,6 +160,9 @@ server {
     location /admin/      { proxy_pass http://127.0.0.1:8090; }
 
     location / {
+        # Must not cap bodies below the web container's own 128m ceiling
+        # (deploy/web/nginx.conf) or fulltext uploads 413 here instead.
+        client_max_body_size 128m;
         proxy_pass http://127.0.0.1:8103;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;     # /sync WebSocket
