@@ -42,7 +42,7 @@ deployment deltas"). The ones that change what you do:
 | OIDC issuer | split browser/container hostnames | one external URL (§5 below) |
 | Keycloak | `start-dev --import-realm`, demo realm | `start --optimized`, own realm, no demo users |
 | Secrets | `.env` beside the checkout | generated secrets, kept outside the repo (§4) |
-| Restart policy | infra: `unless-stopped`; app tier: none | add `restart: unless-stopped` for the app tier (§7) |
+| Restart policy | all services: `unless-stopped` | already the Compose default (§7) |
 | Backups | local dir | off-host copies of every snapshot (§8) |
 
 ## 3. Host prerequisites
@@ -73,9 +73,11 @@ docker compose --env-file /etc/nisaba/env --profile app up -d --build
 
 Notes:
 
-- `POSTGRES_PASSWORD`, `NISABA_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD`,
-  `NISABA_COMPILE_TOKEN` are hard-required (`${VAR:?}` in `docker-compose.yml`);
-  a blank `NISABA_SYNC_AUTHZ_TOKEN` aborts app startup in production mode.
+- `${VAR:?}` in `docker-compose.yml` hard-requires `POSTGRES_PASSWORD`,
+  `NISABA_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`,
+  `NISABA_S3_SECRET_KEY`, `NISABA_S3_ADMIN_SECRET`, `NISABA_COMPILE_TOKEN`,
+  and `NISABA_SYNC_AUTHZ_TOKEN`: compose fails at interpolation time, naming
+  the missing variable.
 - The machine secrets (`NISABA_COMPILE_TOKEN`, `NISABA_SYNC_AUTHZ_TOKEN`,
   S3 keys) must be different from any local-dev value.
 - SeaweedFS identities are generated at seaweedfs container start from the
@@ -158,6 +160,9 @@ server {
     location /admin/      { proxy_pass http://127.0.0.1:8090; }
 
     location / {
+        # Must not cap bodies below the web container's own 128m ceiling
+        # (deploy/web/nginx.conf) or fulltext uploads 413 here instead.
+        client_max_body_size 128m;
         proxy_pass http://127.0.0.1:8103;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;     # /sync WebSocket
@@ -198,10 +203,10 @@ docker compose --env-file /etc/nisaba/env ps               # wait for "healthy"
   the sync WebSocket end to end. (`just e2e` does the same against a
   throwaway stack with a dev token.)
 - Take a first backup (§8) and **verify** it while the system is still small.
-- For unattended hosts: the app-tier services currently define no `restart:`
-  policy in `docker-compose.yml` (the infra services use `unless-stopped`).
-  Add `restart: unless-stopped` for app/sync/compile/web via a Compose overlay
-  until the default changes upstream.
+- For unattended hosts: every service (infra and app tier) ships
+  `restart: unless-stopped` in docker-compose.yml, so containers come back
+  after crashes and host reboots once the Docker daemon is enabled
+  (`systemctl enable docker`).
 
 ## 8. Upgrade procedure
 

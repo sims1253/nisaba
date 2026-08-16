@@ -152,6 +152,7 @@ services:
       - ./deploy/seaweedfs/init-buckets.sh:/deploy/init-buckets.sh:ro
     networks: [obj-net]
     restart: "no"
+    security_opt: ["no-new-privileges:true"]
 
   # ===========================================================================
   # Keycloak (OIDC provider) — DEV ONLY (see deploy/keycloak/README.md).
@@ -210,7 +211,7 @@ services:
       dockerfile: deploy/Dockerfile.rust
       args:
         SERVICE: nisaba-app
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     depends_on:
       postgres:
         condition: service_healthy
@@ -244,7 +245,9 @@ services:
       NISABA_COMPILE_URL: ${NISABA_COMPILE_URL:-http://compile:8080}
       NISABA_COMPILE_TOKEN: ${NISABA_COMPILE_TOKEN:?NISABA_COMPILE_TOKEN is required}
       # Machine credential for sync's per-document authorization calls.
-      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:-}
+      # :? — like NISABA_COMPILE_TOKEN, missing means compose fails at
+      # interpolation time instead of the app fatalling at startup.
+      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:?NISABA_SYNC_AUTHZ_TOKEN is required}
     healthcheck:
       # /health/ready checks database connectivity.
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health/ready"]
@@ -264,7 +267,7 @@ services:
       dockerfile: deploy/Dockerfile.rust
       args:
         SERVICE: nisaba-sync
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     environment:
       <<: *rust-env
       # Bind address the nisaba-sync binary reads (NOT a generic PORT).
@@ -278,20 +281,23 @@ services:
       NISABA_SYNC_OIDC_AUDIENCE: ${NISABA_SYNC_OIDC_AUDIENCE:-}
       NISABA_SYNC_OIDC_JWKS_URL: ${NISABA_SYNC_OIDC_JWKS_URL:-}
       NISABA_SYNC_AUTHZ_URL: ${NISABA_SYNC_AUTHZ_URL:-http://app:8080/internal/sync/authorize}
-      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:-}
+      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:?NISABA_SYNC_AUTHZ_TOKEN is required}
       # Reviewer seed verification: app endpoint returning the authoritative
       # document body (empty → deny-all, fail-closed).
       NISABA_SYNC_SEED_VERIFY_URL: ${NISABA_SYNC_SEED_VERIFY_URL:-}
-      # SECURITY (dev default): this makes sync's shared outbound HTTP client
-      # (services/sync/src/http.rs) accept plain http:// for EVERY outbound
-      # call it makes — both the per-document authz call (http://app:8080,
-      # in-cluster and unavoidable without TLS inside Docker) AND the JWKS
-      # refresh from NISABA_SYNC_OIDC_JWKS_URL (http://keycloak:8090). Without
-      # the flag the client is https-only, which is the production posture.
-      # The downgraded traffic never leaves the private Docker networks, but a
-      # real deployment should terminate TLS (e.g. an https issuer + authz URL
-      # behind the reverse proxy) and UNSET this.
-      NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME: ${NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:-1}
+      # SECURITY: unset by default — sync's shared outbound HTTP client
+      # (services/sync/src/http.rs) is then https-only, the production
+      # posture. The null value makes compose pass the variable through from
+      # .env when set and omit it from the container entirely when not; an
+      # empty-string default (`${VAR:-}`) would not work, because sync treats
+      # any present value — including "" — as opt-in (its check is
+      # env::var_os(...).is_some()). The local dev stack sets it to 1 in .env
+      # (.env.example ships it): sync's per-document authz call
+      # (http://app:8080) and its JWKS refresh (http://keycloak:8090) are plain
+      # http inside the private Docker networks, which is unavoidable without
+      # TLS inside Docker. A real deployment should terminate TLS and keep
+      # this unset (docs/security.md).
+      NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME:
       # Roles claim path in the JWT. Keycloak's realm-roles mapper emits a
       # top-level "roles" claim; the sync default ("realm_access.roles") will
       # never match and every token is rejected.
@@ -319,7 +325,7 @@ services:
       dockerfile: deploy/Dockerfile.rust
       args:
         SERVICE: nisaba-compile
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     environment:
       <<: *rust-env
       # Bind address the nisaba-compile binary reads (NOT a generic PORT).
@@ -344,7 +350,7 @@ services:
         VITE_OIDC_ISSUER: ${NISABA_OIDC_ISSUER:-http://localhost:8090/realms/nisaba}
         VITE_OIDC_CLIENT_ID: ${NISABA_OIDC_CLIENT_ID:-nisaba-web}
         VITE_OIDC_SCOPE: openid profile email
-    <<: *common-logging
+    <<: [*default-restart, *common-logging]
     depends_on:
       app:
         condition: service_healthy
