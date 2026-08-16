@@ -152,6 +152,7 @@ services:
       - ./deploy/seaweedfs/init-buckets.sh:/deploy/init-buckets.sh:ro
     networks: [obj-net]
     restart: "no"
+    security_opt: ["no-new-privileges:true"]
 
   # ===========================================================================
   # Keycloak (OIDC provider) — DEV ONLY (see deploy/keycloak/README.md).
@@ -244,7 +245,9 @@ services:
       NISABA_COMPILE_URL: ${NISABA_COMPILE_URL:-http://compile:8080}
       NISABA_COMPILE_TOKEN: ${NISABA_COMPILE_TOKEN:?NISABA_COMPILE_TOKEN is required}
       # Machine credential for sync's per-document authorization calls.
-      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:-}
+      # :? — like NISABA_COMPILE_TOKEN, missing means compose fails at
+      # interpolation time instead of the app fatalling at startup.
+      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:?NISABA_SYNC_AUTHZ_TOKEN is required}
     healthcheck:
       # /health/ready checks database connectivity.
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health/ready"]
@@ -278,7 +281,7 @@ services:
       NISABA_SYNC_OIDC_AUDIENCE: ${NISABA_SYNC_OIDC_AUDIENCE:-}
       NISABA_SYNC_OIDC_JWKS_URL: ${NISABA_SYNC_OIDC_JWKS_URL:-}
       NISABA_SYNC_AUTHZ_URL: ${NISABA_SYNC_AUTHZ_URL:-http://app:8080/internal/sync/authorize}
-      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:-}
+      NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:?NISABA_SYNC_AUTHZ_TOKEN is required}
       # Reviewer seed verification: app endpoint returning the authoritative
       # document body (empty → deny-all, fail-closed).
       NISABA_SYNC_SEED_VERIFY_URL: ${NISABA_SYNC_SEED_VERIFY_URL:-}
