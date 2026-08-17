@@ -416,7 +416,13 @@ async fn handle_message(
         }
         Frame::Presence(state) => {
             if let Err(e) = session.room.handle_presence(session.peer, state) {
-                let _ = send_error(socket, codes::TOO_LARGE, &e.to_string()).await;
+                // Only a size-limit denial is a client fault; anything else
+                // (e.g. a poisoned coalescer lock) is an internal failure.
+                let code = match &e {
+                    crate::error::SyncError::Limit(_) => codes::TOO_LARGE,
+                    _ => codes::INTERNAL,
+                };
+                let _ = send_error(socket, code, &e.to_string()).await;
             }
             true
         }

@@ -3,9 +3,11 @@
 //! Both the `app` service (REST plane) and the `sync` service (collaboration
 //! relay) authorize bearers against the same three roles, and the app's
 //! authorization endpoint answers the sync service with the same spellings.
-//! This crate owns that vocabulary so the parse table cannot drift between the
-//! services: tokens and cross-service role answers must mean the same thing on
-//! every plane.
+//! This crate owns the parsing side of that vocabulary — the spellings and
+//! the parse table both services use for token `roles` claims and sync uses
+//! for the endpoint's answers — so consumer-side parsing cannot drift between
+//! the services. Emitting the answers (app's `MembershipRole` mapping) stays
+//! in the app service.
 //!
 //! The crate deliberately contains only the vocabulary — [`Role`], its parse
 //! table, and its canonical spelling. Authorization *policy* (which role may do

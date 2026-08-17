@@ -341,10 +341,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poisoned_handle_map_fails_append_gracefully() {
-        // A panic while the handle map is held poisons it: appends must return
-        // the store's error (denying the update) instead of panicking every
-        // later request through the store.
+    async fn poisoned_handle_map_fails_append_and_close_gracefully() {
+        // A panic while the handle map is held poisons it: appends and closes
+        // must return the store's error instead of panicking every later
+        // request through the store.
         let dir = tempdir().unwrap();
         let store = FsOpLogStore::new(dir.path()).unwrap();
         let doc = DocId::new("p1").unwrap();
@@ -355,5 +355,6 @@ mod tests {
         assert!(poisoned.is_err());
         let error = store.append(&doc, b"x").await.unwrap_err();
         assert!(matches!(error, SyncError::Internal(_)));
+        assert!(matches!(store.close(&doc), Err(SyncError::Internal(_))));
     }
 }

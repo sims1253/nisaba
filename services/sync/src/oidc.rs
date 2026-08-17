@@ -1222,11 +1222,11 @@ mod tests {
         let (fresh, _) = hs_jwks();
         let http: Arc<dyn HttpFetch> =
             Arc::new(CannedHttp::ok_body(serde_json::to_vec(&fresh).unwrap()));
-        assert!(
+        assert!(matches!(
             jwks.refresh("https://idp/.well-known/jwks.json", &http)
-                .await
-                .is_err()
-        );
+                .await,
+            Err(HttpFetchError::Transport(_))
+        ));
     }
 
     #[test]
@@ -1239,6 +1239,18 @@ mod tests {
         assert!(poisoned.is_err());
         assert!(matches!(
             cache.get("any-token"),
+            Err(AuthError::Unauthenticated(_))
+        ));
+        let identity = Identity {
+            subject: "alice".into(),
+            roles: HashSet::new(),
+        };
+        assert!(matches!(
+            cache.insert(
+                "any-token",
+                &identity,
+                usize::try_from(unix_now() + 60).unwrap()
+            ),
             Err(AuthError::Unauthenticated(_))
         ));
     }
