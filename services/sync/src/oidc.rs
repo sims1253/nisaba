@@ -160,7 +160,7 @@ impl JwtValidator {
 
         // 2. Key lookup. An empty/stale JWKS denies (no fail-open to "try all keys").
         let jwk = jwks
-            .key_by_kid(kid)
+            .key_by_kid(kid)?
             .ok_or_else(|| AuthError::Unauthenticated(format!("no JWKS key for kid {kid:?}")))?;
 
         // 3. The header alg must equal the JWK's configured algorithm. Prevents
@@ -326,22 +326,31 @@ impl JwksCache {
         }
     }
 
-    /// Look up a key by `kid`. Returns `None` if the cache is empty or stale.
-    fn key_by_kid(&self, kid: &str) -> Option<jsonwebtoken::jwk::Jwk> {
-        let state = self.inner.read().expect("jwks cache poisoned");
+    /// Look up a key by `kid`. Returns `Ok(None)` if the cache is empty or
+    /// stale; a poisoned lock is an [`AuthError`] (deny) — the poisoned state
+    /// may be mid-update and is never recovered via `into_inner`.
+    fn key_by_kid(&self, kid: &str) -> Result<Option<jsonwebtoken::jwk::Jwk>, AuthError> {
+        let state = self
+            .inner
+            .read()
+            .map_err(|_| AuthError::Unauthenticated("jwks cache lock poisoned".into()))?;
         let fresh = state
             .last_ok
             .is_some_and(|t| self.clock.now().duration_since(t) <= self.max_age);
         if !fresh {
-            return None;
+            return Ok(None);
         }
-        state.keys.get(kid).cloned()
+        Ok(state.keys.get(kid).cloned())
     }
 
     /// Whether the cached keys are absent or stale (used by health/logging).
+    /// A poisoned lock counts as stale: readiness must fail closed, and with
+    /// lookups denying, the keys are effectively unusable.
     #[must_use]
     pub fn is_stale(&self) -> bool {
-        let state = self.inner.read().expect("jwks cache poisoned");
+        let Ok(state) = self.inner.read() else {
+            return true;
+        };
         state
             .last_ok
             .is_none_or(|t| self.clock.now().duration_since(t) > self.max_age)
@@ -375,7 +384,10 @@ impl JwksCache {
         let set: JwkSet = serde_json::from_slice(&resp.body)
             .map_err(|e| HttpFetchError::Transport(format!("invalid JWKS JSON: {e}")))?;
         let keys = index_keys(set);
-        let mut state = self.inner.write().expect("jwks cache poisoned");
+        let mut state = self
+            .inner
+            .write()
+            .map_err(|_| HttpFetchError::Transport("jwks cache lock poisoned".into()))?;
         state.keys = keys;
         state.last_ok = Some(self.clock.now());
         Ok(())
@@ -458,24 +470,37 @@ impl TokenCache {
         }
     }
 
-    fn get(&self, token: &str) -> Option<Identity> {
+    /// Cache lookup. A poisoned lock is an [`AuthError`] (deny); the map may
+    /// be mid-update and is never recovered via `into_inner`.
+    fn get(&self, token: &str) -> Result<Option<Identity>, AuthError> {
         if self.ttl_secs == 0 {
-            return None;
+            return Ok(None);
         }
-        let mut entries = self.entries.lock().expect("token cache poisoned");
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| AuthError::Unauthenticated("token cache lock poisoned".into()))?;
         let now = unix_now();
         let expired = entries.get(token).is_some_and(|c| c.expires_at_unix <= now);
         if expired {
             entries.remove(token);
         }
-        entries.get(token).map(|c| c.identity.clone())
+        Ok(entries.get(token).map(|c| c.identity.clone()))
     }
 
-    fn insert(&self, token: &str, identity: &Identity, token_exp_unix: usize) {
+    fn insert(
+        &self,
+        token: &str,
+        identity: &Identity,
+        token_exp_unix: usize,
+    ) -> Result<(), AuthError> {
         if self.ttl_secs == 0 {
-            return;
+            return Ok(());
         }
-        let mut entries = self.entries.lock().expect("token cache poisoned");
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| AuthError::Unauthenticated("token cache lock poisoned".into()))?;
         let now = unix_now();
         let ttl_cap = now.saturating_add(self.ttl_secs);
         // `token_exp_unix` is a JWT `exp` (usize); widen to u64 without a
@@ -498,6 +523,7 @@ impl TokenCache {
                 expires_at_unix: exp_cap,
             },
         );
+        Ok(())
     }
 }
 
@@ -689,11 +715,11 @@ impl OidcAccessResolver {
 impl AccessResolver for OidcAccessResolver {
     async fn resolve(&self, doc: &DocId, token: &str) -> Result<Role, AuthError> {
         // JWT verification (cached). The document authorizer always runs after.
-        let identity = if let Some(id) = self.tokens.get(token) {
+        let identity = if let Some(id) = self.tokens.get(token)? {
             id
         } else {
             let (id, exp) = self.validator.validate(token, &self.jwks)?;
-            self.tokens.insert(token, &id, exp);
+            self.tokens.insert(token, &id, exp)?;
             id
         };
         let membership_role = self.documents.authorize(&identity, doc, token).await?;
@@ -1123,10 +1149,10 @@ mod tests {
             clock.clone(),
         ));
         // Immediately, the key is present.
-        assert!(jwks.key_by_kid(KID).is_some());
+        assert!(jwks.key_by_kid(KID).unwrap().is_some());
         // Advance past max_age → stale → deny.
         clock.advance(Duration::from_secs(61));
-        assert!(jwks.key_by_kid(KID).is_none());
+        assert!(jwks.key_by_kid(KID).unwrap().is_none());
         assert!(jwks.is_stale());
     }
 
@@ -1134,7 +1160,7 @@ mod tests {
     async fn empty_jwks_denies_until_refreshed() {
         let clock = Arc::new(ManualClock::new());
         let jwks = Arc::new(JwksCache::empty(Duration::from_hours(1), clock.clone()));
-        assert!(jwks.key_by_kid(KID).is_none());
+        assert!(jwks.key_by_kid(KID).unwrap().is_none());
         // A mocked JWKS endpoint populates the cache.
         let (set, _) = hs_jwks();
         let body = serde_json::to_vec(&set).unwrap();
@@ -1142,7 +1168,7 @@ mod tests {
         jwks.refresh("https://idp/.well-known/jwks.json", &http)
             .await
             .unwrap();
-        assert!(jwks.key_by_kid(KID).is_some());
+        assert!(jwks.key_by_kid(KID).unwrap().is_some());
     }
 
     // ---- token cache -------------------------------------------------------
@@ -1161,6 +1187,60 @@ mod tests {
         // Resolve twice; both succeed.
         assert!(r.resolve(&doc, &token).await.is_ok());
         assert!(r.resolve(&doc, &token).await.is_ok());
+    }
+
+    // ---- lock poisoning fails gracefully, not with a panic -----------------
+
+    #[test]
+    fn poisoned_jwks_cache_denies_and_reports_stale() {
+        // A panic while the cache is held exclusively poisons it: lookups must
+        // deny (fail closed), readiness must report stale, and refresh must
+        // surface an error — never a panic, and never into_inner recovery.
+        let (set, _) = hs_jwks();
+        let jwks = jwks_cache(set);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = jwks.inner.write().unwrap();
+            panic!("poison the jwks cache");
+        }));
+        assert!(poisoned.is_err());
+        assert!(matches!(
+            jwks.key_by_kid(KID),
+            Err(AuthError::Unauthenticated(_))
+        ));
+        assert!(jwks.is_stale());
+    }
+
+    #[tokio::test]
+    async fn poisoned_jwks_cache_refresh_errors() {
+        let (set, _) = hs_jwks();
+        let jwks = jwks_cache(set);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = jwks.inner.write().unwrap();
+            panic!("poison the jwks cache");
+        }));
+        assert!(poisoned.is_err());
+        let (fresh, _) = hs_jwks();
+        let http: Arc<dyn HttpFetch> =
+            Arc::new(CannedHttp::ok_body(serde_json::to_vec(&fresh).unwrap()));
+        assert!(
+            jwks.refresh("https://idp/.well-known/jwks.json", &http)
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn poisoned_token_cache_denies() {
+        let cache = TokenCache::new(600, 16);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = cache.entries.lock().unwrap();
+            panic!("poison the token cache");
+        }));
+        assert!(poisoned.is_err());
+        assert!(matches!(
+            cache.get("any-token"),
+            Err(AuthError::Unauthenticated(_))
+        ));
     }
 
     // ---- helpers / mocks ---------------------------------------------------

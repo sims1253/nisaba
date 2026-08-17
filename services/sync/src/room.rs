@@ -169,9 +169,11 @@ impl DocRoom {
     ///
     /// Poisoning is unreachable: no code path taken while the gate is held
     /// panics (fallible work — decode, import, awaits — happens before or
-    /// after the critical section), so the `expect` documents that invariant
-    /// once instead of repeating it at every call site. If it ever fires, the
-    /// panic unwinds only the connection task that hit it.
+    /// after the critical section; the nested `last_active` lock recovers
+    /// poisoning, and `presence_bcast` maps it to an error, so neither can
+    /// cascade a panic into a held gate), so the `expect` documents that
+    /// invariant once instead of repeating it at every call site. If it ever
+    /// fires, the panic unwinds only the connection task that hit it.
     fn lock_gate(&self) -> std::sync::MutexGuard<'_, Presence> {
         self.gate
             .lock()
@@ -509,10 +511,12 @@ impl DocRoom {
         // re-encode + fan the full roster per frame. The latest roster is kept
         // pending and delivered on the next due broadcast or the maintenance
         // flush, so peers still converge (at most one broadcast per interval).
+        // A poisoned lock maps to an error rather than panicking under the
+        // gate (which would poison the gate in turn).
         if self
             .presence_bcast
             .lock()
-            .expect("presence bcast poisoned")
+            .map_err(|_| SyncError::Internal("presence broadcaster lock poisoned".into()))?
             .due(self.clock.now())
         {
             let roster = encode_roster(&presence.roster());
@@ -527,29 +531,32 @@ impl DocRoom {
     /// roster once the coalesce interval has elapsed. Returns whether a broadcast
     /// was sent. Called by the periodic maintenance task so a peer that stops
     /// sending presence frames still receives the final roster state.
-    pub fn flush_pending_presence(&self) -> bool {
+    pub fn flush_pending_presence(&self) -> SyncResult<bool> {
         let broadcast_now = {
-            let mut b = self.presence_bcast.lock().expect("presence bcast poisoned");
+            let mut b = self
+                .presence_bcast
+                .lock()
+                .map_err(|_| SyncError::Internal("presence broadcaster lock poisoned".into()))?;
             if !b.pending {
-                return false;
+                return Ok(false);
             }
             let now = self.clock.now();
             if b.last
                 .is_some_and(|last| now.saturating_duration_since(last) < b.interval)
             {
-                return false;
+                return Ok(false);
             }
             b.last = Some(now);
             b.pending = false;
             true
         };
         if !broadcast_now {
-            return false;
+            return Ok(false);
         }
         let mut presence = self.lock_gate();
         let roster = encode_roster(&presence.roster());
         self.fanout(&mut presence, &Frame::Presence(roster));
-        true
+        Ok(true)
     }
 
     /// Record a heartbeat from `sender`.
@@ -653,7 +660,7 @@ impl DocRoom {
             let now = self.clock.now();
             self.review_touched
                 .lock()
-                .expect("review_touched poisoned")
+                .map_err(|_| SyncError::Internal("review-touched lock poisoned".into()))?
                 .insert(sender, now);
             // A combined text + review update is a suggestion regardless of
             // whether the document was previously empty. Check this before the
@@ -687,7 +694,10 @@ impl DocRoom {
         // that let a reviewer make small unauthorized text edits without a
         // review record.
         let window_ok = {
-            let touched = self.review_touched.lock().expect("review_touched poisoned");
+            let touched = self
+                .review_touched
+                .lock()
+                .map_err(|_| SyncError::Internal("review-touched lock poisoned".into()))?;
             touched.get(&sender).is_some_and(|at| {
                 self.clock.now().saturating_duration_since(*at)
                     <= Duration::from_millis(Self::REVIEWER_TEXT_WINDOW_MS)
@@ -890,5 +900,22 @@ mod tests {
             .unwrap();
         let persisted = op_log.read_all(&room.doc_id).await.unwrap();
         assert_eq!(persisted.len(), 1, "valid update must be persisted");
+    }
+
+    #[tokio::test]
+    async fn poisoned_presence_bcast_maps_to_error_not_panic() {
+        // A panic while the coalescer is held poisons it: presence frames must
+        // return an error instead of panicking — and, because that error
+        // returns *before* any gate-held panic, the gate itself stays usable.
+        let (room, _op_log) = room().await;
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = room.presence_bcast.lock().unwrap();
+            panic!("poison the presence broadcaster");
+        }));
+        assert!(poisoned.is_err());
+        let result = room.handle_presence(PeerId(1), vec![1, 2, 3]);
+        assert!(matches!(result, Err(SyncError::Internal(_))));
+        // The gate is not poisoned by the contained failure.
+        room.handle_heartbeat(PeerId(1)).unwrap();
     }
 }
