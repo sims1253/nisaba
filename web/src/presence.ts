@@ -101,9 +101,17 @@ export function decodeRoster(bytes: Uint8Array): readonly PresencePeer[] {
   return peers
 }
 
-/** Initials (max 2) for a presence avatar; `?` when the peer has no name yet. */
-export function peerInitials(name: string): string {
-  const parts = name.trim().split(/[\s._@-]+/).filter(Boolean)
+/**
+ * Initials (max 2) for an avatar chip; `?` when there is no usable name.
+ * Splitting on `@` as well as whitespace/`.`/`_`/`-` matters because OIDC
+ * display names may be email-shaped ("first.last@example.org") — without it
+ * the local part and domain fuse into one "word". `"anonymous"` (the no-token
+ * display name) and empty names degrade to `?` so the chip always has a glyph.
+ */
+export function initialsOf(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed || trimmed === "anonymous") return "?"
+  const parts = trimmed.split(/[\s._@-]+/).filter(Boolean)
   const first = parts[0]
   if (first === undefined) return "?"
   const second = parts[1]

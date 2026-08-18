@@ -29,7 +29,7 @@ import { mergeReviewItems, readReviewItemsFromMap, writeReviewItemsToMap } from 
 import { createCursorAt, resolveCursor } from "./cursor"
 import { SHELL_HTML } from "./shell"
 import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount, type Heading, type TreeNode } from "./outline"
-import { peerInitials, peerLocation, type PresencePeer } from "./presence"
+import { initialsOf, peerLocation, type PresencePeer } from "./presence"
 import { createPalette, type PaletteItem } from "./palette"
 import { fuzzyScore } from "./fuzzy"
 import "./styles.css"
@@ -243,19 +243,6 @@ function timeAgo(timestamp: number): string {
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days} d ago`
   try { return new Date(timestamp).toLocaleDateString() } catch { return "" }
-}
-
-/**
- * Initials (max 2 chars) for the avatar chip. Falls back to "?" for anonymous/empty
- * names so the chip always has a glyph.
- */
-function authorInitials(name: string): string {
-  const trimmed = name.trim()
-  if (!trimmed || trimmed === "anonymous") return "?"
-  const parts = trimmed.split(/[\s._-]+/).filter(Boolean)
-  if (parts.length === 0) return "?"
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase()
-  return (parts[0]![0]! + parts[1]![0]!).toUpperCase()
 }
 
 /**
@@ -1686,7 +1673,7 @@ function renderPresence(): void {
     const avatar = document.createElement("span")
     avatar.className = "avatar"
     avatar.style.setProperty("--hue", String(authorHue(peer.name || String(peer.peer))))
-    avatar.textContent = peerInitials(peer.name)
+    avatar.textContent = initialsOf(peer.name)
     const where = peerLocation(peer)
     avatar.title = where === "" ? peer.name || "Someone else" : `${peer.name || "Someone else"} — ${where}`
     host.append(avatar)
@@ -3362,7 +3349,7 @@ function openReviewPopover(id: string, anchor: HTMLElement): void {
   // (authorHue), so distinct reviewers are visually separable at a glance; the name
   // and timeAgo sit beside it. Resolved items also show who resolved and when.
   const hue = authorHue(item.author)
-  const avatar = `<span class="review-avatar" style="--hue:${hue}" aria-hidden="true">${escapeHtml(authorInitials(item.author))}</span>`
+  const avatar = `<span class="review-avatar" style="--hue:${hue}" aria-hidden="true">${escapeHtml(initialsOf(item.author))}</span>`
   const resolved = item.resolvedAt !== undefined && item.resolvedBy
     ? `<span class="review-resolved-line">Resolved by ${escapeHtml(item.resolvedBy)} · ${escapeHtml(timeAgo(item.resolvedAt))}</span>`
     : ""
@@ -3680,7 +3667,7 @@ function reviewRow(item: ReviewItem, selected: boolean): HTMLElement {
   avatar.className = "avatar"
   avatar.style.setProperty("--hue", String(authorHue(item.author)))
   avatar.setAttribute("aria-hidden", "true")
-  avatar.textContent = authorInitials(item.author)
+  avatar.textContent = initialsOf(item.author)
   head.append(avatar)
   row.append(head)
 

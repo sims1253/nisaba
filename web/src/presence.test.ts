@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { decodePresenceState, decodeRoster, encodePresenceState, peerInitials, peerLocation, type PresencePeer } from "./presence"
+import { decodePresenceState, decodeRoster, encodePresenceState, initialsOf, peerLocation, type PresencePeer } from "./presence"
 
 /** Mirrors `encode_roster` in services/sync/src/presence.rs. */
 function encodeRoster(entries: readonly { peer: bigint; state: Uint8Array }[]): Uint8Array {
@@ -89,10 +89,17 @@ describe("decodeRoster", () => {
 
 describe("presence display", () => {
   it("builds initials from names, emails, and handles", () => {
-    expect(peerInitials("Ada Lovelace")).toBe("AL")
-    expect(peerInitials("twinkleburst")).toBe("TW")
-    expect(peerInitials("first.last@example.org")).toBe("FL")
-    expect(peerInitials("  ")).toBe("?")
+    expect(initialsOf("Ada Lovelace")).toBe("AL")
+    expect(initialsOf("twinkleburst")).toBe("TW")
+    expect(initialsOf("first.last@example.org")).toBe("FL")
+    expect(initialsOf("  ")).toBe("?")
+  })
+
+  it("degrades anonymous and separator-only names to a glyph", () => {
+    expect(initialsOf("anonymous")).toBe("?")
+    expect(initialsOf("")).toBe("?")
+    expect(initialsOf("...")).toBe("?")
+    expect(initialsOf("a@b")).toBe("AB")
   })
 
   it("phrases a peer's location", () => {
