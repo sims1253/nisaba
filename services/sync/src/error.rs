@@ -35,6 +35,11 @@ pub enum SyncError {
     /// The connection was closed or the peer misbehaved during the handshake.
     #[error("handshake error: {0}")]
     Handshake(String),
+    /// An internal invariant failed (e.g. a lock was poisoned by an earlier
+    /// panic). The affected request fails observably instead of the panic
+    /// cascading into every later request through the same lock.
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 /// Errors produced by the wire codec.

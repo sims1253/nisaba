@@ -19,6 +19,13 @@
       "matchManagers": ["github-actions"],
       "groupName": "github-actions",
       "pinDigests": true
+    },
+    {
+      "description": "Pullfrog releases frequently and its banner warns when the action pin goes stale (the pinned ref freezes the post: cleanup step; see pullfrog.yml), so this one action is checked weekly instead of on the monthly default. Its own group keeps that cadence deterministic: a shared group branch takes branch-level fields like schedule only from its first-sorted upgrade.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["pullfrog/pullfrog"],
+      "groupName": "pullfrog",
+      "schedule": ["before 5am on monday"]
     }
   ]
 }

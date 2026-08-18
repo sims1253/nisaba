@@ -9,13 +9,19 @@ rust-version.workspace = true
 async-trait = "0.1"
 aws-config = "1"
 aws-credential-types = "1"
-aws-sdk-s3 = "1"
+# default-features = false drops only the `rustls` default feature, which
+# forces the legacy hyper-0.14/ring connector (aws-smithy-runtime/tls-rustls)
+# and with it the unmaintained h2 0.3 line (RUSTSEC-2026-0258). Everything
+# else from the default set is re-enabled explicitly; TLS comes from
+# default-https-client (hyper-1 + aws-lc-rs, already in the graph).
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "rt-tokio", "default-https-client"] }
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 hex = "0.4.3"
 http = "1"
 jsonwebtoken = "9"
+nisaba-auth = { path = "../../crates/nisaba-auth" }
 nisaba-core = { path = "../../crates/nisaba-core" }
 nisaba-export = { path = "../../crates/nisaba-export" }
 nisaba-references = { path = "../../crates/nisaba-references" }

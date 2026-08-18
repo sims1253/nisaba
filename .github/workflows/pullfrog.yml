@@ -26,7 +26,12 @@ jobs:
         with:
           fetch-depth: 1
       - name: Run agent
-        uses: pullfrog/pullfrog@0657d542f2e34565c6254d5c84581313e631cd90 # v0
+        # SHA-pinned like every action — this is the id-token: write step, so
+        # the mutable @v0 tag stays out. The ref pins action.yml and the post:
+        # cleanup step only (the agent itself floats via npm), and pullfrog
+        # flags stale pins; the concrete release comment is what lets Renovate
+        # keep the SHA fresh (weekly; .github/renovate.json).
+        uses: pullfrog/pullfrog@c4d0ca6f15d12382ddd20d2010bc596b405f42f0 # v0.1.60
         with:
           prompt: ${{ inputs.prompt }}
         env:

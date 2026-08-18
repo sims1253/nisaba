@@ -85,7 +85,12 @@ impl FsOpLogStore {
         &self,
         doc: &DocId,
     ) -> SyncResult<std::sync::MutexGuard<'_, std::collections::HashMap<String, File>>> {
-        let mut guards = self.handles.lock().expect("oplog mutex poisoned");
+        // Poisoning maps to the store's error type; the map (possibly
+        // mid-update when the panic hit) is never recovered via `into_inner`.
+        let mut guards = self
+            .handles
+            .lock()
+            .map_err(|_| SyncError::Internal("op-log handle map lock poisoned".into()))?;
         if !guards.contains_key(doc.as_str()) {
             let path = self.path_for(doc);
             let file = OpenOptions::new()
@@ -138,7 +143,10 @@ impl OpLogStore for FsOpLogStore {
     }
 
     fn close(&self, doc: &DocId) -> SyncResult<()> {
-        let mut guards = self.handles.lock().expect("oplog mutex poisoned");
+        let mut guards = self
+            .handles
+            .lock()
+            .map_err(|_| SyncError::Internal("op-log handle map lock poisoned".into()))?;
         if let Some(mut file) = guards.remove(doc.as_str()) {
             file.flush().map_err(SyncError::from)?;
             file.sync_all().map_err(SyncError::from)?;
@@ -330,5 +338,23 @@ mod tests {
             store.read_all(&doc).await.unwrap(),
             vec![b"a".to_vec(), b"b".to_vec()]
         );
+    }
+
+    #[tokio::test]
+    async fn poisoned_handle_map_fails_append_and_close_gracefully() {
+        // A panic while the handle map is held poisons it: appends and closes
+        // must return the store's error instead of panicking every later
+        // request through the store.
+        let dir = tempdir().unwrap();
+        let store = FsOpLogStore::new(dir.path()).unwrap();
+        let doc = DocId::new("p1").unwrap();
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = store.handles.lock().unwrap();
+            panic!("poison the op-log handle map");
+        }));
+        assert!(poisoned.is_err());
+        let error = store.append(&doc, b"x").await.unwrap_err();
+        assert!(matches!(error, SyncError::Internal(_)));
+        assert!(matches!(store.close(&doc), Err(SyncError::Internal(_))));
     }
 }

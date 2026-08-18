@@ -44,7 +44,10 @@ pub mod server;
 #[cfg(feature = "server")]
 pub mod session;
 
-pub use auth::{AccessResolver, AuthError, CapabilitySet, Identity, Role, StaticAccessResolver};
+pub use auth::{
+    AccessResolver, AuthError, CapabilitySet, Identity, Role, RoleCapabilities,
+    StaticAccessResolver,
+};
 pub use authority::AuthorityDoc;
 pub use config::{Config, DocId, PeerId};
 pub use error::{ProtoError, SyncError, SyncResult};

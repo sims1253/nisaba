@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/nisaba-auth",
   "crates/nisaba-core",
   "crates/nisaba-references",
   "crates/nisaba-export",
