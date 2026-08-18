@@ -19,6 +19,12 @@
       "matchManagers": ["github-actions"],
       "groupName": "github-actions",
       "pinDigests": true
+    },
+    {
+      "description": "Pullfrog releases frequently and its banner warns when the action pin goes stale (the pinned ref freezes the post: cleanup step; see pullfrog.yml), so this one action is checked weekly instead of on the monthly default.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["pullfrog/pullfrog"],
+      "schedule": ["before 5am on monday"]
     }
   ]
 }
