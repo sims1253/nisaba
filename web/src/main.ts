@@ -29,7 +29,7 @@ import { mergeReviewItems, readReviewItemsFromMap, writeReviewItemsToMap } from 
 import { createCursorAt, resolveCursor } from "./cursor"
 import { SHELL_HTML } from "./shell"
 import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount, type Heading, type TreeNode } from "./outline"
-import { peerInitials, peerLocation, type PresencePeer } from "./presence"
+import { initialsOf, peerLocation, type PresencePeer } from "./presence"
 import { createPalette, type PaletteItem } from "./palette"
 import { fuzzyScore } from "./fuzzy"
 import "./styles.css"
@@ -243,19 +243,6 @@ function timeAgo(timestamp: number): string {
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days} d ago`
   try { return new Date(timestamp).toLocaleDateString() } catch { return "" }
-}
-
-/**
- * Initials (max 2 chars) for the avatar chip. Falls back to "?" for anonymous/empty
- * names so the chip always has a glyph.
- */
-function authorInitials(name: string): string {
-  const trimmed = name.trim()
-  if (!trimmed || trimmed === "anonymous") return "?"
-  const parts = trimmed.split(/[\s._-]+/).filter(Boolean)
-  if (parts.length === 0) return "?"
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase()
-  return (parts[0]![0]! + parts[1]![0]!).toUpperCase()
 }
 
 /**
@@ -1686,7 +1673,7 @@ function renderPresence(): void {
     const avatar = document.createElement("span")
     avatar.className = "avatar"
     avatar.style.setProperty("--hue", String(authorHue(peer.name || String(peer.peer))))
-    avatar.textContent = peerInitials(peer.name)
+    avatar.textContent = initialsOf(peer.name)
     const where = peerLocation(peer)
     avatar.title = where === "" ? peer.name || "Someone else" : `${peer.name || "Someone else"} — ${where}`
     host.append(avatar)
@@ -3362,7 +3349,7 @@ function openReviewPopover(id: string, anchor: HTMLElement): void {
   // (authorHue), so distinct reviewers are visually separable at a glance; the name
   // and timeAgo sit beside it. Resolved items also show who resolved and when.
   const hue = authorHue(item.author)
-  const avatar = `<span class="review-avatar" style="--hue:${hue}" aria-hidden="true">${escapeHtml(authorInitials(item.author))}</span>`
+  const avatar = `<span class="review-avatar" style="--hue:${hue}" aria-hidden="true">${escapeHtml(initialsOf(item.author))}</span>`
   const resolved = item.resolvedAt !== undefined && item.resolvedBy
     ? `<span class="review-resolved-line">Resolved by ${escapeHtml(item.resolvedBy)} · ${escapeHtml(timeAgo(item.resolvedAt))}</span>`
     : ""
@@ -3680,7 +3667,7 @@ function reviewRow(item: ReviewItem, selected: boolean): HTMLElement {
   avatar.className = "avatar"
   avatar.style.setProperty("--hue", String(authorHue(item.author)))
   avatar.setAttribute("aria-hidden", "true")
-  avatar.textContent = authorInitials(item.author)
+  avatar.textContent = initialsOf(item.author)
   head.append(avatar)
   row.append(head)
 
@@ -4249,6 +4236,94 @@ let compiling = false
  *  in flight, we can't run it immediately. This flag ensures it runs as soon as
  *  the in-flight compile finishes, so the user's explicit action is never lost. */
 let pendingCompile = false
+
+// ---------------------------------------------------------------------------
+// Shared compile plumbing. compileCurrent (manual) and compileForDiagnostics
+// (background) are two policies over this machinery: every line where they
+// differ is a deliberate, commented choice, not drift.
+// ---------------------------------------------------------------------------
+
+/**
+ * The suggestion marks sent with a compile request. Projection happens
+ * server-side over these marks: only open, non-orphaned suggestions affect the
+ * body text — accepted/rejected ones are already reflected (or removed) in the
+ * editor text, and comments never change visibility (see projection.rs).
+ * Offsets are editor doc offsets, which match the compile source exactly; clamp
+ * `end` to the doc length as a guard against any stale position that escaped
+ * updateReviewItems' remapping.
+ */
+function collectOpenSuggestionMarks(): readonly MarkInput[] {
+  const docLength = editor.state.doc.length
+  return state.review.items
+    .filter((item): item is Extract<ReviewItem, { kind: "suggestion" }> =>
+      item.kind === "suggestion" && item.status === "open" && !item.orphaned)
+    .map((item) => ({
+      start: item.fromCursor ? resolveCursor(activeLoro, item.fromCursor) ?? item.from : item.from,
+      end: Math.min(item.toCursor ? resolveCursor(activeLoro, item.toCursor) ?? item.to : item.to, docLength),
+      kind: item.change,
+      author: item.author,
+      timestamp: Date.now(),
+      id: undefined
+    }))
+}
+
+/**
+ * The compile request both paths send: the current document as a single
+ * in-memory source, its open suggestion marks, and the active view. One
+ * builder so the manual and background paths can never drift in what they
+ * ask the server to build.
+ */
+function compileRequest(projectId: string, entry: string, marks: readonly MarkInput[]): Effect.Effect<api.CompileResponse, api.ApiError> {
+  return api.compile({
+    projectId,
+    entry,
+    sources: { [entry]: editor.state.doc.toString() },
+    marks: { [entry]: marks },
+    view: state.view
+  })
+}
+
+/** Release after a manual compile settles: free the guard, re-enable the
+ *  compile button (only manual compiles disable it), and run any compile that
+ *  was queued while this one was in flight. */
+function settleManualCompile(): void {
+  compiling = false
+  setCompileButtonBusy(false)
+  drainPendingCompile()
+}
+
+/** Release after a background compile settles: free the guard and drain the
+ *  queue. The button was never touched, so there is nothing to re-enable. */
+function settleBackgroundCompile(): void {
+  compiling = false
+  drainPendingCompile()
+}
+
+/**
+ * Puts the PDF of a clean build on the canvas — the shared success path of
+ * both compile paths; only the render-failure policy differs (`onRenderError`).
+ *
+ * Bytes are handed to PDF.js directly: object URLs can be revoked by a later
+ * rapid compile while the worker is still fetching them, producing a
+ * successful build with a broken preview.
+ */
+function loadCleanPdf(pdf: string, onRenderError?: (error: unknown) => void): void {
+  const data = decodeBase64Pdf(pdf)
+  // `empty-preview` is the empty-state marker; drop it once a real PDF is being
+  // rendered (clearPreview/showPreviewFailure re-add it on clear/fail).
+  el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
+  updateZoomLabel()
+  el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
+  void pdfViewer.load(data).then(() => {
+    if (lastBuild) lastBuild.pages = pdfViewer.pageCount
+    renderPagePosition()
+    renderBuildHealth()
+  }).catch((error: unknown) => {
+    console.error("PDF render failed", error)
+    onRenderError?.(error)
+  })
+}
+
 function compileCurrent(): void {
   const { project, selected } = state
   if (!project || !selected) { status("Open a document first"); return }
@@ -4271,40 +4346,20 @@ function compileCurrent(): void {
   // the source being compiled, not the last successful build.
   clearPreview()
   renderDiagnostics([])
-  // Projection happens server-side over the marks we send here. Only open,
-  // non-orphaned suggestions affect the body text: accepted/rejected ones are
-  // already reflected (or removed) in the editor text, and comments never change
-  // visibility (see projection.rs). Offsets are editor doc offsets, which match
-  // the compile source below exactly; clamp `end` to the doc length as a guard
-  // against any stale position that escaped updateReviewItems' remapping.
-  const docLength = editor.state.doc.length
-  const marks: readonly MarkInput[] = state.review.items
-    .filter((item): item is Extract<ReviewItem, { kind: "suggestion" }> =>
-      item.kind === "suggestion" && item.status === "open" && !item.orphaned)
-    .map((item) => ({
-      start: item.fromCursor ? resolveCursor(activeLoro, item.fromCursor) ?? item.from : item.from,
-      end: Math.min(item.toCursor ? resolveCursor(activeLoro, item.toCursor) ?? item.to : item.to, docLength),
-      kind: item.change,
-      author: item.author,
-      timestamp: Date.now(),
-      id: undefined
-    }))
   run(
-    api.compile({
-      projectId: project.id,
-      entry,
-      sources: { [entry]: editor.state.doc.toString() },
-      marks: { [entry]: marks },
-      view: state.view
-    }).pipe(
-      Effect.tap(() => Effect.sync(() => { compiling = false; setCompileButtonBusy(false); drainPendingCompile() })),
-      Effect.tapError(() => Effect.sync(() => { compiling = false; setCompileButtonBusy(false); drainPendingCompile() }))
+    compileRequest(project.id, entry, collectOpenSuggestionMarks()).pipe(
+      Effect.tap(() => Effect.sync(settleManualCompile)),
+      Effect.tapError(() => Effect.sync(settleManualCompile))
     ),
     (result) => {
       // Document-switch guard: discard the result if the user has moved to a
       // different document while this compile was in flight.
       if (state.selected?.document.id !== documentId) return
       const diagnostics = result.diagnostics as readonly CompileDiagnostic[]
+      const errors = diagnostics.filter((item) => item.severity !== "warning").length
+      const warnings = diagnostics.length - errors
+      // A manual compile reports real elapsed time — the writer asked for this
+      // build, so the label's tooltip shows what it cost.
       lastBuild = { buildId: result.build_id, at: Date.now(), ms: Date.now() - startedAt }
       renderBuildLabel()
       renderDiagnostics(diagnostics)
@@ -4312,29 +4367,13 @@ function compileCurrent(): void {
       // errors (or no PDF) is shown as an empty/failure state, never the stale
       // canvas from the previous successful compile.
       const pdf = result.pdf_base64
-      if (pdf && diagnostics.filter((item) => item.severity !== "warning").length === 0) {
-        // Pass bytes directly to PDF.js. Object URLs can be revoked by a later
-        // rapid compile while the worker is still fetching them, producing a
-        // successful build with a broken preview.
-        const data = decodeBase64Pdf(pdf)
-        // `empty-preview` is the empty-state marker; drop it once a real PDF is
-        // being rendered (clearPreview/showPreviewFailure re-add it on clear/fail).
-        el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
-        updateZoomLabel()
-        el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
-        void pdfViewer.load(data).then(() => {
-          if (lastBuild) lastBuild.pages = pdfViewer.pageCount
-          renderPagePosition()
-          renderBuildHealth()
-        }).catch((error: unknown) => {
-          console.error("PDF render failed", error)
-          showPreviewFailure(error instanceof Error ? error.message : "The pages could not be rendered.")
-        })
+      if (pdf && errors === 0) {
+        // A render failure of a successful manual build is the writer's problem
+        // to know about: it goes on the pane, not just the console.
+        loadCleanPdf(pdf, (error) => showPreviewFailure(error instanceof Error ? error.message : "The pages could not be rendered."))
       } else {
         showPreviewFailure(diagnostics.length > 0 ? "Fix the problems listed below and try again." : "The build produced no pages.")
       }
-      const errors = diagnostics.filter((item) => item.severity !== "warning").length
-      const warnings = diagnostics.length - errors
       // The drawer opens itself when a build fails: the writer needs the reason,
       // and the reason is one click away from the line that caused it.
       if (errors > 0) setDrawerOpen(true, "problems")
@@ -4385,56 +4424,33 @@ function compileForDiagnostics(): void {
   // the diagnostics this debounce was after.
   if (compiling) return
   compiling = true
-  const entry = selected.document.path
-  const docLength = editor.state.doc.length
-  const marks: readonly MarkInput[] = state.review.items
-    .filter((item): item is Extract<ReviewItem, { kind: "suggestion" }> =>
-      item.kind === "suggestion" && item.status === "open" && !item.orphaned)
-    .map((item) => ({
-      start: item.fromCursor ? resolveCursor(activeLoro, item.fromCursor) ?? item.from : item.from,
-      end: Math.min(item.toCursor ? resolveCursor(activeLoro, item.toCursor) ?? item.to : item.to, docLength),
-      kind: item.change,
-      author: item.author,
-      timestamp: Date.now(),
-      id: undefined
-    }))
   run(
-    api.compile({
-      projectId: project.id,
-      entry,
-      sources: { [entry]: editor.state.doc.toString() },
-      marks: { [entry]: marks },
-      view: state.view
-    }).pipe(
-      Effect.tap(() => Effect.sync(() => { compiling = false; drainPendingCompile() })),
-      Effect.tapError(() => Effect.sync(() => { compiling = false; drainPendingCompile() }))
+    compileRequest(project.id, selected.document.path, collectOpenSuggestionMarks()).pipe(
+      Effect.tap(() => Effect.sync(settleBackgroundCompile)),
+      Effect.tapError(() => Effect.sync(settleBackgroundCompile))
     ),
     (result) => {
       // Document-switch guard: if the user has switched documents while this
       // background compile was in flight, discard the result.
       if (state.selected?.document.id !== documentId) return
-      renderDiagnostics(result.diagnostics as readonly CompileDiagnostic[])
+      const diagnostics = result.diagnostics as readonly CompileDiagnostic[]
+      renderDiagnostics(diagnostics)
       // Update the PDF preview only on a clean build. A build with errors leaves
       // the last good PDF in place (better than clearing to an empty pane on
       // every transient typo). The zoom controls are managed the same way as a
       // manual compile.
-      const diagnostics = result.diagnostics as readonly CompileDiagnostic[]
       const errors = diagnostics.filter((item) => item.severity !== "warning").length
       const pdf = result.pdf_base64
       if (pdf && errors === 0) {
-        const data = decodeBase64Pdf(pdf)
-        el<HTMLElement>("#pdf-viewer")?.classList.remove("empty-preview")
-        updateZoomLabel()
-        el<HTMLElement>("#pdf-zoom-controls")?.removeAttribute("hidden")
+        // `ms: 0` is deliberate: renderBuildLabel only shows a timing in the
+        // tooltip when ms > 0, and a background build the writer never asked
+        // for should not claim one.
         lastBuild = { buildId: result.build_id, at: Date.now(), ms: 0 }
         renderBuildLabel()
-        void pdfViewer.load(data).then(() => {
-          if (lastBuild) lastBuild.pages = pdfViewer.pageCount
-          renderPagePosition()
-          renderBuildHealth()
-        }).catch((error: unknown) => {
-          console.error("PDF render failed", error)
-        })
+        // A render failure is logged (in loadCleanPdf) but not surfaced:
+        // showing it would clobber the last good PDF the writer is still
+        // reading.
+        loadCleanPdf(pdf)
       }
       // The status bar must reflect what the background build just found, or a
       // typo silently introduces problems the writer is never told about.
