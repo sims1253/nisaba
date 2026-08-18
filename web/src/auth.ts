@@ -27,6 +27,12 @@ function base64Url(bytes: ArrayBuffer): string {
   return btoa(String.fromCharCode(...new Uint8Array(bytes))).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
 }
 
+/** The token endpoint: an explicit override, else the issuer's Keycloak-style
+ *  well-known path (with any trailing slash normalized away). */
+function tokenEndpointOf(config: OidcConfig): string {
+  return config.tokenEndpoint ?? `${config.issuer.replace(/\/$/, "")}/protocol/openid-connect/token`
+}
+
 /** The browser-side OIDC client is public: it uses PKCE and never accepts a client secret. */
 export async function createPkceAuthorizationRequest(config: OidcConfig): Promise<PkceAuthorizationRequest> {
   const codeVerifier = randomUrlSafe(48)
@@ -50,6 +56,35 @@ export interface AuthToken {
   readonly expiresAt?: number
   readonly tokenType?: string
   readonly refreshToken?: string
+}
+
+/** Body of a successful token-endpoint response — the authorization_code and
+ *  refresh_token grants share this shape. */
+interface TokenResponseBody {
+  readonly access_token?: string
+  readonly expires_in?: number
+  readonly token_type?: string
+  readonly refresh_token?: string
+}
+
+/**
+ * Maps a token-endpoint response body to an AuthToken, or undefined when the
+ * response carries no access token (the callers' reactions intentionally
+ * differ: the authorization-code path throws, the refresh path gives up
+ * quietly). `fallbackRefreshToken` encodes the refresh grant's rule
+ * (RFC 6749 §6): a refresh response may omit refresh_token, in which case the
+ * previously issued one stays in effect.
+ */
+function tokenFromResponse(body: TokenResponseBody, fallbackRefreshToken?: string): AuthToken | undefined {
+  if (!body.access_token) return undefined
+  return {
+    accessToken: body.access_token,
+    ...(body.expires_in === undefined ? {} : { expiresAt: Date.now() + body.expires_in * 1000 }),
+    ...(body.token_type === undefined ? {} : { tokenType: body.token_type }),
+    // Parenthesize: without them `??` binds looser than `===` and the condition
+    // silently becomes `body.refresh_token ?? (fallbackRefreshToken === undefined)`.
+    ...((body.refresh_token ?? fallbackRefreshToken) === undefined ? {} : { refreshToken: body.refresh_token ?? fallbackRefreshToken })
+  }
 }
 
 export interface AuthTokenService {
@@ -214,17 +249,14 @@ export function createOidcClient(config: OidcConfig, tokenStore: AuthTokenServic
         sessionStorage.removeItem(pendingKey)
         const pending = JSON.parse(pendingRaw) as { state: string; codeVerifier: string }
         if (pending.state !== state) throw new Error("OIDC state does not match")
-        const endpoint = config.tokenEndpoint ?? `${config.issuer.replace(/\/$/, "")}/protocol/openid-connect/token`
+        const endpoint = tokenEndpointOf(config)
         const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", client_id: config.clientId, redirect_uri: config.redirectUri, code, code_verifier: pending.codeVerifier }) })
         if (!response.ok) throw new Error(`OIDC token exchange returned HTTP ${response.status}`)
-        const body = await response.json() as { access_token?: string; expires_in?: number; token_type?: string; refresh_token?: string }
-        if (!body.access_token) throw new Error("OIDC token response did not contain an access token")
-        const token: AuthToken = {
-          accessToken: body.access_token,
-          ...(body.expires_in === undefined ? {} : { expiresAt: Date.now() + body.expires_in * 1000 }),
-          ...(body.token_type === undefined ? {} : { tokenType: body.token_type }),
-          ...(body.refresh_token === undefined ? {} : { refreshToken: body.refresh_token })
-        }
+        const body = await response.json() as TokenResponseBody
+        // Nothing is stored yet on the code grant, so there is no refresh token
+        // to fall back to — whatever the response carries is all there is.
+        const token = tokenFromResponse(body)
+        if (!token) throw new Error("OIDC token response did not contain an access token")
         await Effect.runPromise(tokenStore.set(token))
         return token
       },
@@ -287,7 +319,7 @@ export async function refreshAccessToken(): Promise<AuthToken | undefined> {
   // token is not.
   const stored = readStoredTokenRaw()
   if (!stored?.refreshToken) return undefined
-  const endpoint = config.tokenEndpoint ?? `${config.issuer.replace(/\/$/, "")}/protocol/openid-connect/token`
+  const endpoint = tokenEndpointOf(config)
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -301,16 +333,11 @@ export async function refreshAccessToken(): Promise<AuthToken | undefined> {
     clearStoredToken()
     return undefined
   }
-  const body = await response.json() as { access_token?: string; expires_in?: number; token_type?: string; refresh_token?: string }
-  if (!body.access_token) return undefined
-  const token: AuthToken = {
-    accessToken: body.access_token,
-    ...(body.expires_in === undefined ? {} : { expiresAt: Date.now() + body.expires_in * 1000 }),
-    ...(body.token_type === undefined ? {} : { tokenType: body.token_type }),
-    // Parenthesize: without them `??` binds looser than `===` and the condition
-    // silently becomes `body.refresh_token ?? (stored.refreshToken === undefined)`.
-    ...((body.refresh_token ?? stored.refreshToken) === undefined ? {} : { refreshToken: body.refresh_token ?? stored.refreshToken })
-  }
+  const body = await response.json() as TokenResponseBody
+  // The stored refresh token rides along as the fallback: an IdP that omits
+  // refresh_token from the response means "the old one still stands".
+  const token = tokenFromResponse(body, stored.refreshToken)
+  if (!token) return undefined
   // Persist through the same channel every read uses (localStorage via storage()
   // / AuthTokenLive) — writing to sessionStorage here meant the refreshed token
   // never replaced the stored one, so reads kept seeing the expired token and the
