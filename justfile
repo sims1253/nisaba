@@ -92,6 +92,8 @@ migrate dir='migrations':
         # source compose also uses) against the host-published port — .env
         # deliberately ships no literal URL duplicating the password.
         # :? — a missing NISABA_DB_PASSWORD fails here, loudly, not in sqlx.
+        # NB: a password with URI-reserved characters must be percent-encoded,
+        # exactly like in the compose synthesis.
         export DATABASE_URL="postgres://${NISABA_DB_USER:-nisaba_app}:${NISABA_DB_PASSWORD:?NISABA_DB_PASSWORD is required}@127.0.0.1:${POSTGRES_HOST_PORT:-5433}/${NISABA_DB_NAME:-nisaba}"
         sqlx migrate run --source "{{dir}}"
     else
