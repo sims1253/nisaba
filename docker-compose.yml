@@ -386,6 +386,15 @@ services:
         condition: service_healthy
       sync:
         condition: service_healthy
+    healthcheck:
+      # /healthz is answered by nginx itself (deploy/web/nginx.conf), so this is
+      # liveness of the web container, not of the app/sync backends (those are
+      # already gated by depends_on). curl is installed in deploy/Dockerfile.web.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-8103}:8080"
     networks: [svc-net]
