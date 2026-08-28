@@ -17,7 +17,7 @@ name = "nisaba-sync"
 path = "src/main.rs"
 
 [features]
-default = ["server"]
+default = ["server", "s3"]
 # Enables the axum HTTP/WebSocket server binary (and the production reqwest HTTP
 # transport for JWKS refresh + the document-authorization verifier). Disable for a
 # headless library build; the OIDC/JWT resolver and its traits still compile so
@@ -28,6 +28,16 @@ server = [
   "dep:tower-http",
   "dep:tokio-tungstenite",
   "dep:reqwest",
+]
+# S3-backed op-log/snapshot stores (`S3OpLogStore` / `S3SnapshotStore`). The
+# filesystem and in-memory stores are always available; this adds the
+# object-store adapter the production compose stack wires in. The aws-sdk
+# feature set mirrors the app service's exactly, so it adds no new crates
+# beyond what `nisaba-app` already pulls into the workspace graph.
+s3 = [
+  "dep:aws-sdk-s3",
+  "dep:aws-config",
+  "dep:aws-credential-types",
 ]
 
 [dependencies]
@@ -68,6 +78,16 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # are already in the workspace graph via the app service.
 sha2 = "0.10"
 subtle = "2"
+
+# S3-backed durable stores (feature `s3`): the aws-sdk feature set mirrors the
+# app service's `S3BlobStore` wiring — `default-features = false` drops only
+# the legacy rustls/ring connector (see the comment in services/app/Cargo.toml),
+# and `default-https-client` + `http-1x` select the hyper-1 + aws-lc-rs stack
+# already in the graph. `aws-config`/`aws-credential-types` are likewise
+# already present via the app service.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "rt-tokio", "default-https-client"], optional = true }
+aws-config = { version = "1", optional = true }
+aws-credential-types = { version = "1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

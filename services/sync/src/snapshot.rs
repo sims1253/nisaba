@@ -164,8 +164,9 @@ impl SnapshotStore for FsSnapshotStore {
 }
 
 /// On-disk record: `[u32 be vv_len][vv bytes][snapshot bytes]`. Reading stops with
-/// an error if the buffer is shorter than the declared lengths.
-fn encode_snapshot_file(snapshot: &Snapshot) -> Vec<u8> {
+/// an error if the buffer is shorter than the declared lengths. Shared with the
+/// S3 snapshot store, whose objects reuse this exact framing.
+pub(crate) fn encode_snapshot_file(snapshot: &Snapshot) -> Vec<u8> {
     let vv = snapshot.vv.encode();
     let vv_len = u32::try_from(vv.len()).expect("version vector length fits in u32");
     let mut out = Vec::with_capacity(4 + vv.len() + snapshot.bytes.len());
@@ -175,7 +176,7 @@ fn encode_snapshot_file(snapshot: &Snapshot) -> Vec<u8> {
     out
 }
 
-fn decode_snapshot_file(buf: &[u8]) -> Result<Snapshot, SyncError> {
+pub(crate) fn decode_snapshot_file(buf: &[u8]) -> Result<Snapshot, SyncError> {
     const HEADER: usize = 4;
     if buf.len() < HEADER {
         return Err(SyncError::Storage(format!(

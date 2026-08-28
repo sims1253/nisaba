@@ -1,12 +1,13 @@
 //! `nisaba-sync` binary entry point.
 //!
-//! Boots the sync service: filesystem op-log + snapshot stores under a data
-//! directory, a [`nisaba_sync::DocRegistry`], periodic presence-sweep and
-//! snapshot maintenance tasks, and the axum HTTP/WebSocket server.
+//! Boots the sync service: op-log + snapshot stores (S3-backed, or the
+//! filesystem under a data directory for bare-metal/dev runs), a
+//! [`nisaba_sync::DocRegistry`], periodic presence-sweep and snapshot
+//! maintenance tasks, and the axum HTTP/WebSocket server.
 //!
-//! Configuration is by environment variable + a data dir. Sync does **not**
-//! build identity/login; it *does* validate the bearer tokens `app`
-//! mints: in production it resolves each token through
+//! Configuration is by environment variable. Sync does **not** build
+//! identity/login; it *does* validate the bearer tokens `app` mints: in
+//! production it resolves each token through
 //! [`nisaba_sync::OidcAccessResolver`] (JWT/JWKS) and asks `app` to authorize
 //! the subject for the specific document ([`nisaba_sync::HttpDocumentAuthorizer`]).
 //!
@@ -34,11 +35,12 @@ use std::time::Duration;
 
 use jsonwebtoken::Algorithm;
 use nisaba_sync::http::{HttpFetch, ReqwestHttpFetch};
+use nisaba_sync::server::StorageProbe;
 use nisaba_sync::{
     AccessResolver, Clock, Config, DenyAllAuthorizer, DenyAllSeedVerifier, DocRegistry,
     DocumentAuthorizer, FsOpLogStore, FsSnapshotStore, HttpDocumentAuthorizer, HttpSeedVerifier,
-    JwksCache, JwtConfig, JwtValidator, OidcAccessResolver, Role, SeedVerifier,
-    StaticAccessResolver, SystemClock, TokenCache, run_jwks_refresher,
+    JwksCache, JwtConfig, JwtValidator, OidcAccessResolver, OpLogStore, Role, S3Stores,
+    SeedVerifier, SnapshotStore, StaticAccessResolver, SystemClock, TokenCache, run_jwks_refresher,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -50,10 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let data_dir =
-        PathBuf::from(env::var("NISABA_SYNC_DATA_DIR").unwrap_or_else(|_| "data".into()));
-    let op_log = Arc::new(FsOpLogStore::new(data_dir.join("oplog"))?);
-    let snapshots = Arc::new(FsSnapshotStore::new(data_dir.join("snapshots"))?);
+    let (op_log, snapshots, storage_probe, data_dir) = build_stores().await?;
     let config = Arc::new(Config::default());
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
@@ -70,10 +69,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // Readiness is wired with whatever the runtime actually depends on: the
     // JWKS cache when OIDC is configured (empty/stale keys mean every token
-    // check fails closed), and the data dir the durable stores live under.
+    // check fails closed), the data dir when the fs stores are selected, and
+    // the S3 bucket (HeadBucket) when the S3 stores are — a sync that cannot
+    // reach its durable plane must not be routed into.
     let readiness = nisaba_sync::server::Readiness {
         jwks,
-        data_dir: Some(data_dir),
+        data_dir,
+        storage: storage_probe,
     };
     // The internal read API (GET /internal/docs/{doc_id}/state) accepts the
     // SAME machine credential the app↔sync hop already uses. Unset/empty →
@@ -103,6 +105,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%addr, "nisaba-sync bind address resolved");
     nisaba_sync::server::serve(router, addr).await?;
     Ok(())
+}
+
+/// Build the durable stores from `NISABA_SYNC_STORE_BACKEND` (`s3` or `fs`,
+/// default `fs`).
+///
+/// * `s3` — the S3-backed stores over the shared `SeaweedFS` endpoint
+///   (`NISABA_S3_*`, same variable names as the app service; bucket
+///   `NISABA_S3_BUCKET_OPLOG`). A missing variable is a fatal error: sync was
+///   pointed at S3 durability and must not silently fall back to a local disk
+///   the operator never planned for. Returns the `HeadBucket` readiness probe
+///   and no data dir.
+/// * `fs` — the filesystem stores under `NISABA_SYNC_DATA_DIR` (default
+///   `data`), with the data-dir-writability readiness probe. The
+///   bare-metal/dev path.
+///
+/// Returns `(op-log store, snapshot store, storage probe, data dir)`.
+async fn build_stores() -> Result<
+    (
+        Arc<dyn OpLogStore>,
+        Arc<dyn SnapshotStore>,
+        Option<Arc<dyn StorageProbe>>,
+        Option<PathBuf>,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let backend = env::var("NISABA_SYNC_STORE_BACKEND").unwrap_or_else(|_| "fs".to_string());
+    match backend.trim() {
+        "s3" => {
+            let s3_config = nisaba_sync::S3EnvConfig::from_env()?;
+            let bucket = s3_config.bucket.clone();
+            let stores = Arc::new(S3Stores::connect(s3_config).await?);
+            tracing::info!(
+                bucket,
+                "sync durable stores: S3 (oplog/ + snapshot/ prefixes)"
+            );
+            Ok((
+                Arc::clone(&stores.op_log) as Arc<dyn OpLogStore>,
+                Arc::clone(&stores.snapshots) as Arc<dyn SnapshotStore>,
+                Some(stores as Arc<dyn StorageProbe>),
+                None,
+            ))
+        }
+        "fs" => {
+            let data_dir =
+                PathBuf::from(env::var("NISABA_SYNC_DATA_DIR").unwrap_or_else(|_| "data".into()));
+            tracing::info!(dir = %data_dir.display(), "sync durable stores: filesystem");
+            Ok((
+                Arc::new(FsOpLogStore::new(data_dir.join("oplog"))?) as Arc<dyn OpLogStore>,
+                Arc::new(FsSnapshotStore::new(data_dir.join("snapshots"))?)
+                    as Arc<dyn SnapshotStore>,
+                None,
+                Some(data_dir),
+            ))
+        }
+        other => Err(format!(
+            "unknown NISABA_SYNC_STORE_BACKEND {other:?}: expected \"s3\" or \"fs\""
+        )
+        .into()),
+    }
 }
 
 /// Build the reviewer seed verifier from environment variables.

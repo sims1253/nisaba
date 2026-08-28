@@ -7,8 +7,9 @@
 //!
 //! * `GET /health` — liveness: always 200, reports version + live room count.
 //! * `GET /health/ready` — readiness: 200 only when the wired probes pass
-//!   (JWKS freshness, data-dir writability); 503 with the failing reasons
-//!   otherwise. Probes that do not apply (no OIDC resolver, no data dir) are
+//!   (JWKS freshness, data-dir writability for the fs stores, or storage
+//!   reachability for the S3 stores); 503 with the failing reasons otherwise.
+//!   Probes that do not apply (no OIDC resolver, no configured storage) are
 //!   skipped, so a bare `build` is always ready.
 //! * `GET /sync/{doc_id}` — WebSocket upgrade. The document id is validated here
 //!   (a 400 on a bad id, before any upgrade) and re-checked against the HELLO
@@ -78,10 +79,27 @@ pub struct Readiness {
     /// validation is fail-closed, so every HELLO would be denied until keys
     /// load — a state orchestrators should wait out, not route traffic into.
     pub jwks: Option<Arc<JwksCache>>,
-    /// When set, readiness probes that this directory is writable (the op-log
-    /// and snapshot stores live under it; a read-only volume fails every
-    /// durable join).
+    /// When set, readiness probes that this directory is writable (the
+    /// filesystem op-log and snapshot stores live under it; a read-only
+    /// volume fails every durable join). Not wired when the S3 stores are
+    /// selected — see [`Self::storage`].
     pub data_dir: Option<std::path::PathBuf>,
+    /// When set, readiness probes the configured durable store backend (the
+    /// S3 stores answer with a `HeadBucket` against the op-log bucket). Wired
+    /// instead of [`Self::data_dir`] when `NISABA_SYNC_STORE_BACKEND=s3`, so
+    /// orchestration does not route traffic to a sync that cannot persist.
+    pub storage: Option<Arc<dyn StorageProbe>>,
+}
+
+/// An async reachability probe for the durable storage backend, wired into
+/// [`Readiness::storage`]. Implemented by the S3 stores (feature `s3`); kept
+/// as a trait so the server depends on no SDK and any future backend (or a
+/// test double) can be probed the same way.
+#[async_trait::async_trait]
+pub trait StorageProbe: Send + Sync {
+    /// `Ok(())` when the backend accepts reads/writes; `Err(reason)` names the
+    /// failure for the readiness body.
+    async fn probe(&self) -> Result<(), String>;
 }
 
 /// Build the application router.
@@ -168,6 +186,14 @@ async fn readiness(State(st): State<SessionState>) -> Response {
                 "data dir {} is not writable: {error}",
                 dir.display()
             ));
+        }
+    }
+    if let Some(storage) = &st.readiness.storage {
+        // One round-trip to the durable backend (e.g. HeadBucket): a sync that
+        // cannot reach its op-log bucket must not be routed into, since every
+        // accepted update would fail to persist.
+        if let Err(reason) = storage.probe().await {
+            reasons.push(format!("storage backend unreachable: {reason}"));
         }
     }
     let ready = reasons.is_empty();
@@ -517,6 +543,73 @@ mod tests {
         );
         let response = get(&router, "/internal/docs/anything/state", Some("whatever")).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ---- readiness: the storage probe ---------------------------------------
+
+    /// Test double for [`StorageProbe`]: ready or not, with a fixed reason.
+    struct FixedProbe(Result<(), &'static str>);
+
+    #[async_trait::async_trait]
+    impl StorageProbe for FixedProbe {
+        async fn probe(&self) -> Result<(), String> {
+            self.0.map_err(str::to_string)
+        }
+    }
+
+    async fn readiness_status(readiness: Readiness) -> StatusCode {
+        let router = build_with_readiness(
+            memory_registry(),
+            Arc::new(Config::default()),
+            readiness,
+            InternalAuth::default(),
+        );
+        get(&router, "/health/ready", None).await.status()
+    }
+
+    #[tokio::test]
+    async fn readiness_fails_while_the_storage_backend_is_unreachable() {
+        let failing = Readiness {
+            storage: Some(Arc::new(FixedProbe(Err("HeadBucket nisaba-oplog failed")))),
+            ..Readiness::default()
+        };
+        let response = get(
+            &build_with_readiness(
+                memory_registry(),
+                Arc::new(Config::default()),
+                failing,
+                InternalAuth::default(),
+            ),
+            "/health/ready",
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "unavailable");
+        assert_eq!(
+            json["reasons"][0],
+            "storage backend unreachable: HeadBucket nisaba-oplog failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn readiness_passes_with_a_healthy_storage_backend() {
+        let healthy = Readiness {
+            storage: Some(Arc::new(FixedProbe(Ok(())))),
+            ..Readiness::default()
+        };
+        assert_eq!(readiness_status(healthy).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn readiness_with_no_storage_probe_stays_ready() {
+        // The fs dev path wires only the data dir; no storage probe must mean
+        // "not checked", never a permanent 503.
+        assert_eq!(readiness_status(Readiness::default()).await, StatusCode::OK);
     }
 
     #[tokio::test]
