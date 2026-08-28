@@ -606,6 +606,41 @@ async fn export_projects_synced_review_marks() {
 }
 
 #[tokio::test]
+async fn export_refuses_when_the_saved_body_lags_the_crdt() {
+    // Mark offsets are resolved against the CRDT text; projecting them over a
+    // different stored body would silently misplace them. While a document is
+    // being edited (the web client's body PATCH is debounced) the CRDT is
+    // ahead of the saved body — exactly this fixture — and the export refuses.
+    let (app, project, _main, _notes, _recorder) = export_project_with(|main_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                main_id,
+                // The CRDT holds an edit the debounced body save has not
+                // persisted yet (the stored body is still "Hello world").
+                synced_snapshot_with_open_insert("Hello world — edited", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry": "intro.typ", "view": "baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let value: Value = response_body(response).await;
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("not saved yet"),
+        "the failure must be actionable: {message}"
+    );
+}
+
+#[tokio::test]
 async fn export_fails_loudly_when_sync_is_unreachable() {
     // Correctness over availability: a marks-less export would misrepresent
     // the review state, so an unreachable sync is a 502, never a silent

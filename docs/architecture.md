@@ -157,7 +157,8 @@ proxied by nginx, reachable only inside the service network):
 GET /internal/docs/{doc_id}/state
 Authorization: Bearer <NISABA_SYNC_AUTHZ_TOKEN>
 → 200 application/octet-stream   # whole current CRDT state, opaque Loro snapshot
-→ 404                            # the document has no state anywhere
+→ 204                            # the document has no state anywhere (NOT 404 —
+                                 # a routing miss must stay distinguishable)
 ```
 
 It exists for the export data flow: review marks live in each document's CRDT
@@ -220,7 +221,11 @@ resolution with raw-offset fallback, end clamped to document length), and
 projects the marks into the exported sources per view. A document with no
 synced state exports with an empty mark list; if sync is unreachable the
 export **fails** (502) rather than silently dropping review marks —
-correctness over availability.
+correctness over availability. The same policy enforces **exports at rest**:
+mark offsets are resolved against the CRDT text, so the app refuses the export
+while the stored body lags the CRDT (a document mid-edit — the web client's
+body save is debounced) instead of projecting marks over text they were never
+resolved against.
 
 Export layout: the archive contains the compiled PDF, the projected document
 sources (paths flattened with `/` → `_`), and per-document RIS bibliographies +

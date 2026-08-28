@@ -279,9 +279,13 @@ impl Denial {
 /// the public relay. Answers:
 ///
 /// * `200` `application/octet-stream` — the snapshot bytes;
+/// * `204` — the document has no state anywhere (never seeded). Deliberately
+///   NOT `404`: an unmatched route (version skew against an older sync, a
+///   misconfigured base URL in the app) also answers 404, and the caller must
+///   be able to tell "genuinely no state — empty marks" apart from "wrong
+///   door — fail loudly";
 /// * `400` — invalid document id (same validation as the WS path);
 /// * `401` / `403` — missing / wrong service token (see [`InternalAuth`]);
-/// * `404` — the document has no state anywhere (never seeded);
 /// * `500` — a store or export failure.
 async fn internal_doc_state(
     State(st): State<SessionState>,
@@ -311,11 +315,7 @@ async fn internal_doc_state(
             bytes,
         )
             .into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "not_found", "detail": "no sync state for this document" })),
-        )
-            .into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "internal", "detail": e.to_string() })),
@@ -487,14 +487,15 @@ mod tests {
         doc.import(&bytes).unwrap();
         assert_eq!(doc.get_text("text").to_string(), "hello");
 
-        // Unknown document (no state anywhere) → 404, not an empty 200.
+        // Unknown document (no state anywhere) → 204, distinct from a routing
+        // miss's 404 so the caller can tell "no state" from "wrong door".
         let response = get(
             &router,
             "/internal/docs/never_seeded/state",
             Some("machine-secret"),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
         // Invalid document id → 400 (same validation as the WS path).
         let response = get(

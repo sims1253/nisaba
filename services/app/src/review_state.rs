@@ -59,22 +59,34 @@ struct ReviewItemWire {
 }
 
 /// Extract the compile marks for a document from its whole CRDT state.
+/// The decoded review state of one document's synced snapshot.
+#[derive(Debug)]
+pub struct DecodedReviewState {
+    /// The snapshot's whole `text` container — the EXACT text the mark offsets
+    /// were resolved against. The caller may only project the marks over a
+    /// body equal to this one; any other text would silently misplace them.
+    pub text: String,
+    /// The open-suggestion marks, in the web compile path's semantics.
+    pub marks: Vec<MarkInput>,
+}
+
+/// Decode a document's review marks from its whole CRDT state.
 ///
 /// `snapshot` is the opaque snapshot bytes served by the sync service's
-/// internal read API. Returns the marks in the same semantics the web client
-/// sends with an interactive compile; an empty vector is normal (no review
-/// items, or none that are open suggestions). Corrupt individual entries are
-/// skipped, mirroring the web reader; a snapshot that cannot be imported at
-/// all is an `Err` (infrastructure fault, surfaced by the caller as a
-/// dependency error).
-pub fn review_marks_from_snapshot(snapshot: &[u8]) -> Result<Vec<MarkInput>, String> {
+/// internal read API. Returns the snapshot's text alongside the marks in the
+/// same semantics the web client sends with an interactive compile; an empty
+/// `marks` vector is normal (no review items, or none that are open
+/// suggestions). Corrupt individual entries are skipped, mirroring the web
+/// reader; a snapshot that cannot be imported at all is an `Err`
+/// (infrastructure fault, surfaced by the caller as a dependency error).
+pub fn review_marks_from_snapshot(snapshot: &[u8]) -> Result<DecodedReviewState, String> {
     let doc = LoroDoc::new();
     doc.import(snapshot)
         .map_err(|error| format!("snapshot does not import: {error}"))?;
+    let text = doc.get_text(TEXT_CONTAINER).to_string();
     // The length marks are clamped against: the CRDT text container is the
     // document the cursors were taken over (the editor's source of truth).
-    let text_len =
-        u32::try_from(doc.get_text(TEXT_CONTAINER).to_string().chars().count()).unwrap_or(u32::MAX);
+    let text_len = u32::try_from(text.chars().count()).unwrap_or(u32::MAX);
 
     let mut marks = Vec::new();
     doc.get_map(REVIEW_CONTAINER).for_each(|_key, value| {
@@ -98,7 +110,7 @@ pub fn review_marks_from_snapshot(snapshot: &[u8]) -> Result<Vec<MarkInput>, Str
             .then_with(|| a.end.cmp(&b.end))
             .then_with(|| a.timestamp.cmp(&b.timestamp))
     });
-    Ok(marks)
+    Ok(DecodedReviewState { text, marks })
 }
 
 /// Convert one persisted review item into a mark, applying exactly the web
@@ -221,6 +233,11 @@ impl SyncStateClient for HttpSyncStateClient {
                 ))
             })?;
         match response.status() {
+            // The sync endpoint's explicit "this document has no state
+            // anywhere" answer — an empty mark list, not an error. Must be
+            // matched before the generic success arm: 204 is a 2xx status
+            // with (by definition) no body.
+            reqwest::StatusCode::NO_CONTENT => Ok(None),
             status if status.is_success() => response
                 .bytes()
                 .await
@@ -231,7 +248,12 @@ impl SyncStateClient for HttpSyncStateClient {
                         "sync state read for document {document_id} returned an unreadable body: {error}"
                     ))
                 }),
-            reqwest::StatusCode::NOT_FOUND => Ok(None),
+            // 404 is NOT the no-state answer (that is 204 above): a 404 here
+            // means the route did not match — version skew against an older
+            // sync without /internal/docs, or NISABA_SYNC_STATE_URL pointing
+            // at the wrong service. Treating it as "no state" would silently
+            // produce marks-less exports, the exact outcome the export's
+            // failure policy refuses, so it fails loudly instead.
             status => {
                 let detail = response.text().await.unwrap_or_default();
                 Err(AppError::Dependency(format!(
@@ -287,7 +309,11 @@ mod tests {
     }
 
     fn marks(text: &str, items: &[serde_json::Value]) -> Vec<MarkInput> {
-        review_marks_from_snapshot(&snapshot(text, items)).unwrap()
+        let decoded = review_marks_from_snapshot(&snapshot(text, items)).unwrap();
+        // The decoded text always round-trips the text the snapshot was built
+        // with — the invariant the export's at-rest check relies on.
+        assert_eq!(decoded.text, text);
+        decoded.marks
     }
 
     #[test]
@@ -397,11 +423,79 @@ mod tests {
         doc.get_text(TEXT_CONTAINER).insert(0, "hello").unwrap();
         doc.commit();
         let bytes = doc.export(ExportMode::Snapshot).unwrap();
-        assert!(review_marks_from_snapshot(&bytes).unwrap().is_empty());
+        let decoded = review_marks_from_snapshot(&bytes).unwrap();
+        assert_eq!(decoded.text, "hello");
+        assert!(decoded.marks.is_empty());
     }
 
     #[test]
     fn undecodable_snapshot_is_an_error() {
         assert!(review_marks_from_snapshot(b"definitely not a loro snapshot").is_err());
+    }
+
+    // ---- wire-level status mapping of the HTTP client -------------------------
+
+    use axum::extract::Path;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use axum::routing::get as route_get;
+
+    /// Pin the client's status mapping against a real HTTP hop: 200 → bytes,
+    /// 204 → `None` (the endpoint's explicit no-state answer), and everything
+    /// else — including a 404, which can only mean the route did not match
+    /// (version skew / wrong base URL) — is a loud dependency error.
+    #[tokio::test]
+    async fn http_sync_state_client_maps_statuses_over_the_wire() {
+        let app = axum::Router::new().route(
+            "/internal/docs/{doc_id}/state",
+            route_get(|Path(doc_id): Path<String>| async move {
+                match doc_id.as_str() {
+                    _ if doc_id.ends_with("0001") => (
+                        StatusCode::OK,
+                        [("content-type", "application/octet-stream")],
+                        b"snapshot-bytes".to_vec(),
+                    )
+                        .into_response(),
+                    _ if doc_id.ends_with("0002") => StatusCode::NO_CONTENT.into_response(),
+                    _ if doc_id.ends_with("0003") => StatusCode::NOT_FOUND.into_response(),
+                    _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let client = HttpSyncStateClient::new(format!("http://{addr}"), "machine-secret");
+        let uuid =
+            |tail: &str| Uuid::parse_str(&format!("00000000-0000-0000-0000-{tail}")).unwrap();
+
+        let state = client.document_state(uuid("000000000001")).await.unwrap();
+        assert_eq!(state.as_deref(), Some(b"snapshot-bytes".as_slice()));
+
+        assert!(
+            client
+                .document_state(uuid("000000000002"))
+                .await
+                .unwrap()
+                .is_none(),
+            "204 is the endpoint's explicit no-state answer"
+        );
+
+        let error = client
+            .document_state(uuid("000000000003"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, AppError::Dependency(ref detail) if detail.contains("404")),
+            "a 404 must fail loudly, not read as no state: {error:?}"
+        );
+
+        let error = client
+            .document_state(uuid("000000000004"))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Dependency(_)));
     }
 }

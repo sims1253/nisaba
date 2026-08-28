@@ -14,7 +14,8 @@ pub use auth::*;
 pub use compile_client::*;
 pub use persistence::{BlobStore, MemoryBlobStore, PostgresRepository, S3BlobStore};
 pub use review_state::{
-    HttpSyncStateClient, SyncStateClient, UnconfiguredSyncState, review_marks_from_snapshot,
+    DecodedReviewState, HttpSyncStateClient, SyncStateClient, UnconfiguredSyncState,
+    review_marks_from_snapshot,
 };
 pub use types::*;
 
@@ -2125,6 +2126,14 @@ async fn gather_documents(
 /// archive. A redline export that quietly dropped every pending suggestion
 /// would misrepresent the project's review state, which is precisely what the
 /// export is meant to capture.
+///
+/// The same policy governs the **at-rest check**: mark offsets are resolved
+/// against the snapshot's CRDT text, so they may only be projected over a body
+/// identical to it. The web client persists the body with a debounced PATCH,
+/// so while a document is being edited (or a save has failed) the stored body
+/// lags the CRDT — at that moment the export refuses (502, "retry once
+/// editing has settled") rather than project the marks over text they were
+/// never resolved against. Exports are taken at rest, and enforced to be.
 async fn project_review_marks(
     state: &AppState,
     docs: &[DocumentExport],
@@ -2133,15 +2142,24 @@ async fn project_review_marks(
     for doc in docs {
         let decoded = match state.sync_state.document_state(doc.id).await? {
             // No synced state at all: an empty list, not an error.
-            None => Vec::new(),
-            Some(snapshot) => review_marks_from_snapshot(&snapshot).map_err(|error| {
-                AppError::Dependency(format!(
-                    "review state for {} could not be decoded: {error}",
-                    doc.path
-                ))
-            })?,
+            None => None,
+            Some(snapshot) => {
+                let decoded = review_marks_from_snapshot(&snapshot).map_err(|error| {
+                    AppError::Dependency(format!(
+                        "review state for {} could not be decoded: {error}",
+                        doc.path
+                    ))
+                })?;
+                if decoded.text != doc.body {
+                    return Err(AppError::Dependency(format!(
+                        "document {} has collaborative changes that are not saved yet; retry the export once editing has settled",
+                        doc.path
+                    )));
+                }
+                Some(decoded)
+            }
         };
-        marks.insert(doc.path.clone(), decoded);
+        marks.insert(doc.path.clone(), decoded.map_or_else(Vec::new, |d| d.marks));
     }
     Ok(marks)
 }

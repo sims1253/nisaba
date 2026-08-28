@@ -168,11 +168,16 @@ GET /internal/docs/{doc_id}/state
 Authorization: Bearer <NISABA_SYNC_AUTHZ_TOKEN>
 
 → 200 application/octet-stream   // whole current state as an opaque Loro snapshot
+→ 204                            // the document has no state anywhere
 → 400                            // invalid document id
 → 401 | 403                      // missing / wrong service token
-→ 404                            // the document has no state anywhere
 → 500                            // store or export failure
 ```
+
+The no-state answer is **204, not 404**: an unmatched route (version skew
+against an older sync without `/internal/docs`, a misconfigured base URL in
+the app) also answers 404, and the caller must distinguish "genuinely no
+state — empty marks" from "wrong door — fail loudly".
 
 - The credential is the SAME shared token as the authz hop above
   (`NISABA_SYNC_AUTHZ_TOKEN`); it is stored as a SHA-256 digest and compared in
