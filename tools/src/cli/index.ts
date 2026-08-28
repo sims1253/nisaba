@@ -25,7 +25,7 @@ import { ManifestSchema, type Manifest } from "../docx/manifest.js";
 import { generateTypstSkeleton } from "../typst/skeleton.js";
 import { validateAgainstManifest, validateTypstSource } from "../typst/schema.js";
 import { checkPdfCompliance } from "../pdf/compliance.js";
-import { runVisualDiff, DEFAULT_VISUAL_DIFF_OPTIONS, type Provenance } from "../visualdiff/harness.js";
+import { runVisualDiff, DEFAULT_VISUAL_DIFF_OPTIONS, PROVENANCES, type Provenance } from "../visualdiff/harness.js";
 import { checkRoundTrip } from "../ris/roundtrip.js";
 import { buildSampleDocumentDocx } from "../fixtures/generate.js";
 import { hashValue } from "../json.js";
@@ -79,6 +79,25 @@ function numOpt(args: ReturnType<typeof parseArgs>, key: string): number | undef
   if (v === undefined) return undefined;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Parse a `--reference-provenance` / `--candidate-provenance` option. The raw
+ * CLI string is untrusted: casting it unchecked let a typo silently become a
+ * bogus provenance in the diff report. Mirrors the role narrowing in
+ * `web/src/api.ts`, but rejects (with the valid values listed) instead of
+ * falling back — an unknown value must fail loudly.
+ */
+export function parseProvenanceOption(
+  args: ReturnType<typeof parseArgs>,
+  key: "reference-provenance" | "candidate-provenance",
+): Effect.Effect<Provenance, UsageError> {
+  const raw = args.options.get(key) ?? "unknown";
+  return (PROVENANCES as readonly string[]).includes(raw)
+    ? Effect.succeed(raw as Provenance)
+    : Effect.fail(
+        new UsageError(`invalid --${key} value "${raw}"; valid values: ${PROVENANCES.join(", ")}`),
+      );
 }
 
 function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
@@ -176,9 +195,9 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
       const maxNorm = numOpt(args, "max-normalized-rmse") ?? DEFAULT_VISUAL_DIFF_OPTIONS.maxNormalizedRmse;
       const maxFrac = numOpt(args, "max-diff-page-fraction") ?? DEFAULT_VISUAL_DIFF_OPTIONS.maxDiffPageFraction;
       const fuzz = numOpt(args, "fuzz-percent") ?? DEFAULT_VISUAL_DIFF_OPTIONS.fuzzPercent;
-      const referenceProvenance = (args.options.get("reference-provenance") ?? "unknown") as Provenance;
-      const candidateProvenance = (args.options.get("candidate-provenance") ?? "unknown") as Provenance;
       return Effect.gen(function* () {
+        const referenceProvenance = yield* parseProvenanceOption(args, "reference-provenance");
+        const candidateProvenance = yield* parseProvenanceOption(args, "candidate-provenance");
         const report = yield* runVisualDiff(
           toPosix(path.resolve(reference)),
           toPosix(path.resolve(candidate)),

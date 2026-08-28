@@ -26,6 +26,13 @@ import { VISUAL_DIFF as MSG } from "../messages.js";
 
 export type Provenance = "docx-render" | "typst-compile" | "pdf" | "unknown";
 
+/**
+ * The allowed provenance values — the runtime mirror of the {@link Provenance}
+ * union, for validating untrusted CLI input (see `parseProvenanceOption` in
+ * `cli/index.ts`; mirrors the role narrowing in `web/src/api.ts`).
+ */
+export const PROVENANCES: readonly Provenance[] = ["docx-render", "typst-compile", "pdf", "unknown"];
+
 export interface VisualDiffOptions {
   readonly dpi: number;
   /** Normalised RMSE above which a page is considered different. */
