@@ -42,6 +42,9 @@ pub struct SessionState {
     pub config: Arc<Config>,
     /// Readiness probes served by `GET /health/ready` (see `server::Readiness`).
     pub readiness: crate::server::Readiness,
+    /// The shared service credential guarding `GET /internal/docs/{id}/state`
+    /// (see `server::InternalAuth`). Deny-all by default.
+    pub internal_auth: crate::server::InternalAuth,
 }
 
 /// Application-level close codes (WS 4000–4999 are safe for apps to define).

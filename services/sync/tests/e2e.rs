@@ -466,8 +466,14 @@ async fn spawn_server_with_readiness(
         Arc::new(SystemClock),
         Arc::new(StaticAccessResolver::new()),
     );
-    let router =
-        nisaba_sync::server::build_with_readiness(registry, Arc::new(Config::default()), readiness);
+    let router = nisaba_sync::server::build_with_readiness(
+        registry,
+        Arc::new(Config::default()),
+        readiness,
+        // Deny-all is the correct default for the internal read API in a test
+        // that never calls it.
+        nisaba_sync::server::InternalAuth::default(),
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

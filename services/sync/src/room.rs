@@ -629,6 +629,17 @@ impl DocRoom {
         Ok(vv)
     }
 
+    /// The document's whole current CRDT state as an opaque Loro snapshot.
+    ///
+    /// Serves the internal read API (`GET /internal/docs/{doc_id}/state`): the
+    /// bytes are exactly what a joining peer would receive as a full-snapshot
+    /// catch-up — the authority exported without interpretation. This is a
+    /// *read*: it never mutates the authority, the op log, or the snapshot
+    /// store, and it does not force a snapshot.
+    pub fn export_state(&self) -> SyncResult<Vec<u8>> {
+        self.authority.export_snapshot()
+    }
+
     /// Milliseconds a reviewer's text-touching update may follow a
     /// review-container update from the same peer. The web client emits the
     /// suggestion record and the text it annotates as *separate* CRDT frames,

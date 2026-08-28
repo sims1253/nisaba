@@ -3,8 +3,12 @@
 //! This crate implements the Nisaba sync layer:
 //!
 //! * a WebSocket **authority/relay** keyed by document ids,
-//! * **binary CRDT update import/export** (opaque bytes; sync never inspects
-//!   Loro state),
+//! * **binary CRDT update import/export** (the relay path is opaque: peers'
+//!   update bytes are never inspected or re-serialised),
+//! * an **internal, service-token whole-state read** (`GET
+//!   /internal/docs/{doc_id}/state`): a document's current state exported as
+//!   an opaque snapshot for authenticated callers (the app's export path),
+//!   still without interpretation,
 //! * **reconnect catch-up** via version vectors, with a full-snapshot fallback,
 //! * ephemeral **presence/awareness** with heartbeat expiry,
 //! * a **role-aware access seam** (`author` / `reviewer` / `read-only`),
@@ -17,10 +21,9 @@
 //! lives behind the `server` feature (on by default).
 //!
 //! Review-layer concerns (soft deletes, marks, accept/reject) are deliberately
-//! out of scope here: "sync transports opaque Loro state". In
-//! particular this service makes **no physical deletion assumptions** — every
-//! update is opaque bytes that may carry pending-suggestion marks over CRDT
-//! positions.
+//! out of scope for the relay: peers' updates are transported as opaque bytes
+//! that may carry pending-suggestion marks over CRDT positions, and the relay
+//! never filters or rewrites them.
 
 #![forbid(unsafe_code)]
 

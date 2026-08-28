@@ -63,6 +63,11 @@ tokio-tungstenite = { version = "0.30", optional = true }
 # service's HTTP client. Used by the server-gated JWKS refresher and the HTTP
 # document-authorization verifier.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+# Internal read API credential check: SHA-256 digest + constant-time compare,
+# mirroring the app service's `/internal/*` token check exactly. Both crates
+# are already in the workspace graph via the app service.
+sha2 = "0.10"
+subtle = "2"
 
 [dev-dependencies]
 tempfile = "3"
