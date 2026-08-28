@@ -75,8 +75,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         jwks,
         data_dir: Some(data_dir),
     };
-    let router =
-        nisaba_sync::server::build_with_readiness(registry.clone(), config.clone(), readiness);
+    // The internal read API (GET /internal/docs/{doc_id}/state) accepts the
+    // SAME machine credential the app↔sync hop already uses. Unset/empty →
+    // deny-all, fail-closed (the app's export path then fails loudly with a
+    // dependency error instead of reading unauthenticated state).
+    let internal_auth = nisaba_sync::server::InternalAuth::from_token(
+        &env::var("NISABA_SYNC_AUTHZ_TOKEN").unwrap_or_default(),
+    );
+    if env::var("NISABA_SYNC_AUTHZ_TOKEN")
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        tracing::warn!(
+            "NISABA_SYNC_AUTHZ_TOKEN is unset or empty: the internal state read API denies every request (fail-closed)"
+        );
+    }
+    let router = nisaba_sync::server::build_with_readiness(
+        registry.clone(),
+        config.clone(),
+        readiness,
+        internal_auth,
+    );
 
     let interval = nisaba_sync::server::maintenance_interval(&config);
     spawn_maintenance(registry.clone(), interval);

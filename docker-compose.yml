@@ -248,6 +248,10 @@ services:
       # :? — like NISABA_COMPILE_TOKEN, missing means compose fails at
       # interpolation time instead of the app fatalling at startup.
       NISABA_SYNC_AUTHZ_TOKEN: ${NISABA_SYNC_AUTHZ_TOKEN:?NISABA_SYNC_AUTHZ_TOKEN is required}
+      # Exports read each document's review marks from its synced CRDT state:
+      # the app → sync internal read hop, authenticated with the same
+      # NISABA_SYNC_AUTHZ_TOKEN machine credential.
+      NISABA_SYNC_STATE_URL: ${NISABA_SYNC_STATE_URL:-http://sync:8080}
     healthcheck:
       # /health/ready checks database connectivity.
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health/ready"]

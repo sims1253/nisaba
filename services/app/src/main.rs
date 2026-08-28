@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use jsonwebtoken::jwk::JwkSet;
 use nisaba_app::{
-    AppState, Authenticator, HttpCompileClient, NisabaReferencesExporter, PostgresRepository,
-    S3BlobStore, StaticJwks, serve,
+    AppState, Authenticator, HttpCompileClient, HttpSyncStateClient, NisabaReferencesExporter,
+    PostgresRepository, S3BlobStore, StaticJwks, serve,
 };
 
 #[tokio::main]
@@ -59,7 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             jwks: Arc::new(jwks),
         },
     )
-    .with_sync_authz_token(sync_authz_token)
+    .with_sync_authz_token(sync_authz_token.clone())
+    // Exports read each document's review marks from its synced CRDT state:
+    // the app → sync internal read hop, authenticated with the SAME shared
+    // machine credential (NISABA_SYNC_AUTHZ_TOKEN) the sync → app hop uses.
+    .with_sync_state_client(Arc::new(HttpSyncStateClient::new(
+        std::env::var("NISABA_SYNC_STATE_URL").unwrap_or_else(|_| "http://sync:8080".into()),
+        sync_authz_token,
+    )))
     .with_exporters(
         Arc::new(HttpCompileClient::new(
             std::env::var("NISABA_COMPILE_URL").unwrap_or_else(|_| "http://compile:8080".into()),

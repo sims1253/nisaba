@@ -9,7 +9,12 @@ the product.
 
 - **WebSocket authority/relay** keyed by document id (`GET /sync/{doc_id}`).
 - **Binary CRDT import/export** — opaque Loro update bytes; the relay never
-  inspects CRDT state.
+  inspects or re-serialises CRDT state.
+- **Internal whole-state read** (`GET /internal/docs/{doc_id}/state`,
+  service-token only): a document's current state as an opaque snapshot, for
+  the app service's export path. Serving whole-state bytes is *not* the relay
+  path — see [Design invariants](#design-invariants) for where the opacity
+  line now sits.
 - **Reconnect catch-up** via version vectors (`ExportMode::Updates { from }`),
   with a full-snapshot fallback for fresh peers or unrecoverable gaps.
 - **Presence/awareness** with heartbeat expiry (injectable clock; TTL sweeper).
@@ -126,7 +131,7 @@ valid token can never open an arbitrary document:
 | `NISABA_SYNC_OIDC_JWKS_REFRESH_SECS` | `900` | background JWKS refresh interval |
 | `NISABA_SYNC_OIDC_TOKEN_CACHE_TTL_SECS` | `60` | verified-token cache TTL (capped at token `exp`; `0` disables) |
 | `NISABA_SYNC_AUTHZ_URL` | — | app document-authorization endpoint (unset → deny-all documents) |
-| `NISABA_SYNC_AUTHZ_TOKEN` | — | service token for the authz endpoint (required if `AUTHZ_URL` set) |
+| `NISABA_SYNC_AUTHZ_TOKEN` | — | shared service token: presented to the authz/seed endpoints **and** required by `GET /internal/docs/{id}/state` (unset → deny-all, fail-closed) |
 | `NISABA_SYNC_AUTHZ_TIMEOUT_SECS` | `5` | per-call timeout (timeout → deny) |
 | `NISABA_SYNC_HTTP_CONNECT_TIMEOUT_SECS` | `5` | outbound TCP+TLS handshake bound |
 | `NISABA_SYNC_HTTP_REQUEST_TIMEOUT_SECS` | `10` | outbound whole-call bound |
@@ -152,11 +157,53 @@ The role strings mirror the `app` service mapping. The service token
 is a machine credential injected into the `sync` and `app` containers only; it
 is **not** the end-user's access token (sync validates that separately in stage 1).
 
+### Internal state read API (the `app` → `sync` direction)
+
+Exports need each document's review marks, and review state lives in the CRDT
+this service relays — so the app reads a document's whole state back on an
+authenticated internal path:
+
+```text
+GET /internal/docs/{doc_id}/state
+Authorization: Bearer <NISABA_SYNC_AUTHZ_TOKEN>
+
+→ 200 application/octet-stream   // whole current state as an opaque Loro snapshot
+→ 204                            // the document has no state anywhere
+→ 400                            // invalid document id
+→ 401 | 403                      // missing / wrong service token
+→ 500                            // store or export failure
+```
+
+The no-state answer is **204, not 404**: an unmatched route (version skew
+against an older sync without `/internal/docs`, a misconfigured base URL in
+the app) also answers 404, and the caller must distinguish "genuinely no
+state — empty marks" from "wrong door — fail loudly".
+
+- The credential is the SAME shared token as the authz hop above
+  (`NISABA_SYNC_AUTHZ_TOKEN`); it is stored as a SHA-256 digest and compared in
+  constant time, mirroring how the app checks it on its own `/internal/*`
+  endpoints. Unset/empty → **deny-all** (fail-closed; the app's export then
+  fails with a dependency error rather than reading unauthenticated state).
+- The bytes are served **without interpretation**: no container is read, no
+  entry decoded, nothing re-serialised — the authority is exported exactly as a
+  joining peer would receive it.
+- A live room answers from its in-memory authority (including unsnapshotted
+  updates); with no live room the state is hydrated from the latest snapshot +
+  op-log replay into a throwaway authority, without registering a room.
+- The path is **never proxied by the web nginx** (only `/api/` and `/sync/`
+  are forwarded), so it is reachable only inside the service network.
+- The caller interprets the bytes (the app service decodes the `review`
+  container for export marks); this service does not.
+
 ## Design invariants
 
-- **Opaque transport** — sync never inspects or re-serialises Loro state (a
-  core-model principle). In particular, review-layer soft deletes (marks over CRDT positions,
-  review semantics) pass through untouched: **no physical deletion assumptions**.
+- **Opacity is about the relay path** — the WebSocket relay transports opaque
+  bytes: sync never inspects, filters, or re-serialises Loro state on behalf of
+  a *peer*. In particular, review-layer soft deletes (marks over CRDT
+  positions, review semantics) pass through untouched: **no physical deletion
+  assumptions**. The internal read API serves whole-state snapshots **without
+  interpretation** (no container is read, nothing re-encoded) — bytes in,
+  the same state out — and interpretation is left to the authenticated caller.
 - **Presence is ephemeral** — never written to the op log or snapshots; it
   expires without a heartbeat.
 - **Append-only** — the op log exposes no mutation other than `append`.

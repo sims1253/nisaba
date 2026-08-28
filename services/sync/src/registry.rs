@@ -9,6 +9,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 use crate::auth::AccessResolver;
+use crate::authority::AuthorityDoc;
 use crate::config::{Config, DocId};
 use crate::error::{SyncError, SyncResult};
 use crate::op_log::OpLogStore;
@@ -137,6 +138,47 @@ impl DocRegistry {
             .collect()
     }
 
+    /// The live room for `doc_id`, if one is currently registered.
+    #[must_use]
+    pub fn room(&self, doc_id: &DocId) -> Option<Arc<DocRoom>> {
+        self.rooms
+            .get(doc_id)
+            .map(|entry| Arc::clone(entry.value()))
+    }
+
+    /// The document's whole current state as an opaque Loro snapshot, for the
+    /// internal read API (`GET /internal/docs/{doc_id}/state`).
+    ///
+    /// Resolution order:
+    ///
+    /// 1. a **live room** — its authority holds every applied update, including
+    ///    any not yet snapshotted to the store;
+    /// 2. otherwise the **persisted stores** (latest snapshot + op-log replay),
+    ///    hydrated into a throwaway authority *without registering a room*, so
+    ///    an internal read never pins an op-log handle or grows the room map;
+    /// 3. `Ok(None)` when the document has no state anywhere (no live room, no
+    ///    snapshot, empty op log) — the HTTP layer answers 204, keeping 404
+    ///    reserved for a routing miss so the caller can tell the two apart.
+    ///
+    /// The bytes are exported without interpretation: this is the same opaque
+    /// whole-state export a joining peer receives, surfaced on an authenticated
+    /// service-to-service path instead of the public WebSocket relay.
+    pub async fn export_state(&self, doc_id: &DocId) -> SyncResult<Option<Vec<u8>>> {
+        if let Some(room) = self.room(doc_id) {
+            return room.export_state().map(Some);
+        }
+        // No live room: hydrate from the persisted stores. A snapshot is the
+        // cheap path; a document that only ever received updates below the
+        // snapshot threshold still has state in the op log alone.
+        let authority = match self.snapshots.latest(doc_id).await? {
+            Some(snapshot) => AuthorityDoc::from_snapshot(&snapshot.bytes)?,
+            None if self.op_log.is_empty(doc_id).await? => return Ok(None),
+            None => AuthorityDoc::new(),
+        };
+        replay_op_log(&*self.op_log, doc_id, &authority).await?;
+        authority.export_snapshot().map(Some)
+    }
+
     /// Evict every room that is currently empty (no live sessions) and idle
     /// beyond [`Config::evict_idle_ttl_ms`] — oldest-touched first, up to the cap
     /// surplus. Returns the number of rooms evicted.
@@ -203,4 +245,27 @@ impl DocRegistry {
         }
         count
     }
+}
+
+/// Replay every op-log record for `doc` into `authority` (internal state reads).
+///
+/// Re-importing an already-applied op is a no-op in Loro, so this is correct
+/// wherever the snapshot boundary sits. A record that fails to import (a torn
+/// tail) is skipped with a warning rather than failing the read — the same
+/// recovery posture as [`DocRoom::open`].
+async fn replay_op_log(
+    op_log: &dyn OpLogStore,
+    doc: &DocId,
+    authority: &AuthorityDoc,
+) -> SyncResult<()> {
+    for update in op_log.read_all(doc).await? {
+        if let Err(error) = authority.import_update(&update) {
+            tracing::warn!(
+                error = %error,
+                doc = %doc,
+                "skipping op-log record that fails to import during internal state read"
+            );
+        }
+    }
+    Ok(())
 }

@@ -272,8 +272,8 @@ async fn sync_fixture(role: MembershipRole) -> (AppState, Document) {
             Document {
                 id: Uuid::new_v4(),
                 project_id: project.id,
-                path: "main.typ".into(),
-                title: "Main".into(),
+                path: "intro.typ".into(),
+                title: "Intro".into(),
                 body: String::new(),
                 data: BTreeMap::new(),
                 revision: 0,
@@ -432,6 +432,248 @@ async fn compile_proxy_projects_review_marks_before_forwarding() {
     let forwarded = recorder.0.lock().unwrap().clone().unwrap();
     assert_eq!(forwarded.sources["main.typ"], "AC");
     assert!(forwarded.marks.is_empty());
+}
+
+// --- export review-marks bridge (sync CRDT → compile marks) -----------------
+
+/// A stubbed sync state client: serves a canned snapshot per document id, and
+/// `None` (no synced state — nobody ever collaborated) for anything else.
+struct StubSyncState {
+    states: HashMap<Uuid, Vec<u8>>,
+}
+
+#[async_trait]
+impl SyncStateClient for StubSyncState {
+    async fn document_state(&self, document_id: Uuid) -> Result<Option<Vec<u8>>, AppError> {
+        Ok(self.states.get(&document_id).cloned())
+    }
+}
+
+/// A sync state client whose every read fails — sync is unreachable.
+struct UnreachableSyncState;
+
+#[async_trait]
+impl SyncStateClient for UnreachableSyncState {
+    async fn document_state(&self, document_id: Uuid) -> Result<Option<Vec<u8>>, AppError> {
+        Err(AppError::Dependency(format!(
+            "sync state read for document {document_id} failed: connection refused"
+        )))
+    }
+}
+
+/// Build a Loro snapshot exactly like the web client would leave it: the given
+/// text plus one OPEN INSERT suggestion anchored by cursors over
+/// `anchor_from..anchor_to` (raw offsets deliberately stale — the cursors are
+/// the authoritative anchors, like a persisted item from an older revision).
+fn synced_snapshot_with_open_insert(text: &str, anchor_from: usize, anchor_to: usize) -> Vec<u8> {
+    let doc = loro::LoroDoc::new();
+    doc.set_peer_id(9).unwrap();
+    doc.get_text("text").insert(0, text).unwrap();
+    doc.commit();
+    let from_cursor = doc
+        .get_text("text")
+        .get_cursor(anchor_from, loro::cursor::Side::Left)
+        .unwrap();
+    let to_cursor = doc
+        .get_text("text")
+        .get_cursor(anchor_to, loro::cursor::Side::Left)
+        .unwrap();
+    let item = json!({
+        "id": "s1", "kind": "suggestion", "from": 9999, "to": 9999,
+        "fromCursor": base64::engine::general_purpose::STANDARD.encode(from_cursor.encode()),
+        "toCursor": base64::engine::general_purpose::STANDARD.encode(to_cursor.encode()),
+        "change": "insert", "author": "bea", "status": "open", "createdAt": 5
+    });
+    doc.get_map("review")
+        .insert("s1", item.to_string())
+        .unwrap();
+    doc.commit();
+    doc.export(loro::ExportMode::Snapshot).unwrap()
+}
+
+async fn export_project_with(
+    sync_of: impl FnOnce(Uuid) -> Arc<dyn SyncStateClient>,
+) -> (Router, Project, Document, Document, Arc<RecordingCompile>) {
+    let repository = Arc::new(MemoryRepository::new());
+    let now = Utc::now();
+    let project = repository
+        .create_project(
+            Project {
+                id: Uuid::new_v4(),
+                name: "Export marks".into(),
+                created_at: now,
+                updated_at: now,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    repository
+        .create_membership(ProjectMembership {
+            project_id: project.id,
+            subject: "alice".into(),
+            role: MembershipRole::Owner,
+            created_at: now,
+        })
+        .await
+        .unwrap();
+    let main = repository
+        .create_document(
+            Document {
+                id: Uuid::new_v4(),
+                project_id: project.id,
+                path: "intro.typ".into(),
+                title: "Intro".into(),
+                body: "Hello world".into(),
+                data: BTreeMap::new(),
+                revision: 0,
+                updated_at: now,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let notes = repository
+        .create_document(
+            Document {
+                id: Uuid::new_v4(),
+                project_id: project.id,
+                path: "notes.typ".into(),
+                title: "Notes".into(),
+                body: "plain".into(),
+                data: BTreeMap::new(),
+                revision: 0,
+                updated_at: now,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let recorder = Arc::new(RecordingCompile(std::sync::Mutex::new(None)));
+    let state = AppState::new(repository, auth())
+        .with_sync_state_client(sync_of(main.id))
+        .with_exporters(recorder.clone(), Arc::new(NisabaReferencesExporter));
+    (router(state), project, main, notes, recorder)
+}
+
+#[tokio::test]
+async fn export_projects_synced_review_marks() {
+    // main.typ has synced review state: an open insert suggestion over
+    // "Hello" (0..5). notes.typ has none (never collaborated) — an empty
+    // mark list is normal, its body projects unchanged.
+    let (app, project, _main, _notes, recorder) = export_project_with(|main_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                main_id,
+                synced_snapshot_with_open_insert("Hello world", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry": "intro.typ", "view": "baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: Value = response_body(response).await;
+    assert!(value["zip_base64"].as_str().is_some_and(|z| !z.is_empty()));
+
+    // The compile request the export built: the insert-marked span is absent
+    // from the baseline view of main.typ, while the marks-less document is
+    // projected verbatim.
+    let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+    // The generated master replaces main.typ (the existing export contract);
+    // the real documents are the projected ones.
+    assert_eq!(
+        forwarded.sources["main.typ"],
+        "#include \"intro.typ\"\n#include \"notes.typ\""
+    );
+    assert_eq!(forwarded.sources["intro.typ"], " world");
+    assert_eq!(forwarded.sources["notes.typ"], "plain");
+    // The decoded mark itself rode along on the request (path-keyed), with
+    // the cursors resolved to 0..5 despite the stale raw offsets.
+    assert_eq!(forwarded.marks["intro.typ"].len(), 1);
+    assert_eq!(forwarded.marks["intro.typ"][0].start, 0);
+    assert_eq!(forwarded.marks["intro.typ"][0].end, 5);
+    assert_eq!(forwarded.marks["intro.typ"][0].kind, "insert");
+    assert_eq!(forwarded.marks["intro.typ"][0].author, "bea");
+    assert_eq!(forwarded.marks["intro.typ"][0].timestamp, 5);
+}
+
+#[tokio::test]
+async fn export_refuses_when_the_saved_body_lags_the_crdt() {
+    // Mark offsets are resolved against the CRDT text; projecting them over a
+    // different stored body would silently misplace them. While a document is
+    // being edited (the web client's body PATCH is debounced) the CRDT is
+    // ahead of the saved body — exactly this fixture — and the export refuses.
+    let (app, project, _main, _notes, _recorder) = export_project_with(|main_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                main_id,
+                // The CRDT holds an edit the debounced body save has not
+                // persisted yet (the stored body is still "Hello world").
+                synced_snapshot_with_open_insert("Hello world — edited", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry": "intro.typ", "view": "baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let value: Value = response_body(response).await;
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("not saved yet"),
+        "the failure must be actionable: {message}"
+    );
+}
+
+#[tokio::test]
+async fn export_fails_loudly_when_sync_is_unreachable() {
+    // Correctness over availability: a marks-less export would misrepresent
+    // the review state, so an unreachable sync is a 502, never a silent
+    // marks-less archive.
+    let (app, project, _main, _notes, _recorder) =
+        export_project_with(|_| Arc::new(UnreachableSyncState)).await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry": "intro.typ", "view": "baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn export_fails_when_no_sync_client_is_configured() {
+    // The unconfigured default is fail-closed too, not a silent empty map.
+    let (app, project, _main, _notes, _recorder) =
+        export_project_with(|_| Arc::new(UnconfiguredSyncState)).await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry": "intro.typ", "view": "baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 }
 
 #[test]
