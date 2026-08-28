@@ -7,11 +7,15 @@
 mod auth;
 mod compile_client;
 mod persistence;
+mod review_state;
 mod types;
 
 pub use auth::*;
 pub use compile_client::*;
 pub use persistence::{BlobStore, MemoryBlobStore, PostgresRepository, S3BlobStore};
+pub use review_state::{
+    HttpSyncStateClient, SyncStateClient, UnconfiguredSyncState, review_marks_from_snapshot,
+};
 pub use types::*;
 
 use auth::{Auth, Permission, permitted, project_access, project_acl};
@@ -702,6 +706,9 @@ pub struct AppState {
     pub compile: Arc<dyn CompileClient>,
     pub references: Arc<dyn ReferenceExporter>,
     pub blobs: Arc<dyn BlobStore>,
+    /// Reads each document's whole CRDT state from the sync service (the
+    /// review marks for exports live there, not in the document row).
+    pub sync_state: Arc<dyn SyncStateClient>,
     sync_authz_token: Option<[u8; 32]>,
 }
 impl AppState {
@@ -712,6 +719,7 @@ impl AppState {
             compile: Arc::new(UnconfiguredCompile),
             references: Arc::new(UnconfiguredReferences),
             blobs: Arc::new(MemoryBlobStore::default()),
+            sync_state: Arc::new(UnconfiguredSyncState),
             sync_authz_token: None,
         }
     }
@@ -720,6 +728,13 @@ impl AppState {
         let token = token.into();
         self.sync_authz_token =
             (!token.trim().is_empty()).then(|| Sha256::digest(token.as_bytes()).into());
+        self
+    }
+    /// Wire the sync state client used by the export path to recover review
+    /// marks from each document's CRDT.
+    #[must_use]
+    pub fn with_sync_state_client(mut self, client: Arc<dyn SyncStateClient>) -> Self {
+        self.sync_state = client;
         self
     }
     #[must_use]
@@ -2042,6 +2057,8 @@ async fn api_compile(
 
 /// One document's gathered export data.
 struct DocumentExport {
+    /// The document's id — its CRDT lives in the sync service keyed by this.
+    id: Uuid,
     path: String,
     body: String,
     citations: Vec<Citation>,
@@ -2081,6 +2098,7 @@ async fn gather_documents(
         }
         let yaml = bibliography_yaml(&cited);
         docs.push(DocumentExport {
+            id: document.id,
             path: document.path,
             body: document.body,
             citations: known_citations,
@@ -2088,6 +2106,44 @@ async fn gather_documents(
         });
     }
     Ok(docs)
+}
+
+/// Gather each document's review marks from its synced CRDT state, keyed by
+/// document path for the compile request.
+///
+/// Review marks are NOT stored in the document row the app owns — they live in
+/// the document's Loro CRDT, replicated by the sync service — so the export
+/// path asks sync for each document's whole state and decodes the review
+/// container with exactly the web compile path's semantics (see
+/// [`review_marks_from_snapshot`]). A document with no review items (or no CRDT
+/// state at all — nobody ever collaborated on it) is normal and yields an
+/// empty mark list.
+///
+/// Failure policy — correctness over availability: if sync is unreachable, or
+/// answers unexpectedly, or a snapshot cannot be decoded, the export FAILS with
+/// a dependency error (502) instead of silently exporting a marks-less
+/// archive. A redline export that quietly dropped every pending suggestion
+/// would misrepresent the project's review state, which is precisely what the
+/// export is meant to capture.
+async fn project_review_marks(
+    state: &AppState,
+    docs: &[DocumentExport],
+) -> Result<BTreeMap<String, Vec<MarkInput>>, AppError> {
+    let mut marks = BTreeMap::new();
+    for doc in docs {
+        let decoded = match state.sync_state.document_state(doc.id).await? {
+            // No synced state at all: an empty list, not an error.
+            None => Vec::new(),
+            Some(snapshot) => review_marks_from_snapshot(&snapshot).map_err(|error| {
+                AppError::Dependency(format!(
+                    "review state for {} could not be decoded: {error}",
+                    doc.path
+                ))
+            })?,
+        };
+        marks.insert(doc.path.clone(), decoded);
+    }
+    Ok(marks)
 }
 
 async fn document_bibliographies(
@@ -2257,15 +2313,24 @@ async fn export_project(
             missing.join(", ")
         )));
     }
+    // Review marks travel with the CRDT, not the document row: fetch each
+    // document's synced review state and project it below (see
+    // `project_review_marks` for the failure policy — sync being down fails
+    // the export rather than dropping marks).
+    let marks = project_review_marks(&s, &docs).await?;
     let mut sources = BTreeMap::new();
     let mut doc_yaml = BTreeMap::new();
     for doc in &docs {
         // Apply view-based projection so that exported content respects the
         // requested view (baseline/proposed/redline/public), matching the
-        // behaviour of the interactive compile endpoint. Marks are currently
-        // not stored in the document's data field, so the mark list is empty;
-        // once marks are persisted they will flow through here automatically.
-        let projected = projected_source(&doc.body, &[], &r.view)?;
+        // behaviour of the interactive compile endpoint. The marks come from
+        // each document's synced CRDT state; a document with none projects
+        // its body unchanged.
+        let projected = projected_source(
+            &doc.body,
+            marks.get(&doc.path).map_or(&[], Vec::as_slice),
+            &r.view,
+        )?;
         // Convert markdown-style headings to Typst syntax so document bodies
         // compile correctly. Markdown `#`/`##`/`###` headings are misread by
         // Typst as code-mode expressions, causing compile errors.
@@ -2291,7 +2356,7 @@ async fn export_project(
         project_id: project.id,
         entry: master_path,
         sources,
-        marks: BTreeMap::new(),
+        marks,
         view: r.view,
     };
     inject_per_document_bibliography(&mut compile_request, &doc_yaml);

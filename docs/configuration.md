@@ -77,7 +77,8 @@ replacement is documented in [`deploy/keycloak/README.md`](../deploy/keycloak/RE
 | `NISABA_OIDC_DISCOVERY_URL` | — | **Reserved**: the future JWKS-fetch URL; the app reads `NISABA_OIDC_JWKS_JSON` inline today | nothing yet |
 | `NISABA_COMPILE_URL` | `http://compile:8080` | Compile service endpoint on `svc-net` | `services/app/src/main.rs` |
 | `NISABA_COMPILE_TOKEN` | — **required**, non-empty | Shared secret for `app → compile` calls | same + compile |
-| `NISABA_SYNC_AUTHZ_TOKEN` | — **required** in production | Machine secret for `sync → app` document authorization | same + sync |
+| `NISABA_SYNC_AUTHZ_TOKEN` | — **required** in production | Machine secret for `sync → app` document authorization; also presented by `app → sync` internal state reads | same + sync |
+| `NISABA_SYNC_STATE_URL` | `http://sync:8080` | Sync service base URL for the export path's review-state reads (`GET /internal/docs/{id}/state`) | same |
 | `NISABA_APP_ADDR` | `0.0.0.0:8080` (compose) | Bind address (`PORT` is a fallback) | same |
 | `APP_HOST_PORT` | `8100` | Host-side port (`127.0.0.1`) | `docker-compose.yml` |
 | `RUST_LOG` / `RUST_BACKTRACE` | `info` / `1` | Log verbosity / backtraces (all Rust services) | `tracing_subscriber` |
@@ -103,7 +104,7 @@ variables `.env.example` sets for the local stack:
 | `NISABA_SYNC_OIDC_ISSUER` / `NISABA_SYNC_OIDC_AUDIENCE` / `NISABA_SYNC_OIDC_JWKS_URL` | unset (deny-all) | All three set together enable JWT/JWKS validation; a partial set is a fatal startup error |
 | `NISABA_SYNC_OIDC_ROLES_CLAIM` | `realm_access.roles` | Dotted path of the roles claim (set `roles` for this realm) |
 | `NISABA_SYNC_AUTHZ_URL` | unset → deny-all documents | App's `/internal/sync/authorize` endpoint |
-| `NISABA_SYNC_AUTHZ_TOKEN` | unset | Machine token for the authz endpoint (same value the app checks) |
+| `NISABA_SYNC_AUTHZ_TOKEN` | unset | Machine token for the authz endpoint (same value the app checks); also required by `GET /internal/docs/{id}/state` — unset → deny-all (fail-closed) |
 | `NISABA_SYNC_SEED_VERIFY_URL` | unset → fail-closed | App endpoint verifying a reviewer's seed of an empty room |
 | `NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME` | unset | Permit `http://` outbound (local dev only) |
 

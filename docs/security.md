@@ -207,6 +207,18 @@ as a hardening task; not MVP-blocking.
   checking membership, and returns `403` for unknown documents or members to
   avoid enumeration. Production app startup requires this secret; development
   and test modes may omit it, but then the endpoint denies all requests.
+- The same `NISABA_SYNC_AUTHZ_TOKEN` also authorises the **`app → sync`
+  internal state read** (`GET /internal/docs/{doc_id}/state`): exports need
+  each document's review marks, which live in the CRDT the sync service owns.
+  Sync checks it exactly like the app checks the reverse hop — SHA-256 digest
+  stored, presented tokens hashed and compared in constant time, 401 for a
+  missing bearer and 403 for a wrong one — and denies every request when the
+  token is unset (fail-closed; the app's export then fails with a dependency
+  error rather than exporting without review marks). The endpoint is not
+  proxied by nginx (only `/api/` and `/sync/` are forwarded), so it is
+  reachable only inside `svc-net`; it serves whole-state snapshot bytes
+  uninterpreted, and the interpretation (decoding the `review` container)
+  happens in the app service.
 - **The Keycloak realm is dev-only** (`sslRequired: "none"`, demo users, public
   client) — production must replace every default; see the production checklist
   in [`deploy/keycloak/README.md`](../deploy/keycloak/README.md).

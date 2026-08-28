@@ -144,11 +144,28 @@ Content-Type: application/json
   sends only the projected sources here.
 - Warm `comemo` caches persist across calls for the same `project_id`.
 
-### 4.2 `sync` — WebSocket
+### 4.2 `sync` — WebSocket (+ an internal state read)
 
 Path convention: `wss://<host>/sync/{doc_id}` (the `web` nginx upgrades
 `/sync/` to the `sync` service). Framing is Loro's update protocol plus a
 presence channel.
+
+`sync` also serves one **internal, service-token-only** HTTP read (never
+proxied by nginx, reachable only inside the service network):
+
+```
+GET /internal/docs/{doc_id}/state
+Authorization: Bearer <NISABA_SYNC_AUTHZ_TOKEN>
+→ 200 application/octet-stream   # whole current CRDT state, opaque Loro snapshot
+→ 404                            # the document has no state anywhere
+```
+
+It exists for the export data flow: review marks live in each document's CRDT
+(the `review` container the web client persists), not in the document rows the
+app stores, so `app` reads the whole state back and interprets it itself —
+`sync` serves the bytes without inspecting them. The opacity invariant is
+about the *relay* path (peers' updates flow as opaque bytes); the internal read
+serves whole-state snapshots uninterpreted to an authenticated caller.
 
 ### 4.3 `app` — REST under `/api`
 
@@ -178,6 +195,8 @@ Routes (the machine-readable truth is `GET /openapi.json` on the app service):
   port), `GET /healthz`, `GET /health/ready`, `GET /openapi.json`
 - Internal (machine-token only, never proxied): `POST /internal/sync/authorize`,
   `GET /internal/document/{document_id}/body`
+- Internal on the sync service (machine-token only, never proxied):
+  `GET /internal/docs/{document_id}/state` — see §4.2
 
 Reference payloads are structured JSON (`metadata` with `title`, `authors`,
 `year`, `doi`, `pmid`, `journal`, and a mandatory `extra` object) — the API does
@@ -189,6 +208,19 @@ path of record for document bodies. The sync relay carries live collaborative
 edits between peers and *reads* the authoritative body from the app (via
 `GET /internal/document/{document_id}/body`) to seed/verify rooms; it never
 writes document bodies back to the database.
+
+Export review-marks data flow (the reverse internal hop): review state
+(suggestions/comments, their statuses, Loro cursors) is replicated inside each
+document's CRDT `review` container via the sync relay. On
+`POST /projects/{project_id}/exports`, the app fetches every document's whole
+state from sync (`GET /internal/docs/{doc_id}/state`, service token), decodes
+the `review` container with exactly the web compile path's semantics
+(`services/app/src/review_state.rs`: open non-orphaned suggestions only, cursor
+resolution with raw-offset fallback, end clamped to document length), and
+projects the marks into the exported sources per view. A document with no
+synced state exports with an empty mark list; if sync is unreachable the
+export **fails** (502) rather than silently dropping review marks —
+correctness over availability.
 
 Export layout: the archive contains the compiled PDF, the projected document
 sources (paths flattened with `/` → `_`), and per-document RIS bibliographies +
