@@ -23,7 +23,7 @@ struct MemoryData {
     share_links: Vec<ShareLink>,
 }
 
-/// Deterministic in-memory repository used by tests and local development.
+/// Deterministic in-memory repository used by tests.
 #[derive(Default)]
 pub(crate) struct MemoryRepository {
     data: tokio::sync::RwLock<MemoryData>,
