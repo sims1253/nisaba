@@ -56,4 +56,23 @@ describe("visual-diff provenance option validation", () => {
     expect(err).toBeInstanceOf(UsageError);
     expect((err as UsageError).message).toContain('invalid --reference-provenance value "typst"');
   });
+
+  it("rejects a valueless flag instead of silently defaulting to \"unknown\"", async () => {
+    // parseArgs files a valueless option under `flags` (the next token starts
+    // with `-`); an unchecked lookup would quietly label the reference
+    // "unknown" — the same silent-mislabel class this guard closes.
+    const args = parseArgs(["visual-diff", "--reference-provenance", "--dpi", "100"]);
+    const exit = await Effect.runPromiseExit(parseProvenanceOption(args, "reference-provenance"));
+    expect(Exit.isFailure(exit)).toBe(true);
+    const err = failureOf(exit);
+    expect(err).toBeInstanceOf(UsageError);
+    expect((err as UsageError).message).toBe("--reference-provenance requires a value");
+  });
+
+  it("also rejects a valueless flag at the end of argv", async () => {
+    const args = parseArgs(["visual-diff", "--candidate-provenance"]);
+    const exit = await Effect.runPromiseExit(parseProvenanceOption(args, "candidate-provenance"));
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(failureOf(exit)).toBeInstanceOf(UsageError);
+  });
 });

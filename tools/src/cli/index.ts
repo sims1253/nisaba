@@ -86,12 +86,17 @@ function numOpt(args: ReturnType<typeof parseArgs>, key: string): number | undef
  * CLI string is untrusted: casting it unchecked let a typo silently become a
  * bogus provenance in the diff report. Mirrors the role narrowing in
  * `web/src/api.ts`, but rejects (with the valid values listed) instead of
- * falling back — an unknown value must fail loudly.
+ * falling back — an unknown value must fail loudly. A valueless flag (the
+ * option given without an argument) is rejected too: parseArgs files it under
+ * `flags`, where an unchecked lookup would silently default to "unknown".
  */
 export function parseProvenanceOption(
   args: ReturnType<typeof parseArgs>,
   key: "reference-provenance" | "candidate-provenance",
 ): Effect.Effect<Provenance, UsageError> {
+  if (args.flags.has(key)) {
+    return Effect.fail(new UsageError(`--${key} requires a value`));
+  }
   const raw = args.options.get(key) ?? "unknown";
   return (PROVENANCES as readonly string[]).includes(raw)
     ? Effect.succeed(raw as Provenance)
