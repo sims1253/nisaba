@@ -306,6 +306,15 @@ services:
       # Reviewer seed verification: app endpoint returning the authoritative
       # document body (empty → deny-all, fail-closed).
       NISABA_SYNC_SEED_VERIFY_URL: ${NISABA_SYNC_SEED_VERIFY_URL:-}
+      # SECURITY: dev escape hatch of the sync binary — when the variable is
+      # present, every non-empty token is granted `author` (see
+      # services/sync/README.md). NEVER enable in production. Same null
+      # passthrough as NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME below: compose
+      # passes it through from .env when set and omits it entirely when not
+      # (an empty-string default would flip the toggle on — sync treats ANY
+      # present value as opt-in). Unset by default; deploy/e2e-app.sh sets it
+      # for its authorized-handshake probe.
+      NISABA_SYNC_DEV_ALLOW_ALL:
       # SECURITY: unset by default — sync's shared outbound HTTP client
       # (services/sync/src/http.rs) is then https-only, the production
       # posture. The null value makes compose pass the variable through from
