@@ -157,7 +157,8 @@ impl DocRegistry {
     ///    hydrated into a throwaway authority *without registering a room*, so
     ///    an internal read never pins an op-log handle or grows the room map;
     /// 3. `Ok(None)` when the document has no state anywhere (no live room, no
-    ///    snapshot, empty op log) — the HTTP layer answers 404.
+    ///    snapshot, empty op log) — the HTTP layer answers 204, keeping 404
+    ///    reserved for a routing miss so the caller can tell the two apart.
     ///
     /// The bytes are exported without interpretation: this is the same opaque
     /// whole-state export a joining peer receives, surfaced on an authenticated
