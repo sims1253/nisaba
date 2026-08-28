@@ -31,7 +31,6 @@ fi
 
 # Temp env + throwaway project name so we never touch real volumes/state.
 TMP_ENV="$(mktemp)"
-trap 'rm -f "$TMP_ENV"' EXIT
 cp "$ENV_EXAMPLE" "$TMP_ENV"
 
 PROJECT="nisaba-smoke-$$"
@@ -41,6 +40,7 @@ COMPOSE=(docker compose --env-file "$TMP_ENV" -p "$PROJECT")
 cleanup() {
     echo "[smoke] tearing down (project=$PROJECT)"
     "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+    rm -f "$TMP_ENV"
 }
 trap cleanup EXIT
 
