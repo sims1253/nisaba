@@ -225,7 +225,12 @@ services:
       NISABA_APP_ADDR: "0.0.0.0:8080"
       # The service binary always uses the durable PostgreSQL and S3 adapters.
       # Missing or invalid configuration fails startup; in-memory adapters are test-only.
-      DATABASE_URL: ${DATABASE_URL:-}
+      # DATABASE_URL is synthesised from the NISABA_DB_* parts so the password
+      # lives in exactly one place (.env's NISABA_DB_PASSWORD) — there is no
+      # literal URL to drift out of sync with it. Host/port are fixed by the
+      # compose network contract (postgres on db-net). NB: a password with
+      # URI-reserved characters must be percent-encoded here.
+      DATABASE_URL: postgres://${NISABA_DB_USER:-nisaba_app}:${NISABA_DB_PASSWORD:?NISABA_DB_PASSWORD is required}@postgres:5432/${NISABA_DB_NAME:-nisaba}
       NISABA_S3_ENDPOINT: ${NISABA_S3_ENDPOINT:-}
       NISABA_S3_ACCESS_KEY: ${NISABA_S3_ACCESS_KEY:-}
       NISABA_S3_SECRET_KEY: ${NISABA_S3_SECRET_KEY:-}

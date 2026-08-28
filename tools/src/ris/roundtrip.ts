@@ -19,6 +19,7 @@
  */
 import { TOOL_NAME, VERSION } from "../version.js";
 import { hashText } from "../json.js";
+import { RIS_ROUNDTRIP as MSG } from "../messages.js";
 
 /** Common reference-list fields (best-effort default; overridable). */
 export const DEFAULT_REQUIRED_TAGS = ["TY", "AU", "PY", "TI", "JO"] as const;
@@ -148,9 +149,9 @@ export function checkRoundTrip(
   }));
 
   const notes: string[] = [];
-  if (!lossless) notes.push("Round-Trip ist NICHT verlustfrei — Kanonisierung verändert die Daten.");
+  if (!lossless) notes.push(MSG.noteNotLossless);
   const anyMissing = perRecordMissing.some((r) => r.missing.length > 0);
-  if (anyMissing) notes.push("Mindestens ein Eintrag fehlen erforderliche required fields.");
+  if (anyMissing) notes.push(MSG.noteMissingRequiredFields);
 
   return {
     schemaVersion: "1",

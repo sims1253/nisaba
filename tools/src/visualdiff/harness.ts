@@ -22,8 +22,16 @@ import { hashBytes } from "../json.js";
 import { toPosix } from "../paths.js";
 import { TOOL_NAME, VERSION } from "../version.js";
 import { MissingToolError, ToolFailedError, FsError, InvalidInputError } from "../errors.js";
+import { VISUAL_DIFF as MSG } from "../messages.js";
 
 export type Provenance = "docx-render" | "typst-compile" | "pdf" | "unknown";
+
+/**
+ * The allowed provenance values — the runtime mirror of the {@link Provenance}
+ * union, for validating untrusted CLI input (see `parseProvenanceOption` in
+ * `cli/index.ts`; mirrors the role narrowing in `web/src/api.ts`).
+ */
+export const PROVENANCES: readonly Provenance[] = ["docx-render", "typst-compile", "pdf", "unknown"];
 
 export interface VisualDiffOptions {
   readonly dpi: number;
@@ -181,15 +189,13 @@ export function runVisualDiff(
     const visualFidelityAssertable = opts.referenceProvenance === "docx-render";
     const notes: string[] = [];
     if (!visualFidelityAssertable) {
-      notes.push(
-        `Referenz-Provenienz ist "${opts.referenceProvenance}", nicht "docx-render". Metriken werden berechnet, aber es wird KEINE visuelle Fidelity behauptet.`,
-      );
+      notes.push(MSG.noteNonDocxRenderReference(opts.referenceProvenance));
     }
     if (!samePageCount) {
-      notes.push(`Seitenzahlen unterscheiden sich (${refPages.length} vs ${candPages.length}); nur gemeinsame Seiten verglichen.`);
+      notes.push(MSG.notePageCountDiffers(refPages.length, candPages.length));
     }
     if (errorPages > 0) {
-      notes.push(`${errorPages} Seite(n) konnten nicht verglichen werden (compare-Fehler).`);
+      notes.push(MSG.notePagesNotComparable(errorPages));
     }
 
     const metricsPass = errorPages === 0 && diffFraction <= opts.maxDiffPageFraction;

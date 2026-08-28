@@ -65,7 +65,7 @@ replacement is documented in [`deploy/keycloak/README.md`](../deploy/keycloak/RE
 
 | Variable | Default | What it does | Read by |
 |----------|---------|--------------|---------|
-| `DATABASE_URL` | — **required** | Postgres connection string; migrations run at startup | `PostgresRepository::from_env` (`services/app/src/persistence.rs`) |
+| `DATABASE_URL` | synthesised by compose | Postgres connection string; migrations run at startup. **Not set in `.env`**: compose builds the container-facing URL (`postgres://…@postgres:5432/…`) from `NISABA_DB_USER` / `NISABA_DB_PASSWORD` / `NISABA_DB_NAME` so the password exists in one place only; the justfile `migrate` recipe synthesises the host-facing equivalent (`127.0.0.1:$POSTGRES_HOST_PORT`) for sqlx the same way | `PostgresRepository::from_env` (`services/app/src/persistence.rs`) |
 | `NISABA_S3_ENDPOINT` | — **required** | S3 endpoint as seen from the container (`http://seaweedfs:8333`) | `S3BlobStore::from_env` |
 | `NISABA_S3_ACCESS_KEY` / `NISABA_S3_SECRET_KEY` | — **required** | App S3 identity (generated at seaweedfs start) | same |
 | `NISABA_S3_REGION` | `us-east-1` (code) / `local` (compose) | S3 region label | same |

@@ -10,8 +10,9 @@
 export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "target")
 
 # Load .env (same file compose interpolates) so recipes like psql, s3, and
-# migrate see NISABA_DB_USER / NISABA_S3_ADMIN_* / DATABASE_URL. Values already
-# present in the environment win, matching compose interpolation precedence.
+# migrate see NISABA_DB_USER / NISABA_S3_ADMIN_* / the NISABA_DB_* parts
+# `migrate` builds its DATABASE_URL from. Values already present in the
+# environment win, matching compose interpolation precedence.
 # A missing .env is not an error.
 set dotenv-load := true
 
@@ -87,6 +88,13 @@ migrate dir='migrations':
         exit 0
     fi
     if command -v sqlx >/dev/null 2>&1; then
+        # DATABASE_URL is synthesised from the NISABA_DB_* parts (the single
+        # source compose also uses) against the host-published port — .env
+        # deliberately ships no literal URL duplicating the password.
+        # :? — a missing NISABA_DB_PASSWORD fails here, loudly, not in sqlx.
+        # NB: a password with URI-reserved characters must be percent-encoded,
+        # exactly like in the compose synthesis.
+        export DATABASE_URL="postgres://${NISABA_DB_USER:-nisaba_app}:${NISABA_DB_PASSWORD:?NISABA_DB_PASSWORD is required}@127.0.0.1:${POSTGRES_HOST_PORT:-5433}/${NISABA_DB_NAME:-nisaba}"
         sqlx migrate run --source "{{dir}}"
     else
         echo "[migrate] sqlx-cli not installed; install with: cargo install sqlx-cli --no-default-features --features postgres"
@@ -110,9 +118,10 @@ check:
     cargo check --workspace --all-targets
 
 test:
-    # DATABASE_URL from .env points at the Docker-internal hostname (for the
-    # app container). Drop it so the live_api tests fall back to their own
-    # .env parse, which builds the host-reachable 127.0.0.1:{POSTGRES_HOST_PORT}
+    # DATABASE_URL in the environment (e.g. an older .env that still ships a
+    # literal one) points at the Docker-internal hostname for the app
+    # container. Drop it so the live_api tests fall back to their own .env
+    # parse, which builds the host-reachable 127.0.0.1:{POSTGRES_HOST_PORT}
     # URL — otherwise dotenv-load would make them skip "no reachable database".
     env -u DATABASE_URL cargo test --workspace --all-targets
     env -u DATABASE_URL cargo test --workspace --doc
@@ -123,7 +132,8 @@ build:
 
 # Postgres-backed live API integration tests for the app service (the compose
 # stack must be running; skips cleanly when no database is reachable).
-# env -u DATABASE_URL: same reason as `test` — .env's value is container-facing.
+# env -u DATABASE_URL: same reason as `test` — an exported value is likely
+# container-facing.
 test-live:
     env -u DATABASE_URL cargo test -p nisaba-app --test live_api
 

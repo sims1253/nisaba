@@ -12,6 +12,7 @@
  */
 import { TOOL_NAME, VERSION } from "../version.js";
 import { hashBytes, hashText } from "../json.js";
+import { MalformedDocxError } from "../errors.js";
 import {
   attr,
   child,
@@ -49,7 +50,16 @@ interface WalkCtx {
 /** Introspect raw DOCX bytes into a deterministic manifest. */
 export function introspectDocx(bytes: Uint8Array, fileName: string): Manifest {
   const doc = parseDocxBytes(bytes, fileName);
-  const documentXml = doc.parts.get("word/document.xml")!;
+  // parseDocxBytes already throws when this part is absent; re-checking keeps
+  // the invariant local instead of trusting it via a non-null assertion.
+  const documentXml = doc.parts.get("word/document.xml");
+  if (documentXml === undefined) {
+    throw new MalformedDocxError({
+      path: fileName,
+      missingPart: "word/document.xml",
+      reason: "package is missing word/document.xml — not a valid DOCX",
+    });
+  }
   const documentRoot = parseXmlDocument(documentXml);
 
   const styles = parseStyles(doc.parts.get("word/styles.xml"));
@@ -59,7 +69,16 @@ export function introspectDocx(bytes: Uint8Array, fileName: string): Manifest {
 
   const ctx: WalkCtx = { styles, headingLevels, rels, numbering };
 
-  const docEl = child(documentRoot, "document") ?? documentRoot.children[0]!;
+  // Not guaranteed: parseXmlDocument returns a synthetic root, so an empty or
+  // unparseable word/document.xml leaves it without any child element. A body
+  // walk over `undefined` would die with a raw TypeError — fail typed instead.
+  const docEl = child(documentRoot, "document") ?? documentRoot.children[0];
+  if (docEl === undefined) {
+    throw new MalformedDocxError({
+      path: fileName,
+      reason: "word/document.xml contains no XML root element",
+    });
+  }
   const body = child(docEl, "body") ?? docEl;
 
   const sections = extractSections(body, rels);
