@@ -1,4 +1,11 @@
-/** Minimal, dependency-free argv parser. Supports `--flag` and `--key value`. */
+/**
+ * Minimal argv parser (`--flag`, `--key value`) plus the shared usage-error
+ * type. Option guards return Effects that fail with {@link UsageError} so that
+ * usage errors flow through the CLI's failure channel (see `runCli` in
+ * render.ts) instead of escaping `dispatch` as synchronous throws.
+ */
+import { Effect } from "effect";
+
 export interface ParsedArgs {
   readonly command: string | undefined;
   readonly flags: ReadonlySet<string>;
@@ -41,10 +48,20 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { command, flags, options, positional };
 }
 
-export function requireOption(args: ParsedArgs, key: string): string {
+/**
+ * Fetch a required `--key value` option. A missing key fails with a
+ * UsageError; a valueless occurrence (parseArgs files a bare `--key` under
+ * `flags`) is rejected the same way parseProvenanceOption rejects it, rather
+ * than reporting the option as merely missing.
+ */
+export function requireOption(args: ParsedArgs, key: string): Effect.Effect<string, UsageError> {
+  if (args.flags.has(key)) {
+    return Effect.fail(new UsageError(`--${key} requires a value`));
+  }
   const v = args.options.get(key);
-  if (v === undefined) throw new UsageError(`missing required option --${key}`);
-  return v;
+  return v !== undefined
+    ? Effect.succeed(v)
+    : Effect.fail(new UsageError(`missing required option --${key}`));
 }
 
 export class UsageError extends Error {

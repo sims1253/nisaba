@@ -42,18 +42,14 @@ function loadManifest(file: string): Effect.Effect<Manifest, InvalidInputError |
   return Effect.gen(function* () {
     const fs = yield* FileSystem;
     const text = yield* fs.readText(file);
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch (e) {
-      yield* Effect.fail(new InvalidInputError({ path: file, reason: `invalid JSON: ${(e as Error).message}` }));
-      return undefined as never;
-    }
-    const decoded = yield* Effect.try({
+    const json = yield* Effect.try({
+      try: () => JSON.parse(text) as unknown,
+      catch: (e) => new InvalidInputError({ path: file, reason: `invalid JSON: ${(e as Error).message}` }),
+    });
+    return yield* Effect.try({
       try: () => Schema.decodeUnknownSync(ManifestSchema)(json),
       catch: (e) => new InvalidInputError({ path: file, reason: `not a valid manifest: ${(e as Error).message}` }),
     });
-    return decoded;
   });
 }
 
@@ -74,11 +70,23 @@ function cleanupWorkdir(workdir: string): void {
   }
 }
 
-function numOpt(args: ReturnType<typeof parseArgs>, key: string): number | undefined {
-  const v = args.options.get(key);
-  if (v === undefined) return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+/**
+ * Parse a numeric option. Absent → `fallback`; present-but-unparseable
+ * (e.g. `--dpi 15O`, or an empty value) → UsageError — a present-but-invalid
+ * value must never silently fall back to the default, consistent with the
+ * validated-CLI-input policy of `parseProvenanceOption`.
+ */
+function numOpt(
+  args: ReturnType<typeof parseArgs>,
+  key: string,
+  fallback: number,
+): Effect.Effect<number, UsageError> {
+  const raw = args.options.get(key);
+  if (raw === undefined) return Effect.succeed(fallback);
+  const n = raw.trim() === "" ? Number.NaN : Number(raw);
+  return Number.isFinite(n)
+    ? Effect.succeed(n)
+    : Effect.fail(new UsageError(`invalid --${key} value "${raw}"; expected a finite number`));
 }
 
 /**
@@ -111,9 +119,9 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
       return detectCapabilities().pipe(Effect.map((report) => ({ report, passed: true })));
 
     case "docx-introspect": {
-      const input = requireOption(args, "input");
       const output = args.options.get("output");
       return Effect.gen(function* () {
+        const input = yield* requireOption(args, "input");
         const fs = yield* FileSystem;
         const bytes = yield* fs.readBytes(input);
         const manifest = introspectDocx(bytes, path.basename(input));
@@ -134,9 +142,9 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
     }
 
     case "typst-skeleton": {
-      const manifestFile = requireOption(args, "manifest");
       const output = args.options.get("output");
       return Effect.gen(function* () {
+        const manifestFile = yield* requireOption(args, "manifest");
         const fs = yield* FileSystem;
         const manifest = yield* loadManifest(manifestFile);
         const skeleton = generateTypstSkeleton(manifest);
@@ -153,10 +161,10 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
     }
 
     case "validate-schema": {
-      const manifestFile = requireOption(args, "manifest");
       const typstFile = args.options.get("typst");
       const againstManifest = args.options.get("against-manifest");
       return Effect.gen(function* () {
+        const manifestFile = yield* requireOption(args, "manifest");
         const fs = yield* FileSystem;
         const manifest = yield* loadManifest(manifestFile);
         if (typstFile) {
@@ -169,16 +177,15 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
           const report = validateAgainstManifest(manifest, candidate, toPosix(againstManifest));
           return { report, passed: report.passed };
         }
-        yield* Effect.fail(new UsageError("validate-schema requires --typst <file> or --against-manifest <file>"));
-        return undefined as never;
+        return yield* Effect.fail(new UsageError("validate-schema requires --typst <file> or --against-manifest <file>"));
       });
     }
 
     case "pdf-compliance": {
-      const input = requireOption(args, "input");
       const userWorkdir = args.options.get("workdir");
       const workdir = userWorkdir ?? tempWorkdir("pdf");
       return Effect.gen(function* () {
+        const input = yield* requireOption(args, "input");
         yield* (yield* FileSystem).ensureDir(workdir);
         const report = yield* checkPdfCompliance(toPosix(path.resolve(input)), workdir);
         return { report, passed: report.passed };
@@ -192,15 +199,15 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
     }
 
     case "visual-diff": {
-      const reference = requireOption(args, "reference");
-      const candidate = requireOption(args, "candidate");
       const userWorkdir = args.options.get("workdir");
       const workdir = userWorkdir ?? tempWorkdir("vdiff");
-      const dpi = numOpt(args, "dpi") ?? DEFAULT_VISUAL_DIFF_OPTIONS.dpi;
-      const maxNorm = numOpt(args, "max-normalized-rmse") ?? DEFAULT_VISUAL_DIFF_OPTIONS.maxNormalizedRmse;
-      const maxFrac = numOpt(args, "max-diff-page-fraction") ?? DEFAULT_VISUAL_DIFF_OPTIONS.maxDiffPageFraction;
-      const fuzz = numOpt(args, "fuzz-percent") ?? DEFAULT_VISUAL_DIFF_OPTIONS.fuzzPercent;
       return Effect.gen(function* () {
+        const reference = yield* requireOption(args, "reference");
+        const candidate = yield* requireOption(args, "candidate");
+        const dpi = yield* numOpt(args, "dpi", DEFAULT_VISUAL_DIFF_OPTIONS.dpi);
+        const maxNorm = yield* numOpt(args, "max-normalized-rmse", DEFAULT_VISUAL_DIFF_OPTIONS.maxNormalizedRmse);
+        const maxFrac = yield* numOpt(args, "max-diff-page-fraction", DEFAULT_VISUAL_DIFF_OPTIONS.maxDiffPageFraction);
+        const fuzz = yield* numOpt(args, "fuzz-percent", DEFAULT_VISUAL_DIFF_OPTIONS.fuzzPercent);
         const referenceProvenance = yield* parseProvenanceOption(args, "reference-provenance");
         const candidateProvenance = yield* parseProvenanceOption(args, "candidate-provenance");
         const report = yield* runVisualDiff(
@@ -220,9 +227,9 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
     }
 
     case "ris-roundtrip": {
-      const input = requireOption(args, "input");
       const required = args.options.get("required")?.split(",").map((s) => s.trim()).filter(Boolean);
       return Effect.gen(function* () {
+        const input = yield* requireOption(args, "input");
         const fs = yield* FileSystem;
         const text = yield* fs.readText(input);
         const report = checkRoundTrip(text, toPosix(input), required);
@@ -230,9 +237,9 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
       });
     }
 
-    case "fixtures-gen": {
-      const output = requireOption(args, "output");
+    case "fixtures-gen":
       return Effect.gen(function* () {
+        const output = yield* requireOption(args, "output");
         const fs = yield* FileSystem;
         const docxPath = path.join(output, "sample-document.docx");
         const bytes = buildSampleDocumentDocx();
@@ -247,7 +254,6 @@ function dispatch(args: ReturnType<typeof parseArgs>): CmdResult {
           passed: true,
         };
       });
-    }
 
     default:
       return Effect.fail(new UsageError(USAGE));
