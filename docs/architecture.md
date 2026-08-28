@@ -73,11 +73,11 @@ tools   (@nisaba/tools) — template pipeline, visual-diff, PDF tooling
         │   keycloak     │ │  app   │ │ sync   │   (compile called by app
         │   (OIDC :8090) │ │ (CRUD) │ │ (CRDT) │    over svc-net on demand)
         └───────┬────────┘ └───┬────┘ └────┬───┘
-        db-net  │          db+obj│          │ sync-data volume
+        db-net  │          db+obj│       obj│
                 │                │          │
         ┌───────▼──────┐   ┌─────▼──────────▼──────┐
-        │  postgres    │   │ seaweedfs (full-text) │
-        │ nisaba + kc  │   │ + local sync store    │
+        │  postgres    │   │ seaweedfs (full-text │
+        │ nisaba + kc  │   │ blobs + sync oplog)  │
         └──────────────┘   └───────────────────────┘
                 segmented networks and named volumes
 ```
@@ -251,8 +251,7 @@ contract used by the Docker `HEALTHCHECK` directives. `app` and `sync` also serv
 | Postgres `nisaba`   | projects, documents, references, audit | `nisaba_app`  |
 | Postgres `keycloak` | Keycloak realm, users, sessions                           | `keycloak`    |
 | SeaweedFS `nisaba-blobs` | uploaded reference full-text PDFs                   | `nisaba-app` (scoped) |
-| Named volume `sync-data` | Loro op log and snapshots                           | `nisaba-sync` |
-| SeaweedFS `nisaba-oplog` | reserved by local bootstrap; no service uses it today | none |
+| SeaweedFS `nisaba-oplog` | sync's durable CRDT history: op-log parts (`oplog/`) and snapshots (`snapshot/`) | `nisaba-app` (scoped) |
 
 - `app` always uses `PostgresRepository` and `S3BlobStore` in the service binary.
   In-memory adapters are available only to unit tests.

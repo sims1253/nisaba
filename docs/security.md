@@ -34,7 +34,7 @@ and [`operations.md`](operations.md) (day-2 hardening/backups).
 | `nisaba_app`           | owns `nisaba` DB; no SUPERUSER/CREATEDB       | `deploy/postgres/init/10-init-databases.sh` |
 | `keycloak`             | owns `keycloak` DB only                       | same init script                    |
 | SeaweedFS admin (`nisaba-admin`) | bootstrap + admin only; never used by app | generated at seaweedfs start from env (`generate-s3-identities.sh`) |
-| `nisaba-app` S3 account| read/write/list/tag on `nisaba-*` buckets only | generated at seaweedfs start from env (`generate-s3-identities.sh`) |
+| `nisaba-app` S3 account| read/write/list/tag on `nisaba-*` buckets only (used by `app` for full-text blobs and by `sync` for op-log/snapshot objects) | generated at seaweedfs start from env (`generate-s3-identities.sh`) |
 | Keycloak demo users    | local dev only (`demo`/`reviewer`/`reader`)   | `deploy/keycloak/nisaba-realm.json` |
 
 - OIDC roles `author` / `reviewer` / `read-only` are mapped into access tokens
@@ -133,8 +133,8 @@ documented loopback-only Postgres, SeaweedFS, and browser OIDC endpoints unreach
 | Network     | Members                         | Purpose                              |
 |-------------|---------------------------------|--------------------------------------|
 | `db-net`    | postgres, keycloak, app         | SQL traffic                          |
-| `obj-net`   | seaweedfs, seaweedfs-init, app  | S3-compatible object traffic         |
-| `oidc-net`  | keycloak, app                   | app ↔ Keycloak backchannel           |
+| `obj-net`   | seaweedfs, seaweedfs-init, app, sync | S3-compatible object traffic (sync persists its op-log + snapshots to the `nisaba-oplog` bucket) |
+| `oidc-net`  | keycloak, app, sync             | app/sync ↔ Keycloak backchannel     |
 | `svc-net`   | app, sync, compile, web         | application service mesh             |
 
 Consequences:

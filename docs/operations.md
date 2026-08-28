@@ -59,9 +59,13 @@ Every HTTP service exposes **`GET /healthz` → `200 ok`** (the Compose
 | web       | `GET /healthz` (nginx)                             | needs the built SPA |
 
 `/healthz` is a **liveness** probe. The app readiness endpoint performs a PostgreSQL
-check, while sync verifies that its configured persistence directory is writable. App readiness
-does not currently probe S3, and compile exposes liveness only; a passing readiness check does not show
-that S3 is healthy (app) or anything beyond liveness (compile).
+check. sync readiness verifies its durable store: with the S3 stores configured
+(compose default) it issues a `HeadBucket` against the `nisaba-oplog` bucket, so
+orchestration never routes traffic to a sync that cannot persist; with the
+filesystem stores it checks the data directory is writable. App readiness does
+not currently probe S3, and compile exposes liveness only; a passing readiness
+check does not show that S3 is healthy (app) or anything beyond liveness
+(compile).
 
 For the app/sync collaboration path, configure the same non-empty
 `NISABA_SYNC_AUTHZ_TOKEN` in both containers. Production app startup rejects a
@@ -122,9 +126,12 @@ Scripts: [`deploy/backup/backup.sh`](../deploy/backup/backup.sh),
   storage is reported as INCOMPLETE and `backup.sh` exits non-zero instead of
   printing a warning and continuing, so a silently-empty `seaweedfs/` directory
   can never be mistaken for a good backup.
-- **sync filesystem** (`sync-data` volume): a `tar` of the op-log + snapshot
-  store (`/data/oplog`, `/data/snapshots`). sync persists CRDT history here
-  today; the S3 op-log bucket is the future integration surface.
+- **sync CRDT history** lives in the `nisaba-oplog` bucket itself (the
+  `oplog/` and `snapshot/` key prefixes): since the sync service moved its
+  durable stores onto S3, the bucket sync above covers it — there is no
+  separate sync data volume to archive any more (the compose `sync-data`
+  volume is gone; the filesystem store remains available for bare-metal runs
+  via `NISABA_SYNC_STORE_BACKEND=fs`).
 
 ### Local rotation
 `BACKUP_RETENTION_DAYS` (default 7) prunes local snapshots older than N days.
@@ -141,7 +148,8 @@ just restore artifacts/backups/<timestamp>
 just verify-backup artifacts/backups/<timestamp>
 ```
 Asserts the snapshot is structurally sound (SQL dump is a valid PostgreSQL
-backup, SeaweedFS bucket dirs exist, sync tar is present). A real restore drill
+backup, both bucket dirs exist — including the op-log bucket that holds
+sync's durable history). A real restore drill
 restores into an **isolated** throwaway stack (`-p nisaba-restore-drill`) and
 checks row/object counts — schedule it as part of release acceptance.
 
