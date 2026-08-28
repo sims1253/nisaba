@@ -19,6 +19,7 @@ import { detectCapabilities, type CapabilitiesReport, type ToolId } from "../ext
 import { pdfInfo, pdfToText, readQdfText } from "./inspect.js";
 import { TOOL_NAME, VERSION } from "../version.js";
 import { MissingToolError, FsError, InvalidInputError } from "../errors.js";
+import { PDF_COMPLIANCE as MSG } from "../messages.js";
 
 export type CheckStatus = "pass" | "fail" | "warn" | "skipped";
 export type Severity = "hard" | "soft" | "heuristic";
@@ -89,13 +90,13 @@ export function checkPdfCompliance(
       const encrypted = /yes/i.test(enc) && !/no\b/i.test(enc);
       checks.push({
         id: "encryption",
-        name: "Kein Passwortschutz / keine Verschlüsselung",
+        name: MSG.checkEncryptionName,
         status: encrypted ? "fail" : "pass",
         severity: "hard",
         evidence: `pdfinfo: Encrypted=${enc || "(n/a)"}`,
       });
     } else {
-      checks.push(skipCheck("encryption", "Kein Passwortschutz", ["pdfinfo"]));
+      checks.push(skipCheck("encryption", MSG.checkEncryptionShortName, ["pdfinfo"]));
     }
 
     // ---- Text extractability (hard) -----------------------------------------
@@ -106,14 +107,14 @@ export function checkPdfCompliance(
       const chars = text.replace(/\s+/g, "").length;
       checks.push({
         id: "text-extractable",
-        name: "Text ist extrahierbar",
+        name: MSG.checkTextExtractableName,
         status: chars > 0 ? "pass" : "fail",
         severity: "hard",
-        evidence: `extrahiert: ${chars} nicht-Leerzeichen`,
+        evidence: MSG.evidenceExtractedChars(chars),
         detail: { characters: chars, sample: text.slice(0, 120).replace(/\s+/g, " ").trim() },
       });
     } else {
-      checks.push(skipCheck("text-extractable", "Text ist extrahierbar", ["pdftotext"]));
+      checks.push(skipCheck("text-extractable", MSG.checkTextExtractableName, ["pdftotext"]));
     }
 
     // ---- Watermark heuristic (heuristic) ------------------------------------
@@ -123,22 +124,22 @@ export function checkPdfCompliance(
       const visualPageCheck = caps.derived.pdfToImage && caps.derived.imageCompare;
       checks.push({
         id: "watermark-heuristic",
-        name: "Wasserzeichen-Heuristik (Text)",
+        name: MSG.checkWatermarkName,
         status: matched.length > 0 ? "warn" : "pass",
         severity: "heuristic",
         evidence:
           matched.length > 0
-            ? `verdächtige Token im Text: ${matched.join(", ")}`
-            : "keine Wasserzeichen-Tokens im extrahierten Text gefunden",
+            ? MSG.evidenceSuspiciousTokens(matched)
+            : MSG.evidenceNoWatermarkTokens,
         detail: {
           matched,
           ...(visualPageCheck
             ? {}
-            : { advisory: "Wasserzeichen-Erkennung ist rein textbasiert; kein visueller Seitenvergleich (pdftoppm/compare) verfügbar." }),
+            : { advisory: MSG.advisoryWatermarkTextOnly }),
         },
       });
     } else {
-      checks.push(skipCheck("watermark-heuristic", "Wasserzeichen-Heuristik (Text)", ["pdftotext"]));
+      checks.push(skipCheck("watermark-heuristic", MSG.checkWatermarkName, ["pdftotext"]));
     }
 
     // ---- Links + outlines (hard) --------------------------------------------
@@ -147,10 +148,10 @@ export function checkPdfCompliance(
       if (qdf.text === null) {
         checks.push({
           id: "links",
-          name: "Querverweise/Links anklickbar",
+          name: MSG.checkLinksName,
           status: "fail",
           severity: "hard",
-          evidence: `qpdf-Dekodierung fehlgeschlagen: ${qdf.note}`,
+          evidence: MSG.evidenceQpdfDecodeFailed(qdf.note),
         });
       } else {
         const t = qdf.text;
@@ -162,10 +163,10 @@ export function checkPdfCompliance(
         const status: CheckStatus = linkAnnots > 0 ? "pass" : "fail";
         checks.push({
           id: "links",
-          name: "Querverweise/Links anklickbar",
+          name: MSG.checkLinksName,
           status,
           severity: "hard",
-          evidence: `${linkAnnots} Link-Annotationen, ${external.length} externe URIs, Outlines=${hasOutlines ? "ja" : "nein"}`,
+          evidence: MSG.evidenceLinksSummary(linkAnnots, external.length, hasOutlines),
           detail: {
             linkAnnotations: linkAnnots,
             totalAnnotations: annots,
@@ -175,7 +176,7 @@ export function checkPdfCompliance(
         });
       }
     } else {
-      checks.push(skipCheck("links", "Querverweise/Links anklickbar", ["qpdf"]));
+      checks.push(skipCheck("links", MSG.checkLinksName, ["qpdf"]));
     }
 
     // ---- Index labels (hard) -------------------------------------------------
@@ -188,17 +189,17 @@ export function checkPdfCompliance(
       const missing = perLabel.filter((l) => !l.found).map((l) => l.id);
       checks.push({
         id: "index-labels",
-        name: "Verzeichnisse vorhanden (Inhalts-/Tabellen-/Abbildungsverzeichnis)",
+        name: MSG.checkIndexLabelsName,
         status: missing.length === 0 ? "pass" : "fail",
         severity: "hard",
         evidence:
           missing.length === 0
-            ? "alle Verzeichnis-Überschriften im Text gefunden"
-            : `fehlend: ${missing.join(", ")}`,
+            ? MSG.evidenceAllIndexHeadingsFound
+            : MSG.evidenceMissingIndexLabels(missing),
         detail: { labels: perLabel },
       });
     } else {
-      checks.push(skipCheck("index-labels", "Verzeichnisse vorhanden", ["pdftotext"]));
+      checks.push(skipCheck("index-labels", MSG.checkIndexLabelsShortName, ["pdftotext"]));
     }
 
     const failures = checks
@@ -209,7 +210,7 @@ export function checkPdfCompliance(
     // Skipped checks are listed in `failures` so CI logs explain the non-pass.
     const skipped = checks
       .filter((c) => c.severity === "hard" && c.status === "skipped")
-      .map((c) => `${c.id}: übersprungen (fehlendes Werkzeug: ${c.requires?.join(", ") ?? "unbekannt"})`);
+      .map((c) => `${c.id}: ${MSG.failureSkippedMissingTool(c.requires)}`);
     failures.push(...skipped);
     const passed = failures.length === 0;
 
@@ -231,7 +232,7 @@ function skipCheck(id: string, name: string, requires: readonly ToolId[]): Compl
     name,
     status: "skipped",
     severity: "hard",
-    evidence: `übersprungen — benötigtes Werkzeug fehlt (siehe capabilities)`,
+    evidence: MSG.evidenceSkippedToolMissing,
     requires,
   };
 }
