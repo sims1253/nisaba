@@ -320,4 +320,50 @@ uv run deploy/sync-handshake.py \
     || { echo "[e2e] sync deny-all handshake did not complete as expected" >&2; exit 1; }
 echo "[e2e] sync deny-all handshake ok (typed ERROR frame, fail-closed path runs)"
 
+# ---- sync: authorized handshake + one update, asserted in the op-log bucket --
+# The deny-all probe above proved the fail-closed path with the default env.
+# This step recreates sync with the dev allow-all toggle and drives the
+# success path end to end: a WELCOME handshake, one real Loro update (the
+# blob is generated and round-trip-verified by `cargo test -p nisaba-sync
+# print_e2e_update_blob`), and then asserts the op-log part actually landed
+# in the S3 bucket — executed, asserted coverage of the S3 append path
+# (services/sync/src/s3.rs), which no other automated test drives.
+echo "NISABA_SYNC_DEV_ALLOW_ALL=1" >> "$TMP_ENV"
+"${COMPOSE[@]}" up -d --no-deps sync >/dev/null
+wait_healthy sync 60
+
+echo "[e2e] sync HELLO handshake — allow-all path + one persisted update"
+uv run deploy/sync-handshake.py \
+    --url "ws://127.0.0.1:${SYNC_PORT}/sync/${DOC}" \
+    --token "e2e-allow-all-probe" \
+    --expect welcome \
+    --update-hex "6c6f726f0000000000000000000000004da1da7100044c0010001001100132790600000000000101000000000005010000010006010401020000050474657874000e010402010002010002010502011000111065326520617070656e642070726f6265" \
+    || { echo "[e2e] sync allow-all handshake/update failed" >&2; exit 1; }
+
+# Assert the update is durable in the op-log bucket: list the document's
+# oplog/ prefix with the same digest-pinned aws-cli image + admin credentials
+# as deploy/backup/backup.sh.
+sleep 2  # the append PUT completes before the welcome-side drain; be certain
+S3_ADMIN_KEY="$(grep -E '^NISABA_S3_ADMIN_KEY=' "$TMP_ENV" | cut -d= -f2- || true)"
+S3_ADMIN_SECRET="$(grep -E '^NISABA_S3_ADMIN_SECRET=' "$TMP_ENV" | cut -d= -f2- || true)"
+S3_BUCKET_OPLOG="$(grep -E '^NISABA_S3_BUCKET_OPLOG=' "$TMP_ENV" | cut -d= -f2- || true)"
+S3_BUCKET_OPLOG="${S3_BUCKET_OPLOG:-nisaba-oplog}"
+parts="$(docker run --rm \
+    --network "${PROJECT}_obj-net" \
+    -e "AWS_ACCESS_KEY_ID=${S3_ADMIN_KEY:-nisaba-admin}" \
+    -e "AWS_SECRET_ACCESS_KEY=${S3_ADMIN_SECRET}" \
+    amazon/aws-cli:2.36.20@sha256:8af59c0d96b104000cce4f11e211c06385240d72c515198159041f13ebe459fa \
+    s3api list-objects-v2 \
+    --endpoint-url http://seaweedfs:8333 \
+    --bucket "${S3_BUCKET_OPLOG}" \
+    --prefix "oplog/${DOC}/" \
+    --query 'length(Contents)' --output text)" || true
+echo "[e2e] op-log parts under oplog/${DOC}/ in ${S3_BUCKET_OPLOG}: ${parts:-0}"
+case "${parts:-}" in
+    ''|0|None|none)
+        echo "[e2e] expected at least one op-log part under oplog/${DOC}/ — the S3 append path did not persist the update" >&2
+        exit 1 ;;
+esac
+echo "[e2e] S3 append path proven (op-log part object present in the bucket)"
+
 echo "[e2e] OK"

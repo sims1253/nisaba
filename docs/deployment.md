@@ -272,10 +272,15 @@ docker compose --env-file /etc/nisaba/env --profile app up -d
 `just restore` runs [`deploy/backup/restore.sh`](../deploy/backup/restore.sh),
 which reloads the Postgres dump and re-syncs the SeaweedFS buckets — the
 buckets include the sync service's op-log and snapshots (the `nisaba-oplog`
-bucket's `oplog/` and `snapshot/` prefixes), so a restore also rebuilds
-collaborative document history. Expect to lose everything written between the
-snapshot and the rollback — which is why the backup in §8 step 1 is not
-optional. A tested rollback is itself unproven; treat
+bucket's `oplog/` and `snapshot/` prefixes). Note the planes rewind
+differently: the database rows are restored wholesale (`pg_dump --clean`),
+while the bucket re-sync copies **without `--delete`**, so op-log parts
+written after the backup survive and replay on top — collaborative text keeps
+everything written after the backup even though the DB rows rewound. For the
+rollback case that is the safer direction (no CRDT history is destroyed); a
+true point-in-time rewind of the CRDT plane would need a `--delete` restore,
+whose interaction with the buckets' versioning (delete markers) is untested —
+deliberately out of scope here. A tested rollback is itself unproven; treat
 this as the procedure to rehearse, not a proven one.
 
 ## 10. Deliberately not covered here

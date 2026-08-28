@@ -271,8 +271,10 @@ fn existing_seqs(dir: &Path) -> std::io::Result<Vec<u64>> {
 /// For a single authority the VVs are totally ordered, so `partial_cmp` is
 /// decisive. The op-count sum fallback only matters for the (impossible for one
 /// authority) incomparable case, where it gives a deterministic, sensible pick
-/// rather than panicking.
-fn pick_latest_by_vv(snaps: Vec<Snapshot>) -> Option<Snapshot> {
+/// rather than panicking. Shared with the S3 snapshot store, whose `latest`
+/// must pick by VV for the same reason (its sequence numbers are allocated at
+/// write time, and a stale export can land a higher sequence than a newer one).
+pub(crate) fn pick_latest_by_vv(snaps: Vec<Snapshot>) -> Option<Snapshot> {
     let mut best: Option<Snapshot> = None;
     for s in snaps {
         best = Some(match best {

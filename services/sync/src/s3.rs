@@ -37,6 +37,13 @@
 //!   crashed PUT never created its object, so the next append reuses the same
 //!   number and the object set remains the contiguous prefix `0..=n`.
 //!
+//! The lock identity is kept for the life of the process even across
+//! [`OpLogStore::close`]: a room can be evicted while one of its appends is
+//! still in flight (persistence runs outside the room gate), and a fresh mutex
+//! would let the next append re-seed from a listing that cannot see the
+//! in-flight part and reuse its number — two PUTs to one key, one update
+//! silently lost.
+//!
 //! This is the single-writer protocol the sync service already runs under (one
 //! sync process is the authority for a bucket; a room serialises updates
 //! through its authority). Two sync processes pointed at one bucket would
@@ -57,11 +64,15 @@
 //! # Latest snapshot without in-place mutation
 //!
 //! Snapshots are immutable, monotonically numbered objects; there is no index
-//! object to update and no "latest" pointer to rewrite. "Latest" is resolved
-//! by listing: the highest sequence number is the newest snapshot (sequence
-//! order equals version-vector order under the single-writer protocol), and if
-//! its body fails to decode the reader walks down the sequence until one does
-//! — mirroring the filesystem store's corrupt-file tolerance.
+//! object to update and no "latest" pointer to rewrite. *Latest* is resolved
+//! by **version vector**, not by key: sequence numbers say nothing about
+//! coverage, because two snapshot writers (the update-threshold path and the
+//! maintenance floor) export their state before taking the document lock, so
+//! a stale export can land a *higher* sequence than a newer one. `latest`
+//! therefore fetches the candidates and picks the greatest VV with the same
+//! comparison the filesystem store uses ([`pick_latest_by_vv`]); unreadable
+//! objects (corrupt or transiently unreachable) are skipped with a warning so
+//! one bad object cannot break recovery.
 //!
 //! Snapshot bodies reuse the filesystem encoding
 //! (`[u32 be vv_len][vv bytes][snapshot bytes]`), so the two stores read each
@@ -86,7 +97,9 @@ use aws_sdk_s3::types::{Delete, ObjectIdentifier};
 use crate::config::{DocId, MAX_UPDATE_BYTES};
 use crate::error::{SyncError, SyncResult};
 use crate::op_log::OpLogStore;
-use crate::snapshot::{Snapshot, SnapshotStore, decode_snapshot_file, encode_snapshot_file};
+use crate::snapshot::{
+    Snapshot, SnapshotStore, decode_snapshot_file, encode_snapshot_file, pick_latest_by_vv,
+};
 
 /// Width of the zero-padded decimal part/sequence number in object keys. Wide
 /// enough (999,999,999,999) that lexicographic key order is stable for any
@@ -374,13 +387,22 @@ impl OpLogStore for S3OpLogStore {
     }
 
     fn close(&self, doc: &DocId) -> SyncResult<()> {
-        // Release the cached counter + lock entry; the listing is the
-        // authoritative part count, so the next append re-seeds correctly.
+        // Release only the cached counter; the listing is the authoritative
+        // part count, so the next append re-seeds correctly. The per-document
+        // lock entry is DELIBERATELY kept: an append can still be in flight
+        // (persist runs outside the room gate, so a room can be evicted — and
+        // `close`d — while its PUT is still pending). Dropping the lock entry
+        // would hand the next append a fresh mutex, let it re-seed from a
+        // listing that cannot see the in-flight part, and reuse the part
+        // number — two PUTs to one key, one update silently lost. With a
+        // stable lock identity the re-seed is correctly serialised behind the
+        // in-flight append. The map is bounded by documents ever seen (one
+        // small Arc + id each).
         self.next_part
             .lock()
             .map_err(|_| SyncError::Internal("op-log part cache lock poisoned".into()))?
             .remove(doc.as_str());
-        self.doc_locks.remove(doc.as_str())
+        Ok(())
     }
 }
 
@@ -490,12 +512,20 @@ impl SnapshotStore for S3SnapshotStore {
     }
 
     async fn latest(&self, doc: &DocId) -> SyncResult<Option<Snapshot>> {
-        // Highest sequence first; on a corrupt body walk down to the newest
-        // snapshot that decodes — one bad object must not break recovery.
-        let entries = self.snapshot_entries(doc).await?;
-        for (seq, key) in entries.iter().rev() {
-            match self.fetch(key).await {
-                Ok(snapshot) => return Ok(Some(snapshot)),
+        // Pick by version vector, never by key: sequence numbers are allocated
+        // at write time, and two snapshot writers (the update-threshold path
+        // and the maintenance floor) export before taking the lock — a stale
+        // export can land a HIGHER sequence than a newer one. Choosing by seq
+        // would return the older state; today that is repaired by full op-log
+        // replay, but under the planned log compaction it would mean
+        // truncating against the wrong boundary. Same selection rule as the
+        // filesystem store (`pick_latest_by_vv`); unreadable objects (corrupt
+        // or transiently unreachable) are skipped with a warning so one bad
+        // object cannot break recovery for the rest.
+        let mut candidates = Vec::new();
+        for (seq, key) in self.snapshot_entries(doc).await? {
+            match self.fetch(&key).await {
+                Ok(snapshot) => candidates.push(snapshot),
                 Err(error) => {
                     tracing::warn!(
                         doc = doc.as_str(),
@@ -507,7 +537,7 @@ impl SnapshotStore for S3SnapshotStore {
                 }
             }
         }
-        Ok(None)
+        Ok(pick_latest_by_vv(candidates))
     }
 
     async fn list(&self, doc: &DocId) -> SyncResult<Vec<Snapshot>> {
@@ -557,17 +587,27 @@ impl SnapshotStore for S3SnapshotStore {
                 .map_err(|e| s3_error("delete-objects", &prefix, e))?;
         }
         // The cached sequence is stale once the objects are gone; drop it so
-        // the next put re-seeds from the (now empty) listing.
+        // the next put re-seeds from the (now empty) listing. The lock entry
+        // is kept for the same reason as in `S3OpLogStore::close`: a put may
+        // still be in flight, and a fresh mutex would let the next put race
+        // it for a sequence number.
         self.next_seq
             .lock()
             .map_err(|_| SyncError::Internal("snapshot seq cache lock poisoned".into()))?
             .remove(doc.as_str());
-        self.doc_locks.remove(doc.as_str())
+        Ok(())
     }
 }
 
 /// Per-document async mutexes so (allocate → PUT → increment) is atomic per
 /// document without serialising unrelated documents.
+///
+/// Entries are **never removed**: the lock identity must outlive any in-flight
+/// operation, and a room can be evicted (→ `close`) while its PUT is still
+/// pending (persist runs outside the room gate). A fresh mutex after `close`
+/// would let the next append re-seed from a listing that cannot see the
+/// in-flight part and reuse its number. Bounded by documents ever seen —
+/// one small `Arc` + id each.
 #[derive(Default)]
 struct DocLocks {
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -576,11 +616,6 @@ struct DocLocks {
 impl DocLocks {
     fn lock_for(&self, doc: &str) -> SyncResult<Arc<tokio::sync::Mutex<()>>> {
         Ok(self.guard()?.entry(doc.to_string()).or_default().clone())
-    }
-
-    fn remove(&self, doc: &str) -> SyncResult<()> {
-        self.guard()?.remove(doc);
-        Ok(())
     }
 
     fn guard(
@@ -891,5 +926,126 @@ mod tests {
             .collect();
         let config = S3EnvConfig::from_vars(env_of(&vars)).unwrap();
         assert_eq!(config.region, "us-east-1");
+    }
+
+    // ---- protocol invariants fixed after review --------------------------------
+
+    /// `close` must keep the per-document lock identity: a room can be evicted
+    /// (→ `close`) while one of its appends is still in flight; a fresh mutex
+    /// after `close` would let the next append race the in-flight PUT for the
+    /// same part number.
+    #[test]
+    fn close_clears_the_counter_but_keeps_the_lock_identity() {
+        let store = S3OpLogStore::new(dummy_client(), "bucket".into());
+        let doc = DocId::new("d1").unwrap();
+        let before = store.doc_locks.lock_for(doc.as_str()).unwrap();
+        store.close(&doc).unwrap();
+        let after = store.doc_locks.lock_for(doc.as_str()).unwrap();
+        assert!(
+            Arc::ptr_eq(&before, &after),
+            "close() must not hand the next append a fresh mutex"
+        );
+        assert!(
+            !store.next_part.lock().unwrap().contains_key(doc.as_str()),
+            "close() must still release the cached counter (re-seed from listing)"
+        );
+    }
+
+    /// Same invariant on the snapshot side: `drop_all`'s cache reset (the
+    /// deletions need a live endpoint; the bookkeeping is what this pins)
+    /// must also leave the lock map alone.
+    #[test]
+    fn doc_lock_entries_are_never_removed() {
+        let store = S3SnapshotStore::new(dummy_client(), "bucket".into());
+        let doc = DocId::new("d1").unwrap();
+        let before = store.doc_locks.lock_for(doc.as_str()).unwrap();
+        // `DocLocks` exposes no removal path at all (by design): the only
+        // way the identity could change is the entry vanishing from the map.
+        let after = store.doc_locks.lock_for(doc.as_str()).unwrap();
+        assert!(Arc::ptr_eq(&before, &after));
+    }
+
+    /// A client with no reachable endpoint — the tests only exercise the
+    /// pure bookkeeping around it, never a request.
+    fn dummy_client() -> aws_sdk_s3::Client {
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .endpoint_url("http://127.0.0.1:1")
+            .credentials_provider(aws_credential_types::Credentials::new(
+                "test", "test", None, None, "test",
+            ))
+            .force_path_style(true)
+            .build();
+        aws_sdk_s3::Client::from_conf(config)
+    }
+
+    /// `latest` resolves by version vector, not by sequence: a stale export
+    /// that happened to land a higher sequence must not win. This pins the
+    /// selection rule the S3 store shares with the filesystem store.
+    #[test]
+    fn latest_resolves_by_version_vector_not_sequence() {
+        use crate::snapshot::pick_latest_by_vv;
+        use loro::{ExportMode, LoroDoc};
+
+        fn snap(text: &str) -> Snapshot {
+            let doc = LoroDoc::new();
+            doc.set_peer_id(1).unwrap();
+            doc.get_text("text").insert(0, text).unwrap();
+            doc.commit();
+            Snapshot {
+                vv: doc.oplog_vv(),
+                bytes: doc.export(ExportMode::Snapshot).unwrap(),
+            }
+        }
+
+        // Simulates the inversion: the maintenance floor exported the stale
+        // state first but landed sequence N+1; the threshold path landed the
+        // newer state at sequence N. Whichever order they arrive in, the
+        // greater VV must win.
+        let newer = snap("newer state");
+        let older = snap("older");
+        assert!(older.vv < newer.vv);
+        assert_eq!(
+            pick_latest_by_vv(vec![older.clone(), newer.clone()])
+                .unwrap()
+                .vv,
+            newer.vv
+        );
+        assert_eq!(
+            pick_latest_by_vv(vec![newer.clone(), older]).unwrap().vv,
+            newer.vv
+        );
+    }
+}
+
+#[cfg(test)]
+mod probe_blob {
+    // Prints a self-contained Loro update blob (fresh doc, one text insert)
+    // for deploy/sync-handshake.py's --update-hex e2e probe. Run with
+    //   cargo test -p nisaba-sync print_e2e_update_blob -- --nocapture
+    #[test]
+    fn print_e2e_update_blob() {
+        use loro::{ExportMode, LoroDoc};
+        let doc = LoroDoc::new();
+        doc.set_peer_id(424_242).unwrap();
+        doc.get_text("text").insert(0, "e2e append probe").unwrap();
+        doc.commit();
+        let bytes = doc
+            .export(ExportMode::Updates {
+                from: std::borrow::Cow::Borrowed(&loro::VersionVector::default()),
+            })
+            .unwrap();
+        // Round-trip proof: the blob must import cleanly (the server rejects
+        // undecodable updates at ingest, before the op-log append).
+        let replica = LoroDoc::new();
+        replica.import(&bytes).unwrap();
+        assert_eq!(replica.get_text("text").to_string(), "e2e append probe");
+        let mut hex = String::with_capacity(bytes.len() * 2);
+        for byte in &bytes {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+        }
+        println!("E2E_UPDATE_HEX={hex}");
     }
 }

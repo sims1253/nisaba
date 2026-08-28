@@ -253,7 +253,10 @@ key exactly once:
 1. the per-document counter is seeded from a listing (`max(existing) + 1`),
    so it survives restarts;
 2. allocate → PUT → increment happens while holding a per-document async
-   mutex, so two appends can never be handed the same part number;
+   mutex, so two appends can never be handed the same part number (the lock
+   identity survives room eviction/`close`: a room can be evicted while an
+   append is still in flight, and a fresh mutex would let the next append
+   reuse the in-flight part number);
 3. the counter increments **only after** the PUT succeeds — a failed or
    crashed PUT never created its object, and the next append reuses the same
    part number.
@@ -268,12 +271,14 @@ a single writer, as does the filesystem store across hosts).
 ### Snapshot latest resolution
 
 Snapshots are immutable, monotonically numbered objects; there is no index
-object and no "latest" pointer to rewrite. *Latest* is resolved by listing:
-the highest sequence number is the newest snapshot (sequence order equals
-version-vector order under the single-writer protocol); if its body fails to
-decode, the reader walks down the sequence until one does. Snapshot bodies
-use the same `[u32 be vv_len][vv bytes][snapshot bytes]` framing as the
-filesystem store.
+object and no "latest" pointer to rewrite. *Latest* is resolved by **version
+vector**, never by key: sequence numbers say nothing about coverage — the two
+snapshot writers (the update-threshold path and the maintenance floor) export
+before taking the document lock, so a stale export can land a higher sequence
+than a newer one. The store fetches the candidates and picks the greatest VV
+with the same comparison the filesystem store uses; unreadable objects are
+skipped with a warning. Snapshot bodies use the same
+`[u32 be vv_len][vv bytes][snapshot bytes]` framing as the filesystem store.
 
 ### Readiness
 
