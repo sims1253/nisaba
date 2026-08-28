@@ -348,10 +348,16 @@ S3_ADMIN_KEY="$(grep -E '^NISABA_S3_ADMIN_KEY=' "$TMP_ENV" | cut -d= -f2- || tru
 S3_ADMIN_SECRET="$(grep -E '^NISABA_S3_ADMIN_SECRET=' "$TMP_ENV" | cut -d= -f2- || true)"
 S3_BUCKET_OPLOG="$(grep -E '^NISABA_S3_BUCKET_OPLOG=' "$TMP_ENV" | cut -d= -f2- || true)"
 S3_BUCKET_OPLOG="${S3_BUCKET_OPLOG:-nisaba-oplog}"
+# Network name resolved from the running seaweedfs container (the same
+# trick deploy/backup/backup.sh uses) so this does not depend on compose's
+# project-prefixed network naming.
+obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$("${COMPOSE[@]}" ps -q seaweedfs)" 2>/dev/null | awk '{print $1}')"
+obj_net="${obj_net:-${PROJECT}_obj-net}"
 parts="$(docker run --rm \
-    --network "${PROJECT}_obj-net" \
+    --network "$obj_net" \
     -e "AWS_ACCESS_KEY_ID=${S3_ADMIN_KEY:-nisaba-admin}" \
     -e "AWS_SECRET_ACCESS_KEY=${S3_ADMIN_SECRET}" \
+    -e AWS_DEFAULT_REGION=us-east-1 \
     amazon/aws-cli:2.36.20@sha256:8af59c0d96b104000cce4f11e211c06385240d72c515198159041f13ebe459fa \
     s3api list-objects-v2 \
     --endpoint-url http://seaweedfs:8333 \

@@ -187,31 +187,36 @@ def main() -> int:
                 print("sync-handshake: server closed the connection instead of answering", file=sys.stderr)
                 return 1
             name, detail = describe(payload)
+            print(f"sync-handshake: {name} {detail}".rstrip())
+            if args.expect != "any" and name != args.expect:
+                print(f"sync-handshake: expected a {args.expect} frame, got {name}", file=sys.stderr)
+                return 1
+
+            if args.update_hex:
+                # Everything below must run inside the `with`: the socket is
+                # closed the moment it exits.
+                try:
+                    update = bytes.fromhex(args.update_hex)
+                except ValueError:
+                    print("sync-handshake: --update-hex is not valid hex", file=sys.stderr)
+                    return 2
+                send_binary(sock, bytes([TAG_UPDATE]) + struct.pack(">I", len(update)) + update)
+                # A healthy update is relayed to OTHER peers only (the sender
+                # is excluded from the fan-out), so the expected reply is
+                # silence. Anything that does arrive must not be an ERROR.
+                try:
+                    sock.settimeout(2.0)
+                    _, reply = recv_frame(sock)
+                    reply_name, reply_detail = describe(reply)
+                    if reply_name == "error":
+                        print(f"sync-handshake: update rejected: {reply_name} {reply_detail}", file=sys.stderr)
+                        return 1
+                    print(f"sync-handshake: update sent; server replied {reply_name}".rstrip())
+                except socket.timeout:
+                    print("sync-handshake: update sent (no reply expected)")
     except (OSError, RuntimeError) as error:
         print(f"sync-handshake: {error}", file=sys.stderr)
         return 1
-
-    print(f"sync-handshake: {name} {detail}".rstrip())
-    if args.expect != "any" and name != args.expect:
-        print(f"sync-handshake: expected a {args.expect} frame, got {name}", file=sys.stderr)
-        return 1
-
-    if args.update_hex:
-        update = bytes.fromhex(args.update_hex)
-        send_binary(sock, bytes([TAG_UPDATE]) + struct.pack(">I", len(update)) + update)
-        # A healthy update is relayed to OTHER peers only (the sender is
-        # excluded from the fan-out), so the expected reply is silence.
-        # Anything that does arrive must not be an ERROR frame.
-        try:
-            sock.settimeout(2.0)
-            _, reply = recv_frame(sock)
-            reply_name, reply_detail = describe(reply)
-            if reply_name == "error":
-                print(f"sync-handshake: update rejected: {reply_name} {reply_detail}", file=sys.stderr)
-                return 1
-            print(f"sync-handshake: update sent; server replied {reply_name}".rstrip())
-        except socket.timeout:
-            print("sync-handshake: update sent (no reply expected)")
     return 0
 
 
