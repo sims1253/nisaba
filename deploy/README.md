@@ -20,7 +20,7 @@ deploy/
   keycloak/nisaba-realm.json           # OIDC realm (DEV-ONLY): client, roles, demo users
   keycloak/README.md                   # incl. production replacement checklist
   keycloak/healthcheck.sh              # /health/ready probe (bash /dev/tcp; no curl in image)
-  backup/backup.sh                     # pg_dump + aws s3 sync + sync-fs tar (local)
+  backup/backup.sh                     # pg_dump + aws s3 sync of both buckets (local)
   backup/restore.sh                    # restore a snapshot (overwrites data)
   backup/verify.sh                     # structural check of a snapshot (no restore)
   validate-compose.sh                  # `docker compose config` against .env.example (temp env)

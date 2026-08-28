@@ -493,6 +493,7 @@ async fn readiness_fails_while_jwks_cache_is_stale() {
     let addr = spawn_server_with_readiness(nisaba_sync::server::Readiness {
         jwks: Some(jwks),
         data_dir: None,
+        storage: None,
     })
     .await;
     let body = http_get(addr, "/health/ready").await;
@@ -509,6 +510,7 @@ async fn readiness_fails_when_data_dir_is_not_writable() {
     let addr = spawn_server_with_readiness(nisaba_sync::server::Readiness {
         jwks: None,
         data_dir: Some(blocked),
+        storage: None,
     })
     .await;
     let body = http_get(addr, "/health/ready").await;
@@ -522,6 +524,7 @@ async fn readiness_passes_when_probes_pass() {
     let addr = spawn_server_with_readiness(nisaba_sync::server::Readiness {
         jwks: None,
         data_dir: Some(dir.path().to_path_buf()),
+        storage: None,
     })
     .await;
     let body = http_get(addr, "/health/ready").await;

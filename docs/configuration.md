@@ -46,7 +46,7 @@ file is committed to the repo.
 | `NISABA_S3_ADMIN_SECRET` | — **required** | Admin secret | same |
 | `SEAWEEDFS_HOST_S3_PORT` | `9100` | Host-side S3 port (`127.0.0.1`) | `docker-compose.yml` |
 | `NISABA_S3_BUCKET_BLOBS` | `nisaba-blobs` | Reference full-text bucket (created + versioned on first boot) | init script, `app` |
-| `NISABA_S3_BUCKET_OPLOG` | `nisaba-oplog` | Reserved bucket; no service uses it today | init script only |
+| `NISABA_S3_BUCKET_OPLOG` | `nisaba-oplog` | Sync durability bucket: CRDT op-log parts (`oplog/` prefix) + snapshots (`snapshot/` prefix); created + versioned on first boot | init script, `sync` |
 
 ## Keycloak container
 
@@ -99,7 +99,11 @@ variables `.env.example` sets for the local stack:
 |----------|---------|--------------|
 | `NISABA_SYNC_ADDR` / `PORT` | `0.0.0.0:8080` | Bind address resolution order |
 | `SYNC_HOST_PORT` | `8101` | Host-side port (`127.0.0.1`), compose |
-| `NISABA_SYNC_DATA_DIR` | `data` (compose: `/data` volume) | Op-log + snapshot directory |
+| `NISABA_SYNC_STORE_BACKEND` | `fs` (compose pins `s3`) | Durable stores: `s3` (op-log + snapshots in the `NISABA_S3_BUCKET_OPLOG` bucket) or `fs` (local data dir). A missing S3 variable in `s3` mode is a fatal startup error |
+| `NISABA_S3_ENDPOINT` / `NISABA_S3_ACCESS_KEY` / `NISABA_S3_SECRET_KEY` | — **required** in `s3` mode | Same SeaweedFS endpoint + identity the app uses (`S3Stores` in `services/sync/src/s3.rs`) |
+| `NISABA_S3_REGION` | `us-east-1` (code) / `local` (compose) | S3 region label |
+| `NISABA_S3_BUCKET_OPLOG` | — **required** in `s3` mode | Bucket for the `oplog/` and `snapshot/` key prefixes |
+| `NISABA_SYNC_DATA_DIR` | `data` | Op-log + snapshot directory (**`fs` backend only**; unused in compose) |
 | `NISABA_SYNC_DEV_ALLOW_ALL` | unset | **Never in production**: grants `author` to any non-empty token |
 | `NISABA_SYNC_OIDC_ISSUER` / `NISABA_SYNC_OIDC_AUDIENCE` / `NISABA_SYNC_OIDC_JWKS_URL` | unset (deny-all) | All three set together enable JWT/JWKS validation; a partial set is a fatal startup error |
 | `NISABA_SYNC_OIDC_ROLES_CLAIM` | `realm_access.roles` | Dotted path of the roles claim (set `roles` for this realm) |

@@ -21,8 +21,10 @@ the product.
 - **Role-aware access seam** — `author` / `reviewer` / `read-only`, resolved
   through a pluggable `AccessResolver`. Read-only peers cannot push updates.
 - **Append-only op log** (`OpLogStore`) and **pluggable snapshot store**
-  (`SnapshotStore`); filesystem implementations stand in for the S3-compatible
-  blob boundary. A room hydrates from the latest snapshot + op-log replay.
+  (`SnapshotStore`), each with filesystem, S3, and in-memory implementations.
+  A room hydrates from the latest snapshot + op-log replay. The S3 stores are
+  the production durability plane (see
+  [Durable stores](#durable-stores-s3-key-layout)).
 - **Periodic snapshots** — event-driven (every N updates) plus a time-based
   maintenance floor.
 - **Health endpoints** — `GET /health`, `GET /healthz` (k8s liveness alias),
@@ -42,12 +44,13 @@ src/
   authority.rs  AuthorityDoc: LoroDoc wrapper (import / catch-up / snapshot)
   op_log.rs     OpLogStore trait + FsOpLogStore + MemoryOpLogStore (append-only)
   snapshot.rs   SnapshotStore trait + FsSnapshotStore + MemorySnapshotStore
+  s3.rs         S3OpLogStore + S3SnapshotStore + S3Stores (feature `s3`)
   presence.rs   ephemeral roster + heartbeat expiry + roster codec
   room.rs       DocRoom: authority + relay + presence + persistence (coordination)
   registry.rs   DocRegistry: live rooms + shared stores
   session.rs    per-connection WebSocket session (server feature)
   server.rs     axum app, health, ws upgrade (server feature)
-  main.rs       binary: FS stores, maintenance tasks, serve
+  main.rs       binary: store selection (fs/s3), maintenance tasks, serve
 tests/          convergence, reconnect, presence, persistence, limits, e2e
 ```
 
@@ -59,11 +62,20 @@ end-to-end WebSocket tests.
 ## Run
 
 ```sh
-# Local dev: grant author to any non-empty token (NEVER in production).
+# Local dev: grant author to any non-empty token (NEVER in production),
+# filesystem stores under ./data (the default backend).
 NISABA_SYNC_DEV_ALLOW_ALL=1 \
 NISABA_SYNC_DATA_DIR=./data \
 PORT=8080 \
 cargo run -p nisaba-sync
+
+# Against the compose stack's SeaweedFS instead (what compose runs with):
+NISABA_SYNC_DEV_ALLOW_ALL=1 \
+NISABA_SYNC_STORE_BACKEND=s3 \
+NISABA_S3_ENDPOINT=http://127.0.0.1:9100 \
+NISABA_S3_ACCESS_KEY=nisaba-app NISABA_S3_SECRET_KEY=... \
+NISABA_S3_BUCKET_OPLOG=nisaba-oplog \
+PORT=8080 cargo run -p nisaba-sync
 ```
 
 By default **no token is accepted** — every HELLO is denied with `FORBIDDEN`
@@ -78,8 +90,10 @@ not build identity/login itself.
 `PORT` (bare port, bound on `0.0.0.0`), then the default `0.0.0.0:8080`.
 
 Environment (connectivity): `NISABA_SYNC_ADDR`, `PORT`, `NISABA_SYNC_DATA_DIR`,
-`NISABA_SYNC_DEV_ALLOW_ALL`, `RUST_LOG`. Authentication variables are listed in
-[Authentication & authorization](#authentication--authorization).
+`NISABA_SYNC_DEV_ALLOW_ALL`, `RUST_LOG`. Storage variables
+(`NISABA_SYNC_STORE_BACKEND` + the `NISABA_S3_*` set) are listed in
+[Durable stores](#durable-stores-s3-key-layout). Authentication variables are
+listed in [Authentication & authorization](#authentication--authorization).
 
 ## Authentication & authorization
 
@@ -194,6 +208,85 @@ state — empty marks" from "wrong door — fail loudly".
   are forwarded), so it is reachable only inside the service network.
 - The caller interprets the bytes (the app service decodes the `review`
   container for export marks); this service does not.
+
+## Durable stores (S3 key layout)
+
+The op log and snapshots are the authority for every collaborative document.
+Two interchangeable implementations back the same traits:
+
+- **`fs`** (default outside compose): one append-only file per document plus a
+  per-document snapshot directory under `NISABA_SYNC_DATA_DIR`.
+- **`s3`** (what compose runs, `NISABA_SYNC_STORE_BACKEND=s3`): immutable
+  objects in the `NISABA_S3_BUCKET_OPLOG` bucket of the same SeaweedFS
+  endpoint the app service uses.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `NISABA_SYNC_STORE_BACKEND` | `fs` | `s3` or `fs`; anything else is a fatal startup error |
+| `NISABA_S3_ENDPOINT` | — **required** in `s3` mode | S3 endpoint as seen from the sync process |
+| `NISABA_S3_ACCESS_KEY` / `NISABA_S3_SECRET_KEY` | — **required** in `s3` mode | The shared `nisaba-app` S3 identity (read/write/list/tag) |
+| `NISABA_S3_REGION` | `us-east-1` | Region label (SeaweedFS accepts any) |
+| `NISABA_S3_BUCKET_OPLOG` | — **required** in `s3` mode | Bucket holding both stores (prefixes below) |
+| `NISABA_SYNC_DATA_DIR` | `data` | `fs` mode only: root of the op-log/snapshot directory tree |
+
+A missing variable in `s3` mode is a **fatal startup error** — sync pointed at
+S3 durability must not silently fall back to a local disk.
+
+### Key layout
+
+```text
+oplog/{doc_id}/{part}.part      one immutable object per appended update
+snapshot/{doc_id}/{seq}.snap    one immutable object per persisted snapshot
+```
+
+`{part}`/`{seq}` are zero-padded to 12 digits, so S3's lexicographic listing
+order equals numeric order and readers replay by listing alone. Document ids
+are validated to `[A-Za-z0-9._-]` (no `/`), so one document's prefix can never
+collide with another's namespace.
+
+### Append protocol (no read-modify-write, no gaps)
+
+S3 objects are immutable; the store never mutates or rewrites an existing
+part. Every append allocates the **next** part number and `PutObject`s a fresh
+key exactly once:
+
+1. the per-document counter is seeded from a listing (`max(existing) + 1`),
+   so it survives restarts;
+2. allocate → PUT → increment happens while holding a per-document async
+   mutex, so two appends can never be handed the same part number (the lock
+   identity survives room eviction/`close`: a room can be evicted while an
+   append is still in flight, and a fresh mutex would let the next append
+   reuse the in-flight part number);
+3. the counter increments **only after** the PUT succeeds — a failed or
+   crashed PUT never created its object, and the next append reuses the same
+   part number.
+
+Because PUTs are atomic and part numbers are consumed only on success, the
+parts present for a document are always the contiguous prefix `0..=n`;
+readers verify contiguity and replay **only the contiguous prefix**, warning
+and truncating if a gap ever appears (bucket tampering, or the unsupported
+split-brain case of two sync processes sharing one bucket — the store assumes
+a single writer, as does the filesystem store across hosts).
+
+### Snapshot latest resolution
+
+Snapshots are immutable, monotonically numbered objects; there is no index
+object and no "latest" pointer to rewrite. *Latest* is resolved by **version
+vector**, never by key: sequence numbers say nothing about coverage — the two
+snapshot writers (the update-threshold path and the maintenance floor) export
+before taking the document lock, so a stale export can land a higher sequence
+than a newer one. The store fetches the candidates and picks the greatest VV
+with the same comparison the filesystem store uses; unreadable objects are
+skipped with a warning. Snapshot bodies use the same
+`[u32 be vv_len][vv bytes][snapshot bytes]` framing as the filesystem store.
+
+### Readiness
+
+With the S3 stores configured, `GET /health/ready` issues a `HeadBucket`
+against the configured bucket (endpoint + credentials + bucket existence in
+one round-trip) instead of the filesystem backend's data-dir-writable check,
+so orchestration never routes traffic to a sync that cannot persist. See
+`StorageProbe` in `src/server.rs`.
 
 ## Design invariants
 

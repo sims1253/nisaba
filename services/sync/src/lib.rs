@@ -13,7 +13,7 @@
 //! * ephemeral **presence/awareness** with heartbeat expiry,
 //! * a **role-aware access seam** (`author` / `reviewer` / `read-only`),
 //! * an **append-only op log** and a **pluggable snapshot store** (filesystem
-//!   implementation standing in for the S3-compatible blob boundary),
+//!   and S3-backed implementations behind one trait; feature `s3`),
 //! * **periodic snapshots**.
 //!
 //! The pure CRDT core ([`authority`], [`op_log`], [`snapshot`], [`presence`],
@@ -38,6 +38,8 @@ pub mod presence;
 pub mod protocol;
 pub mod registry;
 pub mod room;
+#[cfg(feature = "s3")]
+pub mod s3;
 pub mod seed;
 pub mod snapshot;
 pub mod time;
@@ -65,6 +67,8 @@ pub use registry::DocRegistry;
 pub use room::{
     CLOSE_NORMAL, CLOSE_RESYNC_REQUIRED, CloseSignal, DocRoom, JoinOutcome, close_signal,
 };
+#[cfg(feature = "s3")]
+pub use s3::{S3EnvConfig, S3OpLogStore, S3SnapshotStore, S3Stores};
 pub use seed::{DenyAllSeedVerifier, HttpSeedVerifier, SeedVerifier};
 pub use snapshot::{FsSnapshotStore, MemorySnapshotStore, Snapshot, SnapshotStore};
 pub use time::{Clock, ManualClock, SystemClock};

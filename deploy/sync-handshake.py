@@ -39,6 +39,7 @@ from urllib.parse import urlparse
 # Sync frame tags (fixtures/sync/PROTOCOL.md).
 TAG_HELLO = 1
 TAG_WELCOME = 2
+TAG_UPDATE = 3
 TAG_ERROR = 7
 TAG_NAMES = {1: "hello", 2: "welcome", 3: "update", 4: "snapshot", 5: "presence", 6: "heartbeat", 7: "error", 8: "bye"}
 
@@ -158,6 +159,14 @@ def main() -> int:
         help="frame kind the handshake must produce",
     )
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--update-hex",
+        default="",
+        help="after the expected frame, send one UPDATE frame with these hex-encoded "
+        "Loro update bytes (opaque to this probe; the server imports them into the "
+        "authority and persists them to its op-log store) and fail if the server "
+        "answers with an ERROR frame",
+    )
     args = parser.parse_args()
 
     url = urlparse(args.url)
@@ -178,13 +187,35 @@ def main() -> int:
                 print("sync-handshake: server closed the connection instead of answering", file=sys.stderr)
                 return 1
             name, detail = describe(payload)
+            print(f"sync-handshake: {name} {detail}".rstrip())
+            if args.expect != "any" and name != args.expect:
+                print(f"sync-handshake: expected a {args.expect} frame, got {name}", file=sys.stderr)
+                return 1
+
+            if args.update_hex:
+                # Everything below must run inside the `with`: the socket is
+                # closed the moment it exits.
+                try:
+                    update = bytes.fromhex(args.update_hex)
+                except ValueError:
+                    print("sync-handshake: --update-hex is not valid hex", file=sys.stderr)
+                    return 2
+                send_binary(sock, bytes([TAG_UPDATE]) + struct.pack(">I", len(update)) + update)
+                # A healthy update is relayed to OTHER peers only (the sender
+                # is excluded from the fan-out), so the expected reply is
+                # silence. Anything that does arrive must not be an ERROR.
+                try:
+                    sock.settimeout(2.0)
+                    _, reply = recv_frame(sock)
+                    reply_name, reply_detail = describe(reply)
+                    if reply_name == "error":
+                        print(f"sync-handshake: update rejected: {reply_name} {reply_detail}", file=sys.stderr)
+                        return 1
+                    print(f"sync-handshake: update sent; server replied {reply_name}".rstrip())
+                except socket.timeout:
+                    print("sync-handshake: update sent (no reply expected)")
     except (OSError, RuntimeError) as error:
         print(f"sync-handshake: {error}", file=sys.stderr)
-        return 1
-
-    print(f"sync-handshake: {name} {detail}".rstrip())
-    if args.expect != "any" and name != args.expect:
-        print(f"sync-handshake: expected a {args.expect} frame, got {name}", file=sys.stderr)
         return 1
     return 0
 

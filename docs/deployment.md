@@ -119,6 +119,14 @@ The bundled realm is a **dev fixture** (public PKCE client with demo users,
   (`NISABA_SYNC_OIDC_ISSUER`, `NISABA_SYNC_OIDC_AUDIENCE`,
   `NISABA_SYNC_OIDC_JWKS_URL` — see [`configuration.md`](configuration.md));
   unset `NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME`.
+- `sync` persists its op-log and snapshots to the same S3 endpoint as the app
+  (`NISABA_S3_ENDPOINT` / keys / region / `NISABA_S3_BUCKET_OPLOG`; compose
+  wires these automatically). Ensure the op-log bucket is created and
+  versioned (the `seaweedfs-init` sidecar does this for the bundled stack) —
+  a sync whose bucket is unreachable stays not-ready rather than accepting
+  updates it cannot persist. Bare-metal deployments without object storage can
+  set `NISABA_SYNC_STORE_BACKEND=fs` and give `NISABA_SYNC_DATA_DIR` a durable
+  path instead.
 
 ## 6. TLS reverse proxy
 
@@ -262,10 +270,17 @@ docker compose --env-file /etc/nisaba/env --profile app up -d
 ```
 
 `just restore` runs [`deploy/backup/restore.sh`](../deploy/backup/restore.sh),
-which reloads the Postgres dump, re-syncs the SeaweedFS buckets, and unpacks
-the sync op-log/snapshot tar. Expect to lose everything written between the
-snapshot and the rollback — which is why the backup in §8 step 1 is not
-optional. A tested rollback is itself unproven; treat
+which reloads the Postgres dump and re-syncs the SeaweedFS buckets — the
+buckets include the sync service's op-log and snapshots (the `nisaba-oplog`
+bucket's `oplog/` and `snapshot/` prefixes). Note the planes rewind
+differently: the database rows are restored wholesale (`pg_dump --clean`),
+while the bucket re-sync copies **without `--delete`**, so op-log parts
+written after the backup survive and replay on top — collaborative text keeps
+everything written after the backup even though the DB rows rewound. For the
+rollback case that is the safer direction (no CRDT history is destroyed); a
+true point-in-time rewind of the CRDT plane would need a `--delete` restore,
+whose interaction with the buckets' versioning (delete markers) is untested —
+deliberately out of scope here. A tested rollback is itself unproven; treat
 this as the procedure to rehearse, not a proven one.
 
 ## 10. Deliberately not covered here
