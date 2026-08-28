@@ -7,8 +7,8 @@
 # Structural checks only (no containers, no network, no data mutation):
 #   * Postgres : nisaba.sql.gz exists, is a valid gzip, and its SQL carries
 #                PostgreSQL dump markers.
-#   * SeaweedFS: the nisaba-* bucket directories are present in the snapshot.
-#   * sync fs  : sync.tar.gz exists, is a valid gzip, and lists oplog/snapshots.
+#   * SeaweedFS: the nisaba-* bucket directories (the app's blobs and the
+#                sync service's op-log + snapshots) are present in the snapshot.
 #
 # This complements (does not replace) a real restore drill: restoring into an
 # isolated throwaway stack and checking row/object counts is the release
@@ -65,6 +65,8 @@ else
 fi
 
 # ---- SeaweedFS ----
+# Both buckets matter: nisaba-blobs is the app's full-text store, nisaba-oplog
+# is the sync service's durable CRDT history (oplog/ + snapshot/ prefixes).
 SEAWEEDFS_DIR="${SRC}/seaweedfs"
 blobs_found=0
 if [ -d "$SEAWEEDFS_DIR" ]; then
@@ -73,7 +75,7 @@ if [ -d "$SEAWEEDFS_DIR" ]; then
             ok "seaweedfs bucket snapshot present: ${b}"
             blobs_found=1
         else
-            echo "  note  seaweedfs bucket not in snapshot: ${b}" >&2
+            bad "seaweedfs bucket missing from snapshot: ${b}"
         fi
     done
     if [ "$blobs_found" -ne 1 ]; then
@@ -81,24 +83,6 @@ if [ -d "$SEAWEEDFS_DIR" ]; then
     fi
 else
     bad "missing seaweedfs snapshot: ${SEAWEEDFS_DIR}"
-fi
-
-# ---- sync filesystem ----
-# `tar -tzf` both validates the gzip AND parses the tar structure (it fails on a
-# corrupt gzip or a gzip that is not a tar), then lists entries one per line.
-TAR="${SRC}/sync/sync.tar.gz"
-if [ -f "$TAR" ]; then
-    listing="$(tar -tzf "$TAR" 2>/dev/null | head -n 200 || true)"
-    if [ -n "$listing" ] \
-        && printf '%s\n' "$listing" | grep -qE '(^|/)(oplog|snapshots)/'; then
-        ok "sync filesystem tar valid (gzip + tar + oplog/snapshots)"
-    elif [ -n "$listing" ]; then
-        bad "sync tar lists no oplog/snapshots entries"
-    else
-        bad "sync filesystem tar is not a valid gzip/tar: ${TAR}"
-    fi
-else
-    bad "missing sync filesystem tar: ${TAR}"
 fi
 
 if [ "$fail" -ne 0 ]; then

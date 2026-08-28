@@ -300,6 +300,18 @@ echo "[e2e] authorize ok (subject=${subject} role=${role})"
 # JWKS URL serving this token's key to turn this into `--expect welcome`.
 SYNC_PORT="$(grep -E '^SYNC_HOST_PORT=' "$TMP_ENV" | cut -d= -f2- || true)"
 SYNC_PORT="${SYNC_PORT:-8101}"
+
+# ---- sync: readiness with the S3 durable stores ------------------------------
+# The compose stack runs sync with NISABA_SYNC_STORE_BACKEND=s3, so readiness
+# HeadBuckets the op-log bucket. This is the only stack-level assertion that
+# sync's S3 wiring (endpoint, credentials, bucket) actually works; a failure
+# here means every durable join would fail.
+echo "[e2e] sync /health/ready (S3 stores: HeadBucket the op-log bucket)"
+ready="$("${COMPOSE[@]}" exec -T app curl -fsS http://sync:8080/health/ready 2>&1 || true)"
+printf '%s' "$ready" | grep -q '"status":"ready"' \
+    || { echo "[e2e] sync is not ready (S3 stores unreachable): ${ready}" >&2; exit 1; }
+echo "[e2e] sync ready (op-log bucket reachable, status: ready)"
+
 echo "[e2e] sync HELLO handshake — deny-all path (ws://127.0.0.1:${SYNC_PORT}/sync/${DOC})"
 uv run deploy/sync-handshake.py \
     --url "ws://127.0.0.1:${SYNC_PORT}/sync/${DOC}" \

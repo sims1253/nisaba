@@ -5,8 +5,9 @@
 #          (or)  ./deploy/backup/restore.sh path/to/snapshot
 #
 #   - Postgres : restores the gzip'd SQL dump (drop+recreate via --clean).
-#   - SeaweedFS: syncs the local bucket copies back into SeaweedFS.
-#   - sync fs  : extracts the op-log + snapshot tar back into the sync-data volume.
+#   - SeaweedFS: syncs the local bucket copies back into SeaweedFS (this is
+#                ALL durable data: the app's blobs and the sync service's
+#                op-log + snapshots live in the nisaba-* buckets).
 #
 # This OVERWRITES current data. It is intended for local/dev recovery and
 # disaster-recovery drills. Production restore procedure: docs/operations.md.
@@ -73,20 +74,6 @@ if [ -d "${SRC}/seaweedfs" ]; then
     fi
 else
     echo "[restore] no SeaweedFS snapshot at ${SRC}/seaweedfs; skipping objects."
-fi
-
-# ---- sync filesystem ----
-# Restored via a one-shot sync container (mounts the sync-data volume), so it
-# works even after `just down` stopped the app tier. Requires the sync image.
-TAR="${SRC}/sync/sync.tar.gz"
-if [ -f "$TAR" ]; then
-    echo "[restore] restoring sync filesystem (op-log + snapshots)..."
-    gunzip -c "$TAR" | docker compose --profile app run --rm -T --no-deps \
-        --entrypoint /bin/sh sync \
-        -c 'rm -rf /data/oplog /data/snapshots && tar -xf - -C /data' \
-        || { echo "[restore] sync-fs restore failed." >&2; exit 1; }
-else
-    echo "[restore] no sync snapshot at ${TAR}; skipping sync filesystem."
 fi
 
 echo "[restore] done."

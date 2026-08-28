@@ -20,7 +20,7 @@ OUT_DIR="${BACKUP_LOCAL_DIR:-./artifacts/backups}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="${OUT_DIR}/${TS}"
 
-mkdir -p "${DEST}/postgres" "${DEST}/seaweedfs" "${DEST}/sync"
+mkdir -p "${DEST}/postgres" "${DEST}/seaweedfs"
 echo "[backup] -> ${DEST}"
 
 # ---- Postgres ----
@@ -37,6 +37,9 @@ else
 fi
 
 # ---- SeaweedFS ----
+# Both nisaba-* buckets: the app's full-text blobs AND the sync service's
+# durable CRDT history (op-log parts + snapshots, under the oplog/ and
+# snapshot/ key prefixes of the oplog bucket). One storage plane, one sync.
 if docker compose ps seaweedfs 2>/dev/null | grep -q "seaweedfs"; then
     echo "[backup] syncing SeaweedFS buckets..."
     obj_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose ps -q seaweedfs)" 2>/dev/null | awk '{print $1}')"
@@ -65,18 +68,6 @@ if docker compose ps seaweedfs 2>/dev/null | grep -q "seaweedfs"; then
     fi
 else
     echo "[backup] seaweedfs container not running; skipping object sync."
-fi
-
-# ---- sync filesystem (op-log + snapshots) ----
-# sync persists CRDT history to the sync-data volume (/data) today; the S3
-# op-log bucket is the future integration surface (docs/operations.md §4).
-if docker compose ps sync 2>/dev/null | grep -q "sync"; then
-    echo "[backup] archiving sync filesystem (/data: op-log + snapshots)..."
-    docker compose exec -T sync tar -czf - -C /data . \
-        > "${DEST}/sync/sync.tar.gz" 2>"${DEST}/sync/tar.stderr" \
-        || { echo "[backup] WARN: sync-fs tar failed — see ${DEST}/sync/tar.stderr"; }
-else
-    echo "[backup] sync container not running; skipping sync filesystem."
 fi
 
 # ---- Retention (local only) ----
