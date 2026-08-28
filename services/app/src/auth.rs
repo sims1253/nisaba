@@ -112,11 +112,7 @@ impl Authenticator {
             }
         }
         Ok(Principal {
-            subject: token
-                .claims
-                .sub
-                .clone()
-                .unwrap_or_else(|| token.claims.preferred_username.clone().unwrap_or_default()),
+            subject: token.claims.sub,
             roles,
             preferred_username: token.claims.preferred_username,
         })
@@ -126,11 +122,14 @@ impl Authenticator {
 // makes deserialization structurally reject tokens that lack them, while
 // `jsonwebtoken`'s own validation enforces their values. That is why the
 // dead-code allow below is intentional (mirrors services/sync/src/oidc.rs).
+// `sub` is required for a different reason: it keys memberships and the
+// project ACL, so a token without it must not authenticate at all — falling
+// back (to `preferred_username`, or worse "") would let distinct claim-less
+// users collide on one identity.
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Claims {
-    #[serde(default)]
-    sub: Option<String>,
+    sub: String,
     exp: usize,
     iss: String,
     aud: Value,
