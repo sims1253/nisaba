@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { Schema } from "effect";
+import { zipSync, strToU8 } from "fflate";
 import { buildSampleDocumentDocx } from "../src/fixtures/generate.js";
 import { introspectDocx } from "../src/docx/introspect.js";
 import { ManifestSchema } from "../src/docx/manifest.js";
 import { stableStringify, hashBytes, hashValue } from "../src/json.js";
+import { MalformedDocxError } from "../src/errors.js";
 
 const docx = buildSampleDocumentDocx();
 const manifest = introspectDocx(docx, "sample-document.docx");
@@ -79,5 +81,29 @@ describe("introspected content", () => {
     expect(manifest.metadata.title).toBe("Nisaba Sample Document Fixture");
     expect(manifest.metadata.templateName).toBe("NisabaSampleTemplate.dotx");
     expect(manifest.metadata.pages).toBe(3);
+  });
+});
+
+describe("malformed-package guards", () => {
+  // The body walk used to reach for `documentRoot.children[0]!`; an empty
+  // word/document.xml has no root element at all, so that must fail typed.
+  const docxWithDocumentXml = (documentXml: string): Uint8Array =>
+    zipSync({ "word/document.xml": strToU8(documentXml) });
+
+  it("throws MalformedDocxError for an empty word/document.xml", () => {
+    let thrown: unknown;
+    try {
+      introspectDocx(docxWithDocumentXml("   "), "empty.docx");
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(MalformedDocxError);
+    expect((thrown as MalformedDocxError).reason).toContain("no XML root element");
+  });
+
+  it("still throws MalformedDocxError when the part is missing outright", () => {
+    expect(() => introspectDocx(zipSync({ "word/styles.xml": strToU8("<styles/>") }), "no-doc.docx")).toThrow(
+      MalformedDocxError,
+    );
   });
 });
