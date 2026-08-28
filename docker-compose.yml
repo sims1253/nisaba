@@ -277,14 +277,26 @@ services:
       args:
         SERVICE: nisaba-sync
     <<: [*default-restart, *common-logging]
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+      # The op-log bucket must exist before sync first writes/probes it.
+      seaweedfs-init:
+        condition: service_completed_successfully
     environment:
       <<: *rust-env
       # Bind address the nisaba-sync binary reads (NOT a generic PORT).
       NISABA_SYNC_ADDR: "0.0.0.0:8080"
-      # Filesystem op-log/snapshots (sync's Rust store): this volume holds the data.
-      # sync reads no NISABA_S3_* variables — it has no object-store adapter — so none
-      # are injected here. Add them back together with the adapter, not before.
-      NISABA_SYNC_DATA_DIR: /data
+      # Durable stores: S3 (oplog/ + snapshot/ prefixes in the op-log bucket).
+      # The same NISABA_S3_* variables (and the same nisaba-app S3 identity)
+      # the app service uses; `fs` (data-dir volume) remains available for
+      # bare-metal/dev runs outside compose.
+      NISABA_SYNC_STORE_BACKEND: s3
+      NISABA_S3_ENDPOINT: ${NISABA_S3_ENDPOINT:-}
+      NISABA_S3_ACCESS_KEY: ${NISABA_S3_ACCESS_KEY:-}
+      NISABA_S3_SECRET_KEY: ${NISABA_S3_SECRET_KEY:-}
+      NISABA_S3_REGION: ${NISABA_S3_REGION:-local}
+      NISABA_S3_BUCKET_OPLOG: ${NISABA_S3_BUCKET_OPLOG:-nisaba-oplog}
       # Sync validates OIDC tokens, then asks app for document membership.
       NISABA_SYNC_OIDC_ISSUER: ${NISABA_SYNC_OIDC_ISSUER:-}
       NISABA_SYNC_OIDC_AUDIENCE: ${NISABA_SYNC_OIDC_AUDIENCE:-}
@@ -311,8 +323,6 @@ services:
       # top-level "roles" claim; the sync default ("realm_access.roles") will
       # never match and every token is rejected.
       NISABA_SYNC_OIDC_ROLES_CLAIM: ${NISABA_SYNC_OIDC_ROLES_CLAIM:-roles}
-    volumes:
-      - sync-data:/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
       interval: 15s
@@ -321,8 +331,10 @@ services:
       start_period: 15s
     ports:
       - "127.0.0.1:${SYNC_HOST_PORT:-8101}:8080"
-    # No obj-net: sync persists to its own volume, not to SeaweedFS.
-    networks: [oidc-net, svc-net]
+    # obj-net: sync persists its op-log + snapshots to the op-log bucket in
+    # SeaweedFS (same storage tier as the app's blobs). No local volume: the
+    # /data mount is gone, sync's durability lives in the object store.
+    networks: [oidc-net, svc-net, obj-net]
     security_opt: ["no-new-privileges:true"]
 
   # compile: internal-only. No published host port, svc-net only, no S3/DB
@@ -396,4 +408,3 @@ volumes:
   postgres-data:
   seaweedfs-data:
   keycloak-data:
-  sync-data:
