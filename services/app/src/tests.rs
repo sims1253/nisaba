@@ -1,4 +1,5 @@
 #![cfg(test)]
+use crate::test_support::MemoryRepository;
 use crate::*;
 use axum::{body::Body, http::Request, response::Response};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
