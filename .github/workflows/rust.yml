@@ -26,8 +26,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: rust-${{ github.ref }}
-  cancel-in-progress: true
+  # PR runs key on the PR number so a new push supersedes the stale run for
+  # the same PR. Pushes to main and manual dispatches share the ref-keyed
+  # group but queue instead of cancelling — the in-flight run then finishes
+  # and saves its rust-cache for the queued one instead of throwing it away.
+  group: rust-${{ github.event_name == 'pull_request' && github.event.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -40,6 +44,7 @@ env:
 jobs:
   fmt:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
@@ -49,6 +54,7 @@ jobs:
 
   clippy:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
@@ -64,6 +70,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
@@ -79,6 +86,7 @@ jobs:
   # (crates/nisaba-core-wasm/Cargo.toml).
   wasm:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
@@ -102,6 +110,7 @@ jobs:
 
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94

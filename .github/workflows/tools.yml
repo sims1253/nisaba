@@ -49,8 +49,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tools-${{ github.ref }}
-  cancel-in-progress: true
+  # PR runs key on the PR number so a new push supersedes the stale run for
+  # the same PR. Pushes to main, the weekly schedule, and dispatches share
+  # the ref-keyed group but queue instead of cancelling: an unconditional
+  # cancel here has killed compose-build 18 minutes into its cold cargo-chef
+  # builds, wasting the whole run and saving no cache for the successor.
+  group: tools-${{ github.event_name == 'pull_request' && github.event.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -61,6 +66,7 @@ jobs:
   # when it can actually contribute signal (or when explicitly requested).
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       external: ${{ steps.filter.outputs.external }}
       infra: ${{ steps.filter.outputs.infra }}
@@ -101,6 +107,7 @@ jobs:
   # assertion fails the build.
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -139,6 +146,9 @@ jobs:
       github.ref == 'refs/heads/main' ||
       needs.changes.outputs.external == 'true'
     runs-on: ubuntu-latest
+    # apt-installing LibreOffice/poppler/qpdf/ImageMagick plus the verified
+    # typst download dominates; observed runs stay under ~2 minutes.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install external PDF toolchain
@@ -188,6 +198,7 @@ jobs:
   # config (temp env from .env.example) and lint the bootstrap/ops shell scripts.
   infra-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -225,6 +236,9 @@ jobs:
       github.ref == 'refs/heads/main' ||
       needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
+    # Brings up the infra tier (postgres/seaweedfs/keycloak) and waits for
+    # health; observed ~75s.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Smoke-test the infra tier
@@ -238,6 +252,9 @@ jobs:
       github.ref == 'refs/heads/main' ||
       needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
+    # Same cold cargo-chef app-profile builds as e2e.yml's stack-e2e (no
+    # layer cache on ephemeral runners) — budget accordingly.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build the app-profile images (app/sync/compile/web)

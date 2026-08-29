@@ -7,8 +7,14 @@ on:
     - cron: "17 3 * * *"
 
 concurrency:
+  # Nightly schedule + manual dispatches: the ref-keyed group serializes
+  # runs sharing a ref (the nightly and default-branch dispatches).
+  # Deliberately NO cancel-in-progress — a dispatch arriving mid-nightly
+  # queues behind it instead of killing a 30-minute run that is already
+  # deep in Playwright. (A dispatch from a non-default branch lands in a
+  # different ref-keyed group and runs in parallel — it could never cancel
+  # the nightly under this config either.)
   group: e2e-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read

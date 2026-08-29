@@ -19,8 +19,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: web-${{ github.ref }}
-  cancel-in-progress: true
+  # PR runs key on the PR number so a new push supersedes the stale run for
+  # the same PR. Pushes to main and manual dispatches share the ref-keyed
+  # group but queue instead of cancelling, so an in-flight run finishes and
+  # saves its bun cache for the queued one.
+  group: web-${{ github.event_name == 'pull_request' && github.event.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -30,6 +34,7 @@ jobs:
   # scripts run inside the web package. There is no "skip if absent" fallback.
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
