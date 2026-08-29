@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal B · Ink Desk — writing workspace</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — the writing state (hero mock).
+
+  Art direction: the interface is the ink; the document is the light.
+  All apparatus is one warm bitumen; the source column and the rendered
+  page are the only paper. Self-contained: system font stacks only.
+-->
+<style>
+:root {
+  /* surfaces — apparatus (ink) */
+  --bitumen: #262921;
+  --bitumen-2: #2e322a;
+  --bitumen-3: #383c31;
+  --irule: #41453a;
+  --irule-s: #575c4c;
+  /* surfaces — document (paper) */
+  --paper: #fbfaf5;
+  --paper-2: #f2f0e6;
+  --shell: #3a3e33;           /* ground behind the rendered page */
+  /* ink on paper */
+  --carbon: #221f17;
+  --carbon-soft: #55524a;
+  --paper-muted: #8a8776;
+  --prule: #e3e0d0;
+  --prule-s: #c6c3ae;
+  /* chalk on ink */
+  --bone: #e9e7da;
+  --bone-muted: #aab0a0;
+  --bone-faint: #7e8372;
+  /* the one accent: lapis */
+  --lapis: #4a63d8;
+  --lapis-bright: #98a7ff;
+  --lapis-deep: #2b3fae;
+  --lapis-wash: #eaedfb;
+  /* semantic (meaning only) — lume variants brightened for ink */
+  --insert: #2e7d4f;  --insert-soft: #e2efe6;  --insert-lume: #62c28d;
+  --comment: #966d14; --comment-soft: #f6ecd1; --comment-lume: #d3a83f;
+  --delete: #a63a2e;  --delete-soft: #f7e6e1;  --delete-lume: #e2705f;
+  /* type */
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+html, body { height: 100% }
+body {
+  font: 13px/1.45 var(--sans);
+  color: var(--bone);
+  background: var(--bitumen);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr) 30px;
+  font-synthesis: none;
+}
+:focus-visible { outline: 2px solid var(--lapis-bright); outline-offset: 1px }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer }
+kbd {
+  font: 500 9.5px/1 var(--mono); letter-spacing: .04em;
+  color: var(--bone-muted); border: 1px solid var(--irule-s); border-radius: 2px;
+  padding: 2px 4px; background: var(--bitumen-2);
+}
+.micro { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
+.num { font-variant-numeric: tabular-nums }
+.wedge { display: inline-block; width: 7px; height: 9px; background: var(--lapis-bright);
+         clip-path: polygon(0 0, 100% 50%, 0 100%); }
+
+/* ============ app bar ============ */
+.appbar {
+  display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px;
+  border-bottom: 1px solid var(--irule-s);
+}
+.brand { display: flex; align-items: center; gap: 9px; padding: 4px 6px; border-radius: 2px }
+.brand:hover { background: var(--bitumen-3) }
+.brand .mark {
+  width: 22px; height: 22px; display: grid; place-items: center;
+  background: var(--lapis); color: #fff; font: 700 12.5px/1 var(--mono);
+}
+.brand .word { font: 600 16px/1 var(--display); letter-spacing: .01em; color: var(--bone) }
+.crumbs { display: flex; align-items: center; gap: 2px; min-width: 0 }
+.crumbs button, .crumbs span {
+  font: 11.5px/1 var(--mono); color: var(--bone-muted);
+  padding: 4px 5px; border-radius: 2px; white-space: nowrap;
+}
+.crumbs button:hover { color: var(--lapis-bright); background: var(--bitumen-3) }
+.crumbs i { font-style: normal; color: var(--irule-s) }
+.crumbs .cur { color: var(--bone); font-weight: 500 }
+
+/* the palette hint: a paper slip on the ink */
+.palette-hint {
+  margin: 0 auto; display: flex; align-items: center; gap: 8px;
+  width: min(400px, 30vw); padding: 5px 8px; text-align: left;
+  background: var(--paper); color: var(--paper-muted); border-radius: 2px;
+  font-size: 12px; box-shadow: 0 1px 0 #00000055;
+}
+.palette-hint:hover { color: var(--carbon-soft) }
+.palette-hint .lead { font: 700 12px var(--mono); color: var(--lapis-deep) }
+.palette-hint kbd { margin-left: auto; color: var(--paper-muted); border-color: var(--prule-s); background: var(--paper-2) }
+
+.tools { display: flex; align-items: center; gap: 2px }
+.tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px; border-radius: 2px }
+.tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
+
+/* roster: who has access */
+.people { display: flex; gap: 5px; margin-right: 10px }
+.person {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--irule); border-radius: 2px; padding: 2px 6px;
+  font-size: 11px; color: var(--bone-muted); white-space: nowrap;
+}
+.person .role { font: 600 8.5px/1 var(--mono); letter-spacing: .1em; color: var(--bone-faint) }
+
+.appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px }
+
+/* presence: tablet stamps */
+.presence { display: flex; align-items: center }
+.avatar {
+  width: 23px; height: 23px; border-radius: 2px; display: grid; place-items: center;
+  font: 700 9px/1 var(--sans); letter-spacing: .02em; margin-left: -6px;
+  border: 1.5px solid var(--bitumen);
+  color: hsl(var(--hue) 70% 88%); background: hsl(var(--hue) 45% 34%);
+  box-shadow: inset 0 0 0 1px hsl(var(--hue) 60% 60% / .5);
+}
+.presence .avatar:first-child { margin-left: 0 }
+.save { font-size: 11.5px; color: var(--bone-muted); white-space: nowrap }
+
+/* ============ workspace ============ */
+.workspace {
+  display: grid; min-height: 0;
+  grid-template-columns: 248px minmax(360px, 1fr) 292px minmax(360px, 0.9fr);
+  background: var(--irule);
+}
+.col { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bitumen) }
+
+/* --- navigator --- */
+.nav-head {
+  display: flex; align-items: center; gap: 6px; padding: 12px 8px 6px 14px;
+}
+.nav-head .count { color: var(--irule-s); font-weight: 400 }
+.nav-head .acts { margin-left: auto; display: flex; gap: 2px }
+.ibtn { width: 20px; height: 20px; display: grid; place-items: center; color: var(--bone-faint); font-size: 13px; border-radius: 2px }
+.ibtn:hover { color: var(--bone); background: var(--bitumen-3) }
+.nav-body { overflow: auto; padding-bottom: 8px }
+.trow {
+  width: 100%; display: flex; align-items: center; gap: 6px; text-align: left;
+  padding: 3px 10px 3px 6px; color: var(--bone-muted); font: 12px/1.7 var(--sans);
+  border-left: 2px solid transparent;
+}
+.trow .tw { width: 13px; text-align: center; color: var(--bone-faint); font-size: 9px }
+.trow:hover { background: var(--bitumen-3); color: var(--bone) }
+.trow.folder { color: var(--bone-faint); font-weight: 500 }
+.trow.active { color: var(--lapis-bright); border-left-color: var(--lapis); font-weight: 600; background: #2c3140 }
+.trow .tag {
+  margin-left: auto; font: 600 8.5px/1 var(--mono); letter-spacing: .1em;
+  color: var(--lapis-bright); border: 1px solid var(--lapis);
+  padding: 2px 4px; border-radius: 2px;
+}
+.trow .indent { width: 11px; align-self: stretch; border-right: 1px dotted var(--irule-s); margin-right: 8px }
+.orow {
+  width: 100%; display: flex; align-items: baseline; gap: 8px; text-align: left;
+  padding: 3px 10px 3px 12px; color: var(--bone-muted); font-size: 12px;
+  border-left: 2px solid transparent;
+}
+.orow:hover { background: var(--bitumen-3); color: var(--bone) }
+.orow[data-lvl="1"] { font-weight: 600; color: var(--bone) }
+.orow[data-lvl="2"] { padding-left: 24px }
+.orow.active { color: var(--lapis-bright); border-left-color: var(--lapis); background: #2c3140 }
+.orow .ln { margin-left: auto; font: 9.5px var(--mono); color: var(--bone-faint) }
+.nav-sep { border-top: 1px solid var(--irule) }
+.nav-foot { margin-top: auto; border-top: 1px solid var(--irule); padding: 9px 14px 11px; font: 10px/1.9 var(--mono); color: var(--bone-faint) }
+.nav-foot b { color: var(--bone-muted); font-weight: 600 }
+
+/* --- document pane: the only paper --- */
+.doc { background: var(--paper); color: var(--carbon) }
+.doc-bar {
+  display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px;
+  background: var(--bitumen); border-bottom: 1px solid var(--irule-s);
+  color: var(--bone);
+}
+.doc-title { font: 600 16px/1 var(--display); letter-spacing: .005em; color: var(--bone) }
+.doc-path { font: 10px var(--mono); color: var(--bone-faint) }
+.doc-rev { font: 10px var(--mono); color: var(--bone-faint) }
+.doc-bar-r { margin-left: auto; display: flex; align-items: center; gap: 8px }
+.switch {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px;
+  border: 1px solid var(--irule-s); border-radius: 999px; padding: 3px 10px;
+  color: var(--bone-muted); background: var(--bitumen-2);
+}
+.switch::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--comment-lume) }
+.switch.on { color: var(--comment-lume); border-color: #6b5a2a }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  border: 1px solid var(--irule-s); background: var(--bitumen-2); color: var(--bone);
+  padding: 4px 10px; border-radius: 2px;
+}
+.btn:hover { background: var(--bitumen-3); border-color: var(--bone-faint) }
+.badge {
+  min-width: 16px; padding: 0 4px; border-radius: 2px; text-align: center;
+  background: var(--comment-lume); color: #262921; font: 700 10px/16px var(--mono);
+}
+.sticky {
+  display: flex; align-items: center; gap: 6px; padding: 4px 18px; min-height: 26px;
+  background: #fbfaf5d9; backdrop-filter: blur(3px); border-bottom: 1px solid var(--prule);
+  font-size: 11.5px; color: var(--paper-muted);
+}
+.sticky i { font-style: normal; color: var(--prule-s) }
+.sticky b { color: var(--carbon); font-weight: 600 }
+
+/* the editor: mono source, 74ch measure, centred */
+.editor { flex: 1; overflow: auto; background: var(--paper); padding: 18px 0 30vh;
+          display: flex; justify-content: center }
+.ed-col { max-width: 74ch; width: 100%; padding: 0 20px; position: relative }
+.l { display: flex; gap: 14px; font: 14px/1.8 var(--mono); color: var(--carbon) }
+.l .n { flex: 0 0 auto; width: 3ch; text-align: right; color: var(--prule-s); font-size: 10.5px; line-height: 2.35 }
+.hd1 { font-weight: 700; font-size: 15px }
+.hd2 { font-weight: 700 }
+.cm { color: var(--paper-muted); margin-right: 6px }
+.mk { color: var(--lapis-deep) }
+.ins { background: var(--insert-soft); border-bottom: 1.5px solid var(--insert); cursor: pointer }
+.del { background: var(--delete-soft); border-bottom: 1.5px solid var(--delete); text-decoration: line-through; cursor: pointer }
+.com { background: var(--comment-soft); border-bottom: 1.5px solid var(--comment); cursor: pointer }
+.cite { color: var(--lapis-deep); border-bottom: 1px dotted var(--lapis-deep) }
+.cur-line { background: #221f1706 }
+
+/* remote caret */
+.rcaret { position: relative; display: inline-block; width: 0; border-left: 2px solid hsl(285 60% 62%); margin-left: -1px; pointer-events: none }
+.rlabel {
+  position: absolute; bottom: calc(100% + 1px); left: -2px; white-space: nowrap;
+  font: 600 9px/1 var(--sans); color: #fff; background: hsl(285 60% 52%);
+  padding: 2px 5px; border-radius: 2px 2px 2px 0;
+}
+.rcaret.c2 { border-left-color: hsl(24 70% 60%) }
+.rcaret.c2 .rlabel { background: hsl(24 70% 50%) }
+
+/* --- review dock --- */
+.dock { border-left: 1px solid var(--irule-s); background: var(--bitumen) }
+.dock-bar { display: flex; align-items: center; height: 34px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--irule) }
+.dock-body { flex: 1; overflow: auto; padding: 10px 12px 14px }
+.chips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px }
+.chip { font: 10px var(--mono); border: 1px solid var(--irule-s); border-radius: 2px; padding: 3px 8px; color: var(--bone-muted) }
+.chip:hover { color: var(--bone); border-color: var(--bone-faint) }
+.chip[aria-pressed="true"] { background: var(--bone); border-color: var(--bone); color: var(--bitumen); font-weight: 600 }
+.qrow { border-bottom: 1px solid var(--irule); border-left: 2px solid transparent; padding: 8px 8px 8px 9px; cursor: pointer }
+.qrow:hover { background: var(--bitumen-2) }
+.qrow.sel { background: var(--bitumen-2); border-left-color: var(--lapis) }
+.qhead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px }
+.kchip { font: 700 8.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 3px 5px; border-radius: 2px }
+.k-ins { background: #1d3a2a; color: var(--insert-lume) }
+.k-del { background: #3f241f; color: var(--delete-lume) }
+.k-com { background: #3a3018; color: var(--comment-lume) }
+.qauth { font-size: 11.5px; font-weight: 600; color: var(--bone) }
+.qtime { font: 10px var(--mono); color: var(--bone-faint) }
+.orph { font: 9px var(--mono); color: var(--comment-lume); border: 1px solid #4d4224; padding: 2px 4px; border-radius: 2px }
+.qtext { font-size: 12px; color: var(--bone-muted); line-height: 1.5; margin-bottom: 5px }
+.qtext q { font-style: italic; quotes: "“" "”" }
+.qloc { display: block; font: 9.5px var(--mono); color: var(--bone-faint); margin-bottom: 6px }
+.qacts { display: flex; gap: 6px; justify-content: flex-end }
+.qacts .btn { font-size: 11px; padding: 3px 8px }
+.btn-accept { border-color: #2c5a41; color: var(--insert-lume) }
+.btn-reject { border-color: #5c322b; color: var(--delete-lume) }
+.dock-foot {
+  border-top: 1px solid var(--irule); padding: 7px 10px; display: flex; align-items: center; gap: 8px;
+  font: 10px var(--mono); color: var(--bone-faint);
+}
+.dock-foot .keys { margin-left: auto }
+
+/* --- preview: the page glows on dark ground --- */
+.prev { background: var(--shell); border-left: 1px solid var(--irule-s) }
+.prev-bar {
+  display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px 0 10px;
+  background: var(--bitumen); border-bottom: 1px solid var(--irule);
+}
+.vswitch { display: flex; border: 1px solid var(--irule-s); border-radius: 2px; overflow: hidden }
+.vswitch button {
+  font: 10.5px var(--sans); color: var(--bone-muted); padding: 4px 9px;
+  border-right: 1px solid var(--irule-s); white-space: nowrap;
+}
+.vswitch button:last-child { border-right: 0 }
+.vswitch button[aria-pressed="true"] { background: var(--lapis); color: #fff; font-weight: 600 }
+.blabel { font: 10px var(--mono); color: var(--bone-faint); white-space: nowrap }
+.blabel b { color: var(--bone-muted); font-weight: 600 }
+.pgpos { margin-left: auto; font: 10px var(--mono); color: var(--bone-faint) }
+.pdf { flex: 1; overflow: auto; padding: 18px 18px 28px; display: grid; justify-items: center; align-content: start }
+.page {
+  width: 380px; min-height: 560px; background: #fff; color: #26241d;
+  font-family: var(--display); padding: 42px 44px;
+  box-shadow: 0 1px 2px #00000066, 0 14px 34px #00000052;
+}
+.rhead { display: flex; justify-content: space-between; font: italic 10.5px var(--display); color: #8a8776;
+         border-bottom: .5px solid #d8d5c4; padding-bottom: 7px; margin-bottom: 26px }
+.page h1 { font-size: 19px; line-height: 1.25; font-weight: 700; margin-bottom: 4px }
+.page .authors { font-size: 11px; color: #6d6a5c; margin-bottom: 22px }
+.page h2 { font-size: 13px; margin: 18px 0 6px }
+.page p { font-size: 11px; line-height: 1.62; margin-bottom: 7px }
+.page .abs { font-size: 10.5px }
+.rtable { width: 100%; border-collapse: collapse; font-size: 10px; margin: 8px 0 }
+.rtable th { border-top: 1.2px solid #26241d; border-bottom: .7px solid #26241d; text-align: left; padding: 3px 6px; font-weight: 700 }
+.rtable td { border-bottom: .5px solid #d8d5c4; padding: 3px 6px; font-variant-numeric: tabular-nums }
+.folio { text-align: center; font-size: 10px; color: #8a8776; margin-top: 26px }
+
+/* ============ status bar: the colophon ============ */
+.statusbar {
+  display: flex; align-items: stretch; background: var(--bitumen);
+  border-top: 1px solid var(--irule-s); font: 11px var(--mono); color: var(--bone-muted);
+}
+.scell { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border-right: 1px solid var(--irule); white-space: nowrap }
+/* the live indicator is a wedge: the stylus mark, in insert-green */
+.dot { width: 8px; height: 10px; background: var(--insert-lume); clip-path: polygon(0 0, 100% 50%, 0 100%) }
+.ok { color: var(--insert-lume); font-weight: 700 }
+.warn { color: var(--comment-lume); font-weight: 700 }
+.spacer { flex: 1; border: 0 }
+.sright { display: flex; margin-left: auto }
+.sright .scell { border-right: 0; border-left: 1px solid var(--irule) }
+.scell.hoverable:hover { background: var(--bitumen-3); color: var(--bone) }
+.compile {
+  display: inline-flex; align-items: center; gap: 9px; padding: 0 16px;
+  background: var(--lapis); color: #fff; font: 600 11.5px var(--sans); letter-spacing: .01em;
+}
+.compile kbd { border-color: #ffffff66; background: transparent; color: #ffffffcc }
+.compile:hover { background: #3a53c4 }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <button class="brand" title="All projects">
+    <span class="mark">N</span><span class="word">Nisaba</span>
+  </button>
+  <nav class="crumbs" aria-label="Location">
+    <span>Projects</span><i>›</i>
+    <button>Field lab</button><i>›</i>
+    <button class="cur">main.typ</button><i>›</i>
+    <button>§Results</button>
+  </nav>
+
+  <button class="palette-hint" aria-label="Search files, sections and commands">
+    <span class="lead">⌕</span>
+    <span>Search files, sections, commands…</span>
+    <kbd>⌘K</kbd>
+  </button>
+
+  <div class="tools">
+    <div class="people" aria-label="People with access">
+      <span class="person" title="sparkletoes · Author"><strong>sparkletoes</strong><span class="role">AUTHOR</span></span>
+      <span class="person" title="clawson · Reviewer"><strong>clawson</strong><span class="role">REVIEWER</span></span>
+    </div>
+    <button class="tbtn" title="The project's reference library">References</button>
+    <button class="tbtn" title="Earlier versions of this file">History</button>
+    <button class="tbtn" title="People with access">Share</button>
+    <button class="tbtn" title="Download the finished document">Export</button>
+  </div>
+
+  <div class="appbar-right">
+    <div class="presence" aria-label="People in this document">
+      <span class="avatar" style="--hue:285" title="sparkletoes — main.typ · §Results">SP</span>
+      <span class="avatar" style="--hue:24"  title="clawson — main.typ · viewing page 2">CL</span>
+    </div>
+    <span class="save">Saved 12:04</span>
+    <button class="tbtn" title="Editor settings: typeface, size, spacing">Settings</button>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- ============ navigator ============ -->
+  <aside class="col" aria-label="Files and sections">
+    <div class="nav-head micro"><span>Files</span><span class="count num">7</span>
+      <span class="acts"><button class="ibtn" title="New file">＋</button><button class="ibtn" title="Add the demo document">✧</button><button class="ibtn" title="Hide the sidebar (⌘B)">‹</button></span>
+    </div>
+    <div class="nav-body">
+      <button class="trow folder"><span class="tw">▾</span><span>chapters/</span></button>
+      <button class="trow"><span class="indent"></span><span class="tw"></span><span>intro.typ</span></button>
+      <button class="trow"><span class="indent"></span><span class="tw"></span><span>methods.typ</span></button>
+      <button class="trow active"><span class="tw"></span><span>main.typ</span><span class="tag">MAIN</span></button>
+      <button class="trow folder"><span class="tw">▸</span><span>references.bib</span></button>
+    </div>
+    <div class="nav-sep"></div>
+    <div class="nav-head micro"><span>Outline</span></div>
+    <div class="nav-body">
+      <button class="orow" data-lvl="1"><span>Abstract</span><span class="ln">4</span></button>
+      <button class="orow" data-lvl="1"><span>Introduction</span><span class="ln">12</span></button>
+      <button class="orow" data-lvl="1"><span>Field methods</span><span class="ln">31</span></button>
+      <button class="orow active" data-lvl="1"><span>Results</span><span class="ln">78</span></button>
+      <button class="orow" data-lvl="2"><span>Attendance</span><span class="ln">80</span></button>
+      <button class="orow" data-lvl="2"><span>Acoustic entrainment</span><span class="ln">88</span></button>
+      <button class="orow" data-lvl="1"><span>Discussion</span><span class="ln">104</span></button>
+    </div>
+    <div class="nav-foot num">
+      <div>files <b>7</b></div>
+      <div>references <b>9 of 12 with a PDF</b></div>
+      <div>preview builds <b>main.typ</b></div>
+    </div>
+  </aside>
+
+  <!-- ============ document ============ -->
+  <section class="col doc" aria-label="Document">
+    <div class="doc-bar">
+      <div style="display:flex; align-items:baseline; gap:10px; min-width:0">
+        <strong class="doc-title">main.typ</strong>
+        <code class="doc-path">/main.typ</code>
+      </div>
+      <div class="doc-bar-r">
+        <span class="doc-rev num">v128</span>
+        <button class="switch on" role="switch" aria-checked="true">Track changes: on</button>
+        <button class="btn">Review <span class="badge num">3</span></button>
+      </div>
+    </div>
+    <div class="sticky">main.typ <i>›</i> <b>== Results</b></div>
+
+    <div class="editor">
+      <div class="ed-col">
+        <div class="l"><span class="n">77</span><code></code></div>
+        <div class="l hd2"><span class="n">78</span><code><span class="cm">==</span> Results</code></div>
+        <div class="l"><span class="n">79</span><code></code></div>
+        <div class="l"><span class="n">80</span><code>Honey badgers attended 74% of recorded rave events (n = 57).</code></div>
+        <div class="l"><span class="n">81</span><code>Vocalisations in the 40–60 Hz range were phase-locked to</code></div>
+        <div class="l"><span class="n">82</span><code>the fairy audio system, as summarised in <span class="cite">@tbl-acoustic</span>.</code></div>
+        <div class="l"><span class="n">83</span><code><span class="rcaret"><span class="rlabel">sparkletoes</span></span><span class="ins">A stable co-occurrence relationship, mediated by</span></code></div>
+        <div class="l"><span class="n">84</span><code><span class="ins">low-frequency bass, held across all seventeen months.</span></code></div>
+        <div class="l"><span class="n">85</span><code></code></div>
+        <div class="l"><span class="n">86</span><code><span class="cm">#figure(</span></code></div>
+        <div class="l"><span class="n">87</span><code><span class="cm">&nbsp;&nbsp;table(</span></code></div>
+        <div class="l"><span class="n">88</span><code><span class="cm">&nbsp;&nbsp;&nbsp;&nbsp;columns: 3,</span></code></div>
+        <div class="l"><span class="n">89</span><code><span class="cm">&nbsp;&nbsp;&nbsp;&nbsp;[Event], [Hz], [Lock],</span></code></div>
+        <div class="l"><span class="n">90</span><code><span class="cm">&nbsp;&nbsp;),</span><span class="rcaret c2"><span class="rlabel">clawson</span></span></code></div>
+        <div class="l"><span class="n">91</span><code><span class="cm">&nbsp;&nbsp;caption: [Acoustic entrainment by event],</span></code></div>
+        <div class="l"><span class="n">92</span><code><span class="cm">)</span></code></div>
+        <div class="l"><span class="n">93</span><code></code></div>
+        <div class="l"><span class="n">94</span><code>Field observers noted that <span class="com">monitoring crystals</span> required</code></div>
+        <div class="l"><span class="n">95</span><code>re-calibration after each event <span class="cite">#cite(&lt;twinkleburst-2024&gt;)</span>.</code></div>
+        <div class="l"><span class="n">96</span><code><span class="del">Some researchers dispute this entirely.</span></code></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ review dock ============ -->
+  <aside class="col dock" aria-label="Review">
+    <div class="dock-bar">
+      <h2 class="micro" style="color: var(--bone-muted)">Review</h2>
+      <button class="ibtn" style="margin-left:auto" title="Close (Esc)">×</button>
+    </div>
+    <div class="dock-body">
+      <div class="chips" role="group" aria-label="Filter review items">
+        <button class="chip num" aria-pressed="true">All 3</button>
+        <button class="chip num" aria-pressed="false">Changes 2</button>
+        <button class="chip num" aria-pressed="false">Comments 1</button>
+        <button class="chip" aria-pressed="false">Mine</button>
+      </div>
+      <div style="margin-bottom:10px"><button class="btn" style="font-size:11px">Add a comment here</button></div>
+
+      <div class="qrow sel">
+        <div class="qhead">
+          <span class="kchip k-ins">Added</span>
+          <span class="qauth">sparkletoes</span><span class="qtime num">1 h ago</span>
+          <span class="avatar" style="--hue:285; width:19px; height:19px; margin-left:auto; font-size:8px">SP</span>
+        </div>
+        <p class="qtext"><q>A stable co-occurrence relationship, mediated by low-frequency bass…</q></p>
+        <span class="qloc">main.typ:83</span>
+        <div class="qacts"><button class="btn btn-accept">Accept <kbd>A</kbd></button><button class="btn btn-reject">Reject <kbd>R</kbd></button></div>
+      </div>
+
+      <div class="qrow">
+        <div class="qhead">
+          <span class="kchip k-com">Comment</span>
+          <span class="qauth">sparkletoes</span><span class="qtime num">1 h ago</span>
+          <span class="avatar" style="--hue:285; width:19px; height:19px; margin-left:auto; font-size:8px">SP</span>
+        </div>
+        <p class="qtext">Can we cite the crystal calibration report here? Reviewers will ask.</p>
+        <span class="qloc">main.typ:94</span>
+        <div class="qacts"><button class="btn">Resolve</button></div>
+      </div>
+
+      <div class="qrow">
+        <div class="qhead">
+          <span class="kchip k-del">Deleted</span>
+          <span class="qauth">clawson</span><span class="qtime num">2 h ago</span>
+          <span class="orph" title="The text this was attached to has changed too much to locate">needs re-anchoring</span>
+          <span class="avatar" style="--hue:24; width:19px; height:19px; margin-left:auto; font-size:8px">CL</span>
+        </div>
+        <p class="qtext"><q>Some researchers dispute this entirely.</q></p>
+        <span class="qloc">main.typ:96</span>
+        <div class="qacts"><button class="btn btn-accept">Accept</button><button class="btn btn-reject">Reject</button></div>
+      </div>
+    </div>
+    <div class="dock-foot">
+      <button class="btn" style="font-size:10.5px">Accept all 2</button>
+      <button class="btn" style="font-size:10.5px">Reject all</button>
+      <span class="keys num">↑↓ move · ↵ show · A accept · R reject · C comment</span>
+    </div>
+  </aside>
+
+  <!-- ============ preview ============ -->
+  <section class="col prev" aria-label="Page preview">
+    <div class="prev-bar">
+      <div class="vswitch" role="group" aria-label="Which version to render">
+        <button aria-pressed="true">Final</button>
+        <button aria-pressed="false">Original</button>
+        <button aria-pressed="false">All markup</button>
+        <button aria-pressed="false">Public copy</button>
+      </div>
+      <span class="blabel num">build <b>#41</b> · from <b>c128</b> · 12:04</span>
+      <span class="pgpos num">p 1 / 12</span>
+    </div>
+    <div class="pdf">
+      <div class="page">
+        <div class="rhead"><span>Honey Badgers at Fairy Raves</span><span>12 Aug 2026</span></div>
+        <h1>Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</h1>
+        <div class="authors">twinkleburst · sparkletoes · clawson — Field lab</div>
+        <h2>Abstract</h2>
+        <p class="abs">We document seventeen months of field observations of honey badgers (<i>Mellivora capensis</i>) attending subterranean fairy raves in the Welsh countryside. Using enchanted monitoring crystals and glitter-spectroscopy, we characterise attendance patterns, acoustic entrainment, and interspecies social dynamics. Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.</p>
+        <h2>1&nbsp;&nbsp;Results</h2>
+        <p>Honey badgers attended 74% of recorded rave events (n&nbsp;=&nbsp;57). Vocalisations in the 40–60&nbsp;Hz range were phase-locked to the fairy audio system (Table&nbsp;1).</p>
+        <table class="rtable">
+          <tr><th>Event</th><th>Hz</th><th>Lock</th></tr>
+          <tr><td>Cwm Derwen</td><td>52</td><td>0.91</td></tr>
+          <tr><td>Bryn Pydew</td><td>47</td><td>0.88</td></tr>
+        </table>
+        <p class="folio">— 1 —</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ============ colophon ============ -->
+<footer class="statusbar">
+  <button class="scell hoverable" title="Collaboration status"><span class="dot"></span> Live · 3 here</button>
+  <span class="scell num">Ln 83, Col 47</span>
+  <span class="scell num">4,812 words</span>
+  <span class="scell spacer"></span>
+  <div class="sright">
+    <button class="scell hoverable num" title="Problems and build log"><span class="warn">✓</span> 12 pages · 1 warning</button>
+    <button class="compile" title="Compile the document and refresh the preview">Update preview <kbd>⌘↵</kbd></button>
+  </div>
+</footer>
+
+</body>
+</html>

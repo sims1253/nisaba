@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal B · Ink Desk — references dock</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — the References dock: the library at dock
+  width — authors, year, full-text state — with the export-blocking truth
+  stated per entry. Self-contained; system font stacks only.
+-->
+<style>
+:root {
+  --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
+  --irule: #41453a; --irule-s: #575c4c;
+  --paper: #fbfaf5; --paper-2: #f2f0e6;
+  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #8a8776;
+  --prule: #e3e0d0; --prule-s: #c6c3ae;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
+  --insert-lume: #62c28d; --comment-lume: #d3a83f; --delete-lume: #e2705f;
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+html, body { height: 100% }
+body {
+  font: 13px/1.45 var(--sans); color: var(--bone); background: var(--bitumen);
+  overflow: hidden; display: grid; grid-template-rows: 52px minmax(0,1fr) 30px;
+}
+:focus-visible { outline: 2px solid var(--lapis-bright); outline-offset: 1px }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer }
+kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid var(--irule-s); border-radius: 2px; padding: 2px 4px; background: var(--bitumen-2) }
+.micro { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
+.num { font-variant-numeric: tabular-nums }
+
+.appbar { display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--irule-s) }
+.brand { display: flex; align-items: center; gap: 9px }
+.brand .mark { width: 22px; height: 22px; display: grid; place-items: center; background: var(--lapis); color: #fff; font: 700 12.5px/1 var(--mono) }
+.brand .word { font: 600 16px/1 var(--display) }
+.crumbs { display: flex; gap: 2px }
+.crumbs span { font: 11.5px/1 var(--mono); color: var(--bone-muted); padding: 4px 5px }
+.crumbs i { font-style: normal; color: var(--irule-s) }
+.crumbs .cur { color: var(--bone) }
+.tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px }
+.tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
+.tbtn.open { color: var(--lapis-bright); background: #2c3140 }
+.appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px }
+.avatar { width: 23px; height: 23px; border-radius: 2px; display: grid; place-items: center; font: 700 9px/1 var(--sans); border: 1.5px solid var(--bitumen);
+          color: hsl(var(--hue) 70% 88%); background: hsl(var(--hue) 45% 34%); box-shadow: inset 0 0 0 1px hsl(var(--hue) 60% 60% / .5) }
+.presence { display: flex }
+
+.workspace { display: grid; grid-template-columns: minmax(380px, 1fr) 384px; min-height: 0; background: var(--irule) }
+.col { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden }
+
+.doc { background: var(--paper); color: var(--carbon) }
+.doc-bar { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; background: var(--bitumen); border-bottom: 1px solid var(--irule-s); color: var(--bone) }
+.doc-title { font: 600 16px/1 var(--display) }
+.doc-bar-r { margin-left: auto; display: flex; align-items: center; gap: 8px }
+.switch { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; border: 1px solid var(--irule-s); border-radius: 999px; padding: 3px 10px; color: var(--bone-muted); background: var(--bitumen-2) }
+.switch::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--irule-s) }
+.btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border: 1px solid var(--irule-s); background: var(--bitumen-2); color: var(--bone); padding: 4px 10px; border-radius: 2px }
+.badge { min-width: 16px; padding: 0 4px; border-radius: 2px; text-align: center; background: var(--comment-lume); color: #262921; font: 700 10px/16px var(--mono) }
+.editor { flex: 1; overflow: auto; background: var(--paper); padding: 18px 0 20vh; display: flex; justify-content: center }
+.ed-col { max-width: 74ch; width: 100%; padding: 0 20px }
+.l { display: flex; gap: 14px; font: 14px/1.8 var(--mono); color: var(--carbon) }
+.l .n { flex: 0 0 auto; width: 3ch; text-align: right; color: var(--prule-s); font-size: 10.5px; line-height: 2.35 }
+.hd2 { font-weight: 700 }
+.cm { color: var(--paper-muted); margin-right: 6px }
+.cite { color: var(--lapis-deep); border-bottom: 1px dotted var(--lapis-deep) }
+.compline { position: relative }
+.atlines { display: inline-flex; flex-direction: column; gap: 2px; vertical-align: top; margin-top: 4px }
+.atline { display: inline-flex; gap: 6px; align-items:baseline; font: 11.5px/1.4 var(--mono); color: var(--lapis-deep); background: var(--paper-2); border: 1px solid var(--prule-s); border-radius: 2px; padding: 2px 7px; width: max-content }
+.atline .yr { color: var(--paper-muted) }
+
+/* --- references dock --- */
+.dock { background: var(--bitumen); border-left: 1px solid var(--irule-s) }
+.dock-bar { display: flex; align-items: center; height: 34px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--irule) }
+.ibtn { width: 20px; height: 20px; display: grid; place-items: center; color: var(--bone-faint) }
+.dock-body { flex: 1; overflow: auto; padding: 12px 14px 18px }
+.filter { display: flex; gap: 6px }
+.filter input {
+  flex: 1; border: 1px solid var(--irule-s); border-radius: 2px; background: var(--bitumen-2);
+  color: var(--bone); padding: 6px 9px; font: 12.5px var(--sans);
+}
+.filter input::placeholder { color: var(--bone-faint) }
+.btn-primary { background: var(--lapis); border-color: var(--lapis); color: #fff; font-weight: 600 }
+.btn-primary:hover { background: #3a53c4; border-color: #3a53c4 }
+.tally { font: 10px var(--mono); color: var(--bone-faint); margin: 10px 2px 4px }
+
+.ref { padding: 10px 2px; border-bottom: 1px solid var(--irule) }
+.ref .title { font: 500 12.5px/1.45 var(--display); color: var(--bone) }
+.ref .meta { font: 10px/1.6 var(--mono); color: var(--bone-faint); margin-top: 3px }
+.ref .meta b { color: var(--bone-muted); font-weight: 600 }
+.state { display: inline-flex; align-items: center; gap: 5px; font: 600 9px var(--mono); letter-spacing: .04em; margin-right: 8px }
+.state::before { content: ""; width: 6px; height: 8px; clip-path: polygon(0 0, 100% 50%, 0 100%) }
+.ok { color: var(--insert-lume) } .ok::before { background: var(--insert-lume) }
+.warn { color: var(--comment-lume) } .warn::before { background: var(--comment-lume) }
+.ref .row { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap }
+.ref .row .btn { font-size: 10.5px; padding: 3px 8px }
+.ref .used { font: 9.5px var(--mono); color: var(--bone-faint); margin-top: 4px }
+.dock-note { font-size: 11.5px; color: var(--bone-muted); line-height: 1.6; margin: 12px 2px 0 }
+
+.statusbar { display: flex; align-items: stretch; background: var(--bitumen); border-top: 1px solid var(--irule-s); font: 11px var(--mono); color: var(--bone-muted) }
+.scell { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border-right: 1px solid var(--irule) }
+.dot { width: 8px; height: 10px; background: var(--insert-lume); clip-path: polygon(0 0, 100% 50%, 0 100%) }
+.spacer { flex: 1; border: 0 }
+.sright { display: flex; margin-left: auto }
+.sright .scell { border-right: 0; border-left: 1px solid var(--irule) }
+.warnword { color: var(--comment-lume); font-weight: 700 }
+.compile { display: inline-flex; align-items: center; gap: 9px; padding: 0 16px; background: var(--lapis); color: #fff; font: 600 11.5px var(--sans) }
+.compile kbd { border-color: #ffffff66; background: transparent; color: #ffffffcc }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <button class="brand"><span class="mark">N</span><span class="word">Nisaba</span></button>
+  <nav class="crumbs">
+    <span>Projects</span><i>›</i><span>Field lab</span><i>›</i><span class="cur">main.typ</span><i>›</i><span>§Results</span>
+  </nav>
+  <div style="display:flex; gap:2px; margin-left:20px">
+    <button class="tbtn open">References</button><button class="tbtn">History</button><button class="tbtn">Share</button><button class="tbtn">Export</button>
+  </div>
+  <div class="appbar-right">
+    <div class="presence">
+      <span class="avatar" style="--hue:285">SP</span>
+    </div>
+    <span style="font-size:11.5px; color:var(--bone-muted)">Saved 12:04</span>
+    <button class="tbtn">Settings</button>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <section class="col doc" aria-label="Document">
+    <div class="doc-bar">
+      <strong class="doc-title">main.typ</strong>
+      <div class="doc-bar-r">
+        <button class="switch">Track changes: off</button>
+        <button class="btn">Review <span class="badge num">3</span></button>
+      </div>
+    </div>
+    <div class="editor">
+      <div class="ed-col">
+        <div class="l hd2"><span class="n">78</span><code><span class="cm">==</span> Results</code></div>
+        <div class="l"><span class="n">79</span><code></code></div>
+        <div class="l compline"><span class="n">80</span><span>Honey badgers attended 74% of recorded rave events (n = 57),<br>
+as first reported in <span class="cite">@fae-2023</span> and quantified at scale<br>
+by <span class="cite">@twinkleburst-2024</span>.
+<span class="atlines" aria-label="Inline citation completer">
+  <span class="atline">@fae<span class="yr">· 2023 · Resonance effects…</span></span>
+  <span class="atline">@twin<span class="yr">· 2024 · Field methods…</span></span>
+</span></span></div>
+        <div class="l"><span class="n">84</span><code></code></div>
+        <div class="l"><span class="n">85</span><code>Vocalisations in the 40–60 Hz range were phase-locked to</code></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="col dock" aria-label="References">
+    <div class="dock-bar">
+      <h2 class="micro" style="color:var(--bone-muted)">References</h2>
+      <button class="ibtn" style="margin-left:auto" title="Close (Esc)">×</button>
+    </div>
+    <div class="dock-body">
+      <div class="filter">
+        <input type="search" placeholder="Filter by author, year, or title…" aria-label="Filter references">
+        <button class="btn btn-primary">Add</button>
+      </div>
+      <p class="tally num">12 entries · 9 with a full text · 3 block export</p>
+
+      <div class="ref">
+        <div class="title">Field methods for glitter-spectroscopy in subterranean venues</div>
+        <div class="meta num"><span class="state ok">full text</span><b>twinkleburst</b> · 2024 · cited 4×</div>
+        <div class="row"><button class="btn">Open PDF</button><button class="btn">Cite here</button><button class="btn">Edit</button></div>
+      </div>
+
+      <div class="ref">
+        <div class="title">Resonance effects in enchanted crystalline media</div>
+        <div class="meta num"><span class="state ok">full text</span><b>coblynau, fae</b> · 2023 · cited 2×</div>
+        <div class="row"><button class="btn">Open PDF</button><button class="btn">Cite here</button><button class="btn">Edit</button></div>
+      </div>
+
+      <div class="ref">
+        <div class="title">A survey of mustelid attendance at unofficial gatherings</div>
+        <div class="meta num"><span class="state warn">no PDF</span><b>clawson</b> · 2021 · cited 1×</div>
+        <div class="row"><button class="btn">Attach PDF</button><button class="btn">Cite here</button><button class="btn">Edit</button></div>
+        <p class="used num">blocks a full-text export bundle until attached</p>
+      </div>
+
+      <p class="dock-note">Typing <b>@</b> or <b>#cite(&lt;</b> in the text searches this library inline — fuzzy over authors, year, and title.</p>
+    </div>
+  </aside>
+</div>
+
+<footer class="statusbar">
+  <button class="scell"><span class="dot"></span> Live · 2 here</button>
+  <span class="scell num">Ln 80, Col 49</span>
+  <span class="scell num">4,812 words</span>
+  <span class="scell spacer"></span>
+  <div class="sright">
+    <button class="scell num"><span class="warnword">3 refs block export</span></button>
+    <button class="compile">Update preview <kbd>⌘↵</kbd></button>
+  </div>
+</footer>
+
+</body>
+</html>

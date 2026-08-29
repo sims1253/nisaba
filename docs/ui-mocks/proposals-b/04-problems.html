@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal B · Ink Desk — build drawer: problems and press log</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — the build drawer open on a failing build:
+  Problems as an ink list with jump-to-line, Log as the press chronology.
+  Self-contained; system font stacks only.
+-->
+<style>
+:root {
+  --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
+  --irule: #41453a; --irule-s: #575c4c;
+  --paper: #fbfaf5; --paper-2: #f2f0e6;
+  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #8a8776;
+  --prule: #e3e0d0; --prule-s: #c6c3ae;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae; --lapis-wash: #eaedfb;
+  --insert: #2e7d4f;  --insert-lume: #62c28d;
+  --comment: #966d14; --comment-soft: #f6ecd1; --comment-lume: #d3a83f;
+  --delete: #a63a2e;  --delete-soft: #f7e6e1;  --delete-lume: #e2705f;
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+html, body { height: 100% }
+body {
+  font: 13px/1.45 var(--sans); color: var(--bone); background: var(--bitumen);
+  overflow: hidden; display: grid; grid-template-rows: 52px minmax(0,1fr) 208px 30px;
+}
+:focus-visible { outline: 2px solid var(--lapis-bright); outline-offset: 1px }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer }
+kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid var(--irule-s); border-radius: 2px; padding: 2px 4px; background: var(--bitumen-2) }
+.micro { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
+.num { font-variant-numeric: tabular-nums }
+
+.appbar { display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--irule-s) }
+.brand { display: flex; align-items: center; gap: 9px }
+.brand .mark { width: 22px; height: 22px; display: grid; place-items: center; background: var(--lapis); color: #fff; font: 700 12.5px/1 var(--mono) }
+.brand .word { font: 600 16px/1 var(--display) }
+.crumbs { display: flex; align-items: center; gap: 2px }
+.crumbs button, .crumbs span { font: 11.5px/1 var(--mono); color: var(--bone-muted); padding: 4px 5px }
+.crumbs i { font-style: normal; color: var(--irule-s) }
+.crumbs .cur { color: var(--bone) }
+.tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px }
+.tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
+.appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px }
+.avatar { width: 23px; height: 23px; border-radius: 2px; display: grid; place-items: center; font: 700 9px/1 var(--sans); border: 1.5px solid var(--bitumen);
+          color: hsl(var(--hue) 70% 88%); background: hsl(var(--hue) 45% 34%); box-shadow: inset 0 0 0 1px hsl(var(--hue) 60% 60% / .5) }
+.presence { display: flex }
+.save { font-size: 11.5px; color: var(--bone-muted) }
+
+.workspace { display: grid; grid-template-columns: 248px minmax(400px, 1fr) minmax(360px, 1fr); min-height: 0; background: var(--irule) }
+.col { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bitumen) }
+.nav-head { padding: 12px 8px 6px 14px }
+.trow { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; padding: 3px 10px 3px 6px; color: var(--bone-muted); font: 12px/1.7 var(--sans); border-left: 2px solid transparent }
+.trow .tw { width: 13px; text-align: center; color: var(--bone-faint); font-size: 9px }
+.trow.active { color: var(--lapis-bright); border-left-color: var(--lapis); font-weight: 600; background: #2c3140 }
+.trow .tag { margin-left: auto; font: 600 8.5px/1 var(--mono); letter-spacing: .1em; color: var(--lapis-bright); border: 1px solid var(--lapis); padding: 2px 4px }
+.orow { width: 100%; display: flex; align-items: baseline; gap: 8px; text-align: left; padding: 3px 10px 3px 12px; color: var(--bone-muted); font-size: 12px; border-left: 2px solid transparent }
+.orow[data-lvl="1"] { font-weight: 600; color: var(--bone) }
+.orow.active { color: var(--lapis-bright); border-left-color: var(--lapis); background: #2c3140 }
+.orow .ln { margin-left: auto; font: 9.5px var(--mono); color: var(--bone-faint) }
+.nav-sep { border-top: 1px solid var(--irule) }
+
+.doc { background: var(--paper); color: var(--carbon) }
+.doc-bar { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; background: var(--bitumen); border-bottom: 1px solid var(--irule-s); color: var(--bone) }
+.doc-title { font: 600 16px/1 var(--display) }
+.doc-path { font: 10px var(--mono); color: var(--bone-faint) }
+.doc-bar-r { margin-left: auto; display: flex; align-items: center; gap: 8px }
+.switch { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; border: 1px solid var(--irule-s); border-radius: 999px; padding: 3px 10px; color: var(--bone-muted); background: var(--bitumen-2) }
+.switch::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--irule-s) }
+.btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border: 1px solid var(--irule-s); background: var(--bitumen-2); color: var(--bone); padding: 4px 10px; border-radius: 2px }
+.badge { min-width: 16px; padding: 0 4px; border-radius: 2px; text-align: center; background: var(--comment-lume); color: #262921; font: 700 10px/16px var(--mono) }
+.editor { flex: 1; overflow: auto; background: var(--paper); padding: 18px 0 24vh; display: flex; justify-content: center }
+.ed-col { max-width: 74ch; width: 100%; padding: 0 20px }
+.l { display: flex; gap: 14px; font: 14px/1.8 var(--mono); color: var(--carbon) }
+.l .n { flex: 0 0 auto; width: 3ch; text-align: right; color: var(--prule-s); font-size: 10.5px; line-height: 2.35 }
+.hd2 { font-weight: 700 }
+.cm { color: var(--paper-muted); margin-right: 6px }
+.err { background: var(--delete-soft); border-bottom: 2px wavy var(--delete) }
+.cur-line { outline: 1px solid var(--delete); outline-offset: -1px }
+
+.prev { background: #3a3e33 }
+.prev-bar { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px 0 10px; background: var(--bitumen); border-bottom: 1px solid var(--irule) }
+.vswitch { display: flex; border: 1px solid var(--irule-s); border-radius: 2px; overflow: hidden }
+.vswitch button { font: 10.5px var(--sans); color: var(--bone-muted); padding: 4px 9px; border-right: 1px solid var(--irule-s) }
+.vswitch button[aria-pressed="true"] { background: var(--lapis); color: #fff; font-weight: 600 }
+.blabel { font: 10px var(--mono); color: var(--bone-faint) }
+.pgpos { margin-left: auto; font: 10px var(--mono); color: var(--bone-faint) }
+.pdf { flex: 1; display: grid; place-content: center; gap: 10px; justify-items: center; color: var(--bone-faint); font-size: 12px }
+.pdf .stamp { font: italic 15px var(--display); color: var(--bone-muted) }
+
+/* --- the drawer --- */
+.drawer { display: flex; flex-direction: column; min-height: 0; background: var(--bitumen); border-top: 1px solid var(--irule-s) }
+.dtabs { display: flex; align-items: center; border-bottom: 1px solid var(--irule) }
+.dtab {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: 600 10px var(--mono); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--bone-muted); padding: 9px 14px; border-right: 1px solid var(--irule);
+}
+.dtab:hover { color: var(--bone) }
+/* the selected tab is a light slip out of the ink */
+.dtab[aria-selected="true"] { background: var(--paper); color: var(--carbon) }
+.dtab .n { display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 2px; background: var(--bitumen-3); color: var(--bone); font-size: 9px }
+.dtab .n.err { background: var(--delete-lume); color: #262921 }
+.dtab[aria-selected="true"] .n { background: var(--delete); color: #fff }
+.dtabs .ibtn { margin-left: auto; margin-right: 6px; width: 20px; height: 20px; display: grid; place-items: center; color: var(--bone-faint) }
+.dbody { flex: 1; min-height: 0; overflow: auto; }
+.problem {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start;
+  width: 100%; text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--irule);
+  color: var(--bone); font: 12px/1.5 var(--sans); cursor: pointer;
+}
+.problem:hover { background: var(--bitumen-2) }
+.sev { font: 700 8.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 4px 6px; border-radius: 2px; margin-top: 1px }
+.sev-e { background: #3f241f; color: var(--delete-lume) }
+.sev-w { background: #3a3018; color: var(--comment-lume) }
+.problem .msg b { color: #f0b9ad; font-family: var(--mono); font-weight: 500 }
+.problem .loc { font: 10px var(--mono); color: var(--bone-faint); margin-top: 3px; display: block }
+.problem .go { font: 10px var(--mono); color: var(--lapis-bright); white-space: nowrap; margin-top: 2px }
+
+/* colophon with an error */
+.statusbar { display: flex; align-items: stretch; background: var(--bitumen); border-top: 1px solid var(--irule-s); font: 11px var(--mono); color: var(--bone-muted) }
+.scell { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border-right: 1px solid var(--irule) }
+.dot { width: 8px; height: 10px; background: var(--insert-lume); clip-path: polygon(0 0, 100% 50%, 0 100%) }
+.spacer { flex: 1; border: 0 }
+.sright { display: flex; margin-left: auto }
+.sright .scell { border-right: 0; border-left: 1px solid var(--irule) }
+.errword { color: var(--delete-lume); font-weight: 700 }
+.compile { display: inline-flex; align-items: center; gap: 9px; padding: 0 16px; background: var(--lapis); color: #fff; font: 600 11.5px var(--sans) }
+.compile kbd { border-color: #ffffff66; background: transparent; color: #ffffffcc }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <button class="brand"><span class="mark">N</span><span class="word">Nisaba</span></button>
+  <nav class="crumbs">
+    <span>Projects</span><i>›</i><button>Field lab</button><i>›</i><span class="cur">main.typ</span><i>›</i><button>§Discussion</button>
+  </nav>
+  <div style="display:flex; gap:2px; margin-left:20px">
+    <button class="tbtn">References</button><button class="tbtn">History</button><button class="tbtn">Share</button><button class="tbtn">Export</button>
+  </div>
+  <div class="appbar-right">
+    <div class="presence">
+      <span class="avatar" style="--hue:285">SP</span>
+      <span class="avatar" style="--hue:24">CL</span>
+    </div>
+    <span class="save">Saved 12:09</span>
+    <button class="tbtn">Settings</button>
+  </div>
+</header>
+
+<div class="workspace">
+  <aside class="col">
+    <div class="nav-head micro"><span>Files</span><span style="color:var(--irule-s)">7</span></div>
+    <div style="padding-bottom:8px">
+      <button class="trow folder"><span class="tw">▾</span><span>chapters/</span></button>
+      <button class="trow active"><span class="tw"></span><span>main.typ</span><span class="tag">MAIN</span></button>
+    </div>
+    <div class="nav-sep"></div>
+    <div class="nav-head micro"><span>Outline</span></div>
+    <div>
+      <button class="orow"><span style="font-weight:600; color:var(--bone)">Abstract</span><span class="ln">4</span></button>
+      <button class="orow"><span style="font-weight:600; color:var(--bone)">Discussion</span><span class="ln">104</span></button>
+      <button class="orow active"><span style="font-weight:600">Limitations</span><span class="ln">118</span></button>
+    </div>
+  </aside>
+
+  <section class="col doc">
+    <div class="doc-bar">
+      <strong class="doc-title">main.typ</strong>
+      <code class="doc-path">/main.typ</code>
+      <div class="doc-bar-r">
+        <span style="font:10px var(--mono); color:var(--bone-faint)">v129</span>
+        <button class="switch">Track changes: off</button>
+        <button class="btn">Review <span class="badge num">3</span></button>
+      </div>
+    </div>
+    <div class="editor">
+      <div class="ed-col">
+        <div class="l hd2"><span class="n">117</span><code><span class="cm">==</span> Limitations</code></div>
+        <div class="l"><span class="n">118</span><code></code></div>
+        <div class="l"><span class="n">119</span><code>Readings from the enchanted monitoring crystals</code></div>
+        <div class="l"><span class="n">120</span><code>are only comparable when calibrated against the</code></div>
+        <div class="l"><span class="n">121</span><code>same reference <span class="err cur-line">receieved</span> from the Cwm Derwen</code></div>
+        <div class="l"><span class="n">122</span><code>laboratory (Table 2). Without this anchor, cross-site</code></div>
+        <div class="l"><span class="n">123</span><code>comparisons overstate agreement.</code></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="col prev">
+    <div class="prev-bar">
+      <div class="vswitch">
+        <button aria-pressed="true">Final</button><button>Original</button><button>All markup</button><button>Public copy</button>
+      </div>
+      <span class="blabel num">stale — build #42 failed</span>
+      <span class="pgpos num">p 1 / 12</span>
+    </div>
+    <div class="pdf">
+      <span class="stamp">the page has not caught up</span>
+      <span class="num">last good build #41 · from c128 · 12:04</span>
+    </div>
+  </section>
+</div>
+
+<!-- ============ build drawer ============ -->
+<section class="drawer" aria-label="Problems and build log">
+  <div class="dtabs" role="tablist">
+    <button class="dtab" role="tab" aria-selected="true">Problems <span class="n err num">1</span></button>
+    <button class="dtab" role="tab" aria-selected="false">Log</button>
+    <button class="ibtn" title="Close the problems panel" aria-label="Close the problems panel">×</button>
+  </div>
+  <div class="dbody" role="tabpanel">
+    <button class="problem">
+      <span class="sev sev-e">error</span>
+      <span class="msg">unknown variable: <b>receieved</b>
+        <span class="loc num">main.typ · line 121, column 44</span>
+      </span>
+      <span class="go num">jump to line ↵</span>
+    </button>
+  </div>
+</section>
+
+<footer class="statusbar">
+  <button class="scell"><span class="dot"></span> Live · 3 here</button>
+  <span class="scell num">Ln 121, Col 44</span>
+  <span class="scell num">4,826 words</span>
+  <span class="scell spacer"></span>
+  <div class="sright">
+    <button class="scell num"><span class="errword">1 problem</span> · preview stale</button>
+    <button class="compile">Update preview <kbd>⌘↵</kbd></button>
+  </div>
+</footer>
+
+</body>
+</html>
