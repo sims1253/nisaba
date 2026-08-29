@@ -145,6 +145,23 @@ export function saveBindings(bindings: Keybindings): void {
   }
 }
 
+// The live bindings for this session. Owned here (not in main.ts) so any
+// module that renders a chord — the compile button's rebuilt kbd, palette
+// hints — reads what is actually bound instead of a stale copy.
+let liveBindings: Keybindings | undefined
+
+/** The bindings in effect right now (loaded on first use). */
+export function currentBindings(): Keybindings {
+  liveBindings ??= loadBindings()
+  return liveBindings
+}
+
+/** Updates the live bindings and persists them. */
+export function commitBindings(next: Keybindings): void {
+  liveBindings = next
+  saveBindings(next)
+}
+
 /**
  * Whether a binding may be taken: not browser-essential, not modifierless
  * (a bare letter/space/enter as a global binding would make that key

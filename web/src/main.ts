@@ -22,8 +22,9 @@ import { downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { filterAndSortProjects, type ProjectSort } from "./projects-list"
 import {
-  BINDING_ACTIONS, DEFAULT_BINDINGS, bindingLabel, bindingRefusal, chordFromEvent, isChord,
-  loadBindings, prettyChord, saveBindings, type BindingAction, type Keybindings,
+  BINDING_ACTIONS, DEFAULT_BINDINGS, bindingLabel, bindingRefusal, chordFromEvent, commitBindings,
+  isChord, loadBindings, prettyChord,
+  type BindingAction, type Keybindings,
 } from "./keybindings"
 import {
   DEFAULT_SETTINGS, TYPEFACE_LABELS, applySettings, clampSettings, loadDefaultFile,
@@ -3099,7 +3100,7 @@ function openSettings(): void {
         const refusal = isChord(chord) ? bindingRefusal(bindings, action, chord) : "That key combination cannot be a binding"
         if (refusal !== undefined) { status(`${prettyChord(chord)}: ${refusal}`); finish(); return }
         bindings = { ...bindings, [action]: chord }
-        saveBindings(bindings)
+        commitBindings(bindings)
         refreshChordDisplays()
         status(`${bindingLabel(action)} is now ${prettyChord(chord)}`)
         finish()
@@ -3110,7 +3111,7 @@ function openSettings(): void {
   }
   el("#keybinds-reset")?.addEventListener("click", () => {
     bindings = { ...DEFAULT_BINDINGS }
-    saveBindings(bindings)
+    commitBindings(bindings)
     refreshChordDisplays()
     openSettings()
   })

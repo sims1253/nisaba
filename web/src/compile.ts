@@ -18,6 +18,7 @@ import type { EditorView } from "@codemirror/view"
 import type { LoroDoc } from "loro-crdt"
 import * as api from "./api"
 import type { CompileView, MarkInput, NisabaDocument, Project } from "./api"
+import { currentBindings, prettyChord } from "./keybindings"
 import { resolveCursor } from "./cursor"
 import { decodeBase64Pdf } from "./effects"
 import type { VirtualPdfViewer } from "./pdf-viewer"
@@ -180,10 +181,9 @@ function setCompileButtonBusy(busy: boolean): void {
   button.append(busy ? "Building…" : "Update preview")
   if (!busy) {
     const key = document.createElement("kbd")
-    // data-chord lets the chord-display refresh (main.ts) keep this in sync
-    // with the user's rebindable compile binding.
-    key.dataset.chord = "compile"
-    key.textContent = "⌘↵"
+    // Rendered from the live bindings (keybindings.ts owns them) so a
+    // rebound compile chord survives this busy→idle re-creation.
+    key.textContent = prettyChord(currentBindings().compile)
     button.append(" ", key)
   }
 }
