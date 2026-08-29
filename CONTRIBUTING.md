@@ -27,6 +27,13 @@ bun run --cwd tools test
 `just ci-local` also runs dependency-policy and advisory checks. The external PDF test suite has
 additional system prerequisites documented in [`tools/README.md`](tools/README.md).
 
+The web checks above must pass WITHOUT the optional in-browser compile WASM
+artifacts (they are never committed): `just wasm-web` builds them on demand
+into the gitignored `web/src/wasm-generated/` when you are working on that
+path, and the web client treats their absence as "compile on the server", not
+an error. Building them additionally requires `wasm-bindgen-cli 0.2.127` and
+the `wasm32-unknown-unknown` target; no other web work does.
+
 ## Change guidelines
 
 - Use Bun for every TypeScript workspace; do not add another lockfile.

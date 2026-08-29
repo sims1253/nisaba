@@ -15,7 +15,9 @@ Folders are derived from those paths, so Nisaba does not impose a content-specif
 - collaborative Typst editing with reconnect, protocol-level presence/awareness
   (roster + heartbeat), and review marks
 - flat project/document APIs plus references, sharing, history, and portable export
-- in-process Typst compilation and PDF preview
+- in-process Typst compilation and PDF preview (server-side by default; an
+  experimental in-browser wasm compile can be opted into per tab, falling back
+  to the server when its artifacts are absent — `just wasm-web` builds them)
 - PostgreSQL persistence, S3-compatible blob storage, and OIDC authentication
 - deterministic projection, reference, export, and PDF-oriented test tooling
 
@@ -25,7 +27,8 @@ Folders are derived from those paths, so Nisaba does not impose a content-specif
 - `crates/nisaba-core` — document projections, marks, review, and validation
 - `crates/nisaba-core-wasm` — wasm-bindgen projection wrapper for the web client
 - `crates/nisaba-compile-core` — pure Typst compilation core (workers, span map, outline, diagnostics)
-- `crates/nisaba-compile-wasm` — wasm-bindgen compile wrapper for the web client
+- `crates/nisaba-compile-wasm` — wasm-bindgen compile wrapper for the web client's
+  optional in-browser compile path
 - `crates/nisaba-references` — RIS, bibliography numbering, and reference validation
 - `crates/nisaba-export` — deterministic project-archive assembly
 - `services/app` — authorization, project/document/reference APIs, and export orchestration
