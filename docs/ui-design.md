@@ -137,7 +137,10 @@ Each flow states what the writer is trying to do, the decision, and what was rej
   + role chips next to Share — membership is standing information for every
   member, not something only managers should find inside the Share dock.
 * The last project + document reopen automatically (this already existed; it now lands in
-  a workspace that looks the same as when you left it).
+  a workspace that looks the same as when you left it). Reopening is **per tab**: each
+  tab returns to the project *it* had open (sessionStorage); only a brand-new tab falls
+  back to the most recently used project anywhere (localStorage) — so two tabs on two
+  projects stay on their own projects across reloads.
 * `⌘K` from anywhere opens the palette; typing a file name and pressing Enter opens it.
 
 *Rejected:* keeping the project list in the left rail. One column cannot mean two things,
