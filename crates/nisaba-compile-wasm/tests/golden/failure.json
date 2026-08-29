@@ -1,0 +1,28 @@
+{
+  "diagnostics": [
+    {
+      "end": 48,
+      "message": "unclosed delimiter",
+      "path": "/main.typ",
+      "severity": "error",
+      "start": 47
+    }
+  ],
+  "outline": [
+    {
+      "level": 1,
+      "path": "main.typ",
+      "start": 0,
+      "title": "Intro"
+    }
+  ],
+  "pdf": null,
+  "span_map": [
+    {
+      "end": 48,
+      "page": null,
+      "path": "main.typ",
+      "start": 0
+    }
+  ]
+}

@@ -5,6 +5,7 @@ members = [
   "crates/nisaba-core",
   "crates/nisaba-core-wasm",
   "crates/nisaba-compile-core",
+  "crates/nisaba-compile-wasm",
   "crates/nisaba-references",
   "crates/nisaba-export",
   "services/app",
