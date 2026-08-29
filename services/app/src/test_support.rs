@@ -63,7 +63,13 @@ impl Repository for MemoryRepository {
             .ok_or(RepoError::NotFound)
     }
     async fn list_projects(&self) -> Result<Vec<Project>, RepoError> {
-        Ok(self.data.read().await.projects.values().cloned().collect())
+        // Mirrors the SQL repository: most recently touched first (document
+        // writes bump the project timestamp), id as the deterministic
+        // tiebreaker.
+        let mut projects: Vec<Project> =
+            self.data.read().await.projects.values().cloned().collect();
+        projects.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
+        Ok(projects)
     }
     async fn create_membership(
         &self,
@@ -208,6 +214,9 @@ impl Repository for MemoryRepository {
             return Err(RepoError::Conflict("document path already exists".into()));
         }
         d.documents.insert(value.id, value.clone());
+        if let Some(project) = d.projects.get_mut(&value.project_id) {
+            project.updated_at = value.updated_at;
+        }
         if let Some(event) = audit {
             d.audit.push(event);
         }
@@ -254,6 +263,9 @@ impl Repository for MemoryRepository {
             )));
         }
         d.documents.insert(value.id, value.clone());
+        if let Some(project) = d.projects.get_mut(&value.project_id) {
+            project.updated_at = value.updated_at;
+        }
         if let Some(event) = audit {
             d.audit.push(event);
         }
@@ -265,8 +277,14 @@ impl Repository for MemoryRepository {
         audit: Option<AuditEvent>,
     ) -> Result<(), RepoError> {
         let mut d = self.data.write().await;
-        if d.documents.remove(&document_id).is_none() {
-            return Err(RepoError::NotFound);
+        let project_id = d
+            .documents
+            .get(&document_id)
+            .map(|doc| doc.project_id)
+            .ok_or(RepoError::NotFound)?;
+        d.documents.remove(&document_id);
+        if let Some(project) = d.projects.get_mut(&project_id) {
+            project.updated_at = Utc::now();
         }
         d.doc_revisions.retain(|r| r.document_id != document_id);
         if let Some(event) = audit {

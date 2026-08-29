@@ -130,6 +130,12 @@ Each flow states what the writer is trying to do, the decision, and what was rej
 
 * The projects screen lists projects as rows with name, role badge, and last-opened time —
   not cards. Rows scan faster and survive 60 projects.
+* Above the rows: a search box (name filter as you type) and a Recent/Name sort
+  toggle. Recent (default) is the API's order — most recently *touched* first,
+  where document create/update/delete counts as touching, not just renames.
+* While a project is open, the app bar shows the who-has-access roster as name
+  + role chips next to Share — membership is standing information for every
+  member, not something only managers should find inside the Share dock.
 * The last project + document reopen automatically (this already existed; it now lands in
   a workspace that looks the same as when you left it).
 * `⌘K` from anywhere opens the palette; typing a file name and pressing Enter opens it.

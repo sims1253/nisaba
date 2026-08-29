@@ -20,6 +20,7 @@ import { findConstructs, type Construct } from "./model"
 import { hybridEditorField, revealConstruct, reviewEditorField, setReviewItems, type ReferenceDisplay } from "./decorations"
 import { downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
+import { filterAndSortProjects, type ProjectSort } from "./projects-list"
 import { VirtualPdfViewer } from "./pdf-viewer"
 import * as api from "./api"
 import type { CompileView, Fulltext, MembershipRole, NisabaDocument, Project, Reference } from "./api"
@@ -30,6 +31,7 @@ import { createCursorAt } from "./cursor"
 import { SHELL_HTML } from "./shell"
 import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount, type Heading, type TreeNode } from "./outline"
 import { initialsOf, peerLocation, type PresencePeer } from "./presence"
+import { remoteCursors, setRemoteCursors, type RemoteCursor } from "./remote-cursors"
 import { createPalette, type PaletteItem } from "./palette"
 import { fuzzyScore } from "./fuzzy"
 import {
@@ -763,23 +765,50 @@ function promptInPanel(
 // Projects screen
 // ---------------------------------------------------------------------------
 
+// Projects-screen shaping state: the search query lives per session, the sort
+// mode persists (the same storage-survives-reload treatment as last-open).
+// The pure filter/sort logic lives in projects-list.ts and is unit-tested there.
+let projectSearch = ""
+let projectSort: ProjectSort = readProjectSort()
+
+function readProjectSort(): ProjectSort {
+  try { return localStorage.getItem("nisaba.projectSort") === "name" ? "name" : "recent" } catch { /* storage may be unavailable */ return "recent" }
+}
+
+function persistProjectSort(): void {
+  try { localStorage.setItem("nisaba.projectSort", projectSort) } catch { /* storage may be unavailable */ }
+}
+
+/** Syncs the segmented control's pressed state with the current sort mode. */
+function syncProjectToolState(): void {
+  el<HTMLButtonElement>("#sort-recent")?.setAttribute("aria-pressed", String(projectSort === "recent"))
+  el<HTMLButtonElement>("#sort-name")?.setAttribute("aria-pressed", String(projectSort === "name"))
+}
+
 /**
  * The projects screen: one row per project, name first, metadata right-aligned.
  *
  * Rows rather than cards — a card grid looks generous at six projects and
  * becomes a scavenger hunt at sixty, whereas a row list stays scannable and
- * shows more per screen.
+ * shows more per screen. The rows are the search-filtered, sorted view of the
+ * fetched list (recent-first by default, matching the API's order).
  */
 function renderProjects(): void {
   const list = el<HTMLElement>("#project-list")
   if (!list) return
+  const tools = el<HTMLElement>("#project-tools")
+  if (tools) tools.hidden = state.projects.length === 0
   if (state.projects.length === 0) {
     list.innerHTML = `<div class="empty-note"><p>No projects yet. A project holds the files, references, and history of one document.</p><p><button id="empty-create-project" class="btn btn-primary" type="button">Create your first project</button></p></div>`
     el("#empty-create-project")?.addEventListener("click", createProject)
     applyRoleGates()
     return
   }
-  list.innerHTML = `<div class="project-rows">${state.projects
+  const visible = filterAndSortProjects(state.projects, projectSearch, projectSort)
+  const countNote = projectSearch.trim() === ""
+    ? ""
+    : `<p class="screen-note num">${visible.length} of ${state.projects.length} projects</p>`
+  list.innerHTML = `${countNote}<div class="project-rows">${visible
     .map((project) => `<div class="project-row">
         <button class="project-open" data-project="${escapeHtml(project.id)}" type="button">
           <span class="name">${escapeHtml(project.name)}</span>
@@ -883,8 +912,7 @@ function closeOpenDocument(): void {
   state.document = undefined
   reviewerSyncReady = false
   state.review = emptyReviewState
-  presencePeers = []
-  renderPresence()
+  applyPresenceRoster([])
   editor.dispatch({ effects: setReviewItems.of([]) })
   closeReviewPopover()
   if (editor.state.doc.length > 0) {
@@ -1232,6 +1260,32 @@ function openProject(project: Project): void {
     state.role = "read-only"
     applyRoleGates()
   })
+  // The app-bar roster shows everyone with access — members were previously
+  // visible only inside the Share/Invite dock, which non-managing members
+  // (and new users) had no reason to open. Any member may read the list.
+  run(api.listMembers(project.id), (members) => {
+    if (state.project?.id !== project.id) return
+    renderPeopleStrip(members)
+  }, () => hidePeopleStrip())
+}
+
+/** Renders the who-has-access chips into the app bar (all members can see it). */
+function renderPeopleStrip(members: readonly api.Membership[]): void {
+  const host = el<HTMLElement>("#project-people")
+  if (!host) return
+  if (!state.project) { host.hidden = true; return }
+  host.innerHTML = members
+    .map((m) => {
+      const label = ROLE_LABELS[m.role] ?? m.role
+      return `<span class="person" title="${escapeHtml(m.subject)} · ${escapeHtml(label)}"><strong>${escapeHtml(m.subject)}</strong><span class="role-tag">${escapeHtml(label)}</span></span>`
+    })
+    .join("")
+  host.hidden = false
+}
+
+function hidePeopleStrip(): void {
+  const host = el<HTMLElement>("#project-people")
+  if (host) { host.hidden = true; host.innerHTML = "" }
 }
 
 function loadOutline(): void {
@@ -1590,8 +1644,7 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
         : "Project access revoked — this document is now read-only")
     },
     onPresence: (peers) => {
-      presencePeers = peers
-      renderPresence()
+      applyPresenceRoster(peers)
     }
   })
 }
@@ -1658,6 +1711,32 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
 
 let presencePeers: readonly PresencePeer[] = []
 
+/**
+ * Applies one roster frame everywhere it matters: the avatar row, the "N
+ * here" status suffix, and the remote-cursor decorations in the editor (a
+ * peer renders a caret only while they are in THIS document's room and their
+ * published path matches — a stale path from a just-switched peer is dropped
+ * rather than drawn in the wrong file).
+ */
+function applyPresenceRoster(peers: readonly PresencePeer[]): void {
+  presencePeers = peers
+  renderPresence()
+  const openPath = state.selected?.document.path
+  const cursors: RemoteCursor[] = []
+  for (const peer of peers) {
+    if (peer.line === undefined) continue
+    if (openPath !== undefined && peer.path !== undefined && peer.path !== openPath) continue
+    cursors.push({
+      peer: peer.peer,
+      name: peer.name,
+      line: peer.line,
+      column: peer.column ?? 1,
+      hue: authorHue(peer.name || String(peer.peer)),
+    })
+  }
+  editor.dispatch({ effects: setRemoteCursors.of(cursors) })
+}
+
 /** The status bar's sync cell reads "Live · 3 here" once other people are present. */
 function presenceSuffix(short: string): string {
   return presencePeers.length === 0 ? short : `${short} · ${presencePeers.length + 1} here`
@@ -1700,13 +1779,16 @@ function publishPresence(): void {
   const document_ = state.selected?.document
   if (!connection || !document_) return
   const head = editor.state.selection.main.head
-  const line = editor.state.doc.lineAt(Math.min(head, editor.state.doc.length)).number
+  const caretLine = editor.state.doc.lineAt(Math.min(head, editor.state.doc.length))
+  const line = caretLine.number
+  const column = Math.min(head, editor.state.doc.length) - caretLine.from + 1
   const trail = headingTrail(currentHeadings, head)
   connection.publishPresence({
     name: currentUserDisplayName(),
     path: document_.path,
     section: trail.at(-1)?.title,
-    line
+    line,
+    column
   })
 }
 
@@ -2124,6 +2206,10 @@ const editor = new EditorView({
     doc: "",
     extensions: [
       basicSetup,
+      // Remote peers' carets (Overleaf-style): colored caret + name flag per
+      // presence-roster entry, hue-matched to the avatar chips. The cursor set
+      // is driven by applyPresenceRoster; it is empty until a roster arrives.
+      ...remoteCursors,
       // Typst command + reference/citation completions. Placed after basicSetup
       // (which already pulls in default autocompletion) so these sources augment
       // the defaults rather than replacing them.
@@ -2821,6 +2907,7 @@ function openShare(): void {
   )
   const canManageMembers = state.role === "owner" || state.role === "author"
   const renderMembers = (members: readonly api.Membership[]) => {
+    renderPeopleStrip(members)
     const host = el<HTMLElement>("#share-members")
     if (!host) return
     host.innerHTML = members.length === 0
@@ -3215,6 +3302,10 @@ function applyRoleGates(): void {
   // the button stays hidden for them (L3).
   const shareButton = el<HTMLElement>("#share-button")
   if (shareButton) shareButton.hidden = !canManage
+  // The roster strip itself is for every member — visibility only depends on
+  // a project being open (content is rendered by the listMembers fetch).
+  const peopleStrip = el<HTMLElement>("#project-people")
+  if (peopleStrip && !state.project) peopleStrip.hidden = true
   // History is read-only and useful for all members.
   const historyButton = el<HTMLElement>("#history-button")
   if (historyButton) historyButton.hidden = !state.selected
@@ -4237,6 +4328,27 @@ el("#add-demo")?.addEventListener("click", addDemoFile)
 el("#references-button")?.addEventListener("click", () => toggleDock("references", openReferences))
 el("#history-button")?.addEventListener("click", () => toggleDock("history", openHistory))
 el("#share-button")?.addEventListener("click", () => toggleDock("share", openShare))
+
+// Projects screen: search-as-you-type and the Recent/Name sort toggle. The
+// sort choice persists; both re-render the list through the pure shaper.
+const projectSearchInput = el<HTMLInputElement>("#project-search")
+projectSearchInput?.addEventListener("input", () => {
+  projectSearch = projectSearchInput.value
+  renderProjects()
+})
+el("#sort-recent")?.addEventListener("click", () => {
+  projectSort = "recent"
+  persistProjectSort()
+  syncProjectToolState()
+  renderProjects()
+})
+el("#sort-name")?.addEventListener("click", () => {
+  projectSort = "name"
+  persistProjectSort()
+  syncProjectToolState()
+  renderProjects()
+})
+syncProjectToolState()
 el("#export-button")?.addEventListener("click", () => toggleDock("export", openExport))
 el("#review-button")?.addEventListener("click", toggleReviewSidebar)
 el("#dock-close")?.addEventListener("click", closeDock)
@@ -4478,8 +4590,7 @@ onAuthFailure(() => {
   state.selected = undefined
   state.document = undefined
   state.role = undefined
-  presencePeers = []
-  renderPresence()
+  applyPresenceRoster([])
   renderWorkspaceState()
   renderProjects()
 })

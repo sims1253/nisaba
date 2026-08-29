@@ -32,6 +32,25 @@ async fn insert_audit(tx: &mut PgTransaction<'_>, event: &AuditEvent) -> Result<
     Ok(())
 }
 
+/// Bump `projects.updated_at` inside a transaction so document activity
+/// (create/update/delete) moves the project to the top of the recently
+/// touched list. Before this, only renames updated the timestamp while the
+/// projects screen displayed it as "edited …" — misleading for every project
+/// that had been written to but never renamed.
+async fn touch_project(
+    tx: &mut PgTransaction<'_>,
+    project_id: Uuid,
+    at: chrono::DateTime<Utc>,
+) -> Result<(), RepoError> {
+    sqlx::query("UPDATE projects SET updated_at=$2 WHERE id=$1")
+        .bind(project_id)
+        .bind(at)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    Ok(())
+}
+
 fn db_error(error: sqlx::Error) -> RepoError {
     if let sqlx::Error::Database(e) = &error {
         match e.code().as_deref() {
@@ -221,13 +240,17 @@ impl Repository for PostgresRepository {
         )
     }
     async fn list_projects(&self) -> Result<Vec<Project>, RepoError> {
-        sqlx::query("SELECT id, name, created_at, updated_at FROM projects ORDER BY id")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db_error)?
-            .iter()
-            .map(row_project)
-            .collect()
+        // Most recently touched first (document create/update/delete bump
+        // projects.updated_at); id as the deterministic tiebreaker.
+        sqlx::query(
+            "SELECT id, name, created_at, updated_at FROM projects ORDER BY updated_at DESC, id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?
+        .iter()
+        .map(row_project)
+        .collect()
     }
     async fn create_membership(
         &self,
@@ -386,6 +409,7 @@ impl Repository for PostgresRepository {
     ) -> Result<Document, RepoError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
         sqlx::query("INSERT INTO documents (id,project_id,path,title,body,data,revision,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(v.id).bind(v.project_id).bind(&v.path).bind(&v.title).bind(&v.body).bind(serde_json::to_value(&v.data).map_err(json_error)?).bind(i64::try_from(v.revision).map_err(|_|RepoError::Failure("revision overflow".into()))?).bind(v.updated_at).execute(&mut *tx).await.map_err(db_error)?;
+        touch_project(&mut tx, v.project_id, v.updated_at).await?;
         if let Some(event) = &audit {
             insert_audit(&mut tx, event).await?;
         }
@@ -436,6 +460,7 @@ impl Repository for PostgresRepository {
                 None => RepoError::NotFound,
             });
         }
+        touch_project(&mut tx, v.project_id, v.updated_at).await?;
         if let Some(event) = &audit {
             insert_audit(&mut tx, event).await?;
         }
@@ -448,15 +473,23 @@ impl Repository for PostgresRepository {
         audit: Option<AuditEvent>,
     ) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
-        let n = sqlx::query("DELETE FROM documents WHERE id=$1")
+        // The project bump needs the owning project, so resolve it before the
+        // row disappears; a missing document surfaces as the same NotFound as
+        // the old rows_affected check.
+        let owner: Option<(Uuid,)> = sqlx::query_as("SELECT project_id FROM documents WHERE id=$1")
+            .bind(document_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        let Some((project_id,)) = owner else {
+            return Err(RepoError::NotFound);
+        };
+        sqlx::query("DELETE FROM documents WHERE id=$1")
             .bind(document_id)
             .execute(&mut *tx)
             .await
-            .map_err(db_error)?
-            .rows_affected();
-        if n == 0 {
-            return Err(RepoError::NotFound);
-        }
+            .map_err(db_error)?;
+        touch_project(&mut tx, project_id, Utc::now()).await?;
         if let Some(event) = &audit {
             insert_audit(&mut tx, event).await?;
         }

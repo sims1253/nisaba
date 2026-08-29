@@ -21,8 +21,15 @@ function encodeRoster(entries: readonly { peer: bigint; state: Uint8Array }[]): 
 
 describe("presence state", () => {
   it("round-trips through the compact JSON encoding", () => {
-    const state = { name: "twinkleburst", path: "chapters/intro.typ", section: "Results", line: 12 }
+    const state = { name: "twinkleburst", path: "chapters/intro.typ", section: "Results", line: 12, column: 34 }
     expect(decodePresenceState(encodePresenceState(state))).toEqual(state)
+  })
+
+  it("encodes the caret column under the c key next to the line's l key", () => {
+    const encoded = new TextDecoder().decode(
+      encodePresenceState({ name: "sparkletoes", line: 3, column: 9 }),
+    )
+    expect(encoded).toBe('{"n":"sparkletoes","l":3,"c":9}')
   })
 
   it("omits empty optional fields", () => {
