@@ -24,6 +24,7 @@ The following table is validated by CI against the Cargo workspace members
 | `nisaba-app`       | Rust        | CRUD, references, export orchestration, auth      | impl. (`/healthz`, `/health/ready`; Postgres + S3, inline JWKS) |
 | `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
 | `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection + bibliography wrapper over `nisaba-core`/`nisaba-references` for the web client (issue #20 stage 1) | impl. (pure, no I/O, no server use yet) |
+| `nisaba-compile-core` | Rust (lib)  | Pure Typst compile core (worker cache, compile pipeline, span map, outline, diagnostics) behind the compile service's HTTP plane (issue #20 stage 2a) | impl. (pure, no I/O, no async) |
 | `nisaba-auth`      | Rust (lib)  | Shared role vocabulary (`Role` spellings for tokens and the app/sync authz contract) | impl. |
 | `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
 | `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
@@ -45,12 +46,21 @@ fixtures through the boundary on both the native and wasm32 targets so the
 client-side projection cannot drift from the server's. Server paths do not use
 it (planned, stage 2 will wire the client).
 
+`nisaba-compile-core` is the pure half of `nisaba-compile`: the long-lived
+project worker (tinymist mock-VFS `World` assembly, incremental source
+updates, warm `comemo` caches), the compile pipeline, span-map/outline/
+diagnostics shaping, and request validation — a sync, std-only, I/O-free
+library. The `nisaba-compile` service is its HTTP plane (bearer auth, body
+limits, concurrency semaphore, timeouts, the RSS gauge); the same core is
+what the planned in-browser compile module wraps (issue #20, stage 2).
+
 ### Rust workspace members
 
 ```
 crates/nisaba-auth        — shared role vocabulary (Role spellings)
 crates/nisaba-core        — pure domain: Position, projection, marks
 crates/nisaba-core-wasm   — wasm-bindgen projection wrapper for the web client
+crates/nisaba-compile-core — pure Typst compilation core (workers, span map, outline)
 crates/nisaba-references  — RIS reference format
 crates/nisaba-export      — export utilities
 services/app              — CRUD, references, export orchestration, auth
