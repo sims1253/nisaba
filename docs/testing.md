@@ -14,7 +14,7 @@ These are fast (seconds), deterministic, and cover application logic:
 | Suite | Command | Scope |
 |-------|---------|-------|
 | **Rust workspace** | `cargo test --workspace` | Sync convergence/reconnect/persistence, app CRUD/permissions/share-links, core projection golden + mark semantics + proptest |
-| **Web (vitest)** | `cd web && bun run test` | API client, auth/PKCE, CRDT sync protocol, review state machine, PDF effects, model parsing, decorations, protocol encode/decode |
+| **Web (vitest)** | `cd web && bun run test` | API client, auth/PKCE, CRDT sync protocol, review state machine, PDF effects, model parsing, decorations, protocol encode/decode, in-browser compile pipeline/toggle/worker host (mocked worker; runs without the wasm artifacts) |
 | **Tools (vitest)** | `cd tools && bunx vitest run` | DOCX introspection, schema validation, RIS round-trip, fixture stability |
 | **Rust doctests** | `cargo test --workspace --doc` | API contract examples in rustdoc |
 

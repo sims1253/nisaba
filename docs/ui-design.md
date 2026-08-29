@@ -228,8 +228,11 @@ build state it produces.
 * Errors and warnings live in the **build drawer**: a bottom strip with `Problems N` and
   `Log` tabs. It opens itself when a build fails and can be pinned open. Each problem shows
   severity, message, and `line 12`, and clicking it selects that span in the text.
-* The `Log` tab is the build history — time, status, duration, page count, build id. This is
-  the expert surface, and being a *log* it is chronological, which is what a log is for.
+* The `Log` tab is the build history — time, status, duration, page count, build id, and
+  which engine served (`server` or `in-browser`; the in-browser wasm compile is an
+  experimental opt-in, and a tab that opted in but cannot use it logs one line saying why
+  it built on the server instead). This is the expert surface, and being a *log* it is
+  chronological, which is what a log is for.
 * When the drawer is closed, the status bar still states the truth: `✓ 12 pages · 1 warning`
   or `2 problems`, clickable to open the drawer.
 

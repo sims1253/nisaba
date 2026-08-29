@@ -23,9 +23,9 @@ The following table is validated by CI against the Cargo workspace members
 | `nisaba-sync`      | Rust        | Loro CRDT authority, relay, presence, op-log      | impl. (`/healthz`, `/health/ready`) |
 | `nisaba-app`       | Rust        | CRUD, references, export orchestration, auth      | impl. (`/healthz`, `/health/ready`; Postgres + S3, inline JWKS) |
 | `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
-| `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection + bibliography wrapper over `nisaba-core`/`nisaba-references` for the web client (issue #20 stage 1) | impl. (pure, no I/O, no server use yet) |
+| `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection + bibliography wrapper over `nisaba-core`/`nisaba-references` for the web client (issue #20 stage 1) | impl. (pure; used by the web client's optional in-browser compile path) |
 | `nisaba-compile-core` | Rust (lib)  | Pure Typst compile core (worker cache, compile pipeline, span map, outline, diagnostics) behind the compile service's HTTP plane (issue #20 stage 2a) | impl. (pure, no I/O, no async) |
-| `nisaba-compile-wasm` | Rust (lib, wasm-bindgen) | Compile wrapper over `nisaba-compile-core` for the web client; golden-response parity incl. PDF bytes on native and wasm32 (issue #20 stage 2b) | impl. (pure, no I/O, no server use yet) |
+| `nisaba-compile-wasm` | Rust (lib, wasm-bindgen) | Compile wrapper over `nisaba-compile-core` for the web client; golden-response parity incl. PDF bytes on native and wasm32 (issue #20 stage 2b) | impl. (used by the web client's optional in-browser compile path) |
 | `nisaba-auth`      | Rust (lib)  | Shared role vocabulary (`Role` spellings for tokens and the app/sync authz contract) | impl. |
 | `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
 | `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
@@ -41,11 +41,11 @@ other services are Rust for crate sharing, but the boundary is a process
 boundary regardless.
 
 `nisaba-core-wasm` re-exports the *same* projection the app applies
-server-side (`nisaba-core`) behind a wasm-bindgen boundary for the planned
+server-side (`nisaba-core`) behind a wasm-bindgen boundary for the
 in-browser compile path (issue #20); a parity suite feeds the golden projection
 fixtures through the boundary on both the native and wasm32 targets so the
-client-side projection cannot drift from the server's. Server paths do not use
-it (planned, stage 2 will wire the client).
+client-side projection cannot drift from the server's. The web client's
+optional in-browser compile path uses it (§4.1); the server paths never do.
 
 `nisaba-compile-core` is the pure half of `nisaba-compile`: the long-lived
 project worker (tinymist mock-VFS `World` assembly, incremental source
@@ -63,8 +63,9 @@ the service embeds them. A golden-response parity suite (PDF bytes included,
 made comparable by the core's fixed PDF timestamp) runs natively and on
 wasm32, so the client-side compile cannot drift from the server's. The
 service's HTTP-only concerns (auth, body limits, semaphore, timeouts, the
-RSS gauge) have no analogue here and are gone. The web client wiring is
-stage 2c; server paths do not use this crate.
+RSS gauge) have no analogue here and are gone. The web client loads it
+lazily behind the optional in-browser compile toggle (§4.1); server paths
+never use this crate.
 
 ### Rust workspace members
 
@@ -137,6 +138,9 @@ policy where egress restriction is required.
 4. **Compile (compile).** `app` sends the **projection** of the document to `compile` as plain Typst sources. `compile` knows nothing
    about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, and span
    map. Warm state is keyed by `project_id`.
+   A tab that opts into the experimental in-browser compile (§4.1) runs the same
+   projection + compile pipeline client-side, in a Web Worker, and skips the
+   HTTP round trip; the server path remains the default and the fallback.
 5. **Store reference files (seaweedfs).** Uploaded full-text PDFs land in
    `nisaba-blobs`. Object keys are opaque ids — **never citation numbers**. Compile/export artifacts are still returned directly;
    content-addressed artifact storage is future work.
@@ -175,6 +179,46 @@ Content-Type: application/json
   marks alongside these fields, applies the `view` projection server-side, and
   sends only the projected sources here.
 - Warm `comemo` caches persist across calls for the same `project_id`.
+
+#### 4.1.1 The optional in-browser compile path (experimental)
+
+The web client can serve interactive compiles itself, from the same crates the
+server uses, instead of calling `POST /api/compile` (`web/src/wasm-compile/`,
+issue #20 stage 2c):
+
+- **Engine.** One Web Worker per tab loads `nisaba-compile-wasm` (compiler,
+  `--target web` artifacts of the stage 2b crate) and `nisaba-core-wasm`
+  (projection, stage 1) on first use — nothing is fetched for tabs on the
+  default path. The worker applies the app's `api_compile` pipeline
+  client-side (project for the view, markdown-heading conversion,
+  bibliography and redline injection — the app's private string helpers are
+  ported 1:1 behind the same test cases) and compiles through the boundary's
+  per-project worker pool, so warm `comemo` caches live exactly as long as
+  the tab. Responses are decoded through the same schema as the server path;
+  the build log names which engine served each manual build.
+- **Toggle.** The default engine is the **server** (flip `DEFAULT_COMPILE_PATH`
+  in `web/src/wasm-compile/toggle.ts` after the in-browser path has soaked in
+  real use). A tab opts in with
+  `localStorage.setItem("nisaba.compilePath", "wasm")`; any other value, a
+  locked-down storage, a browser without Worker support, a boot failure, or a
+  crashed worker falls back to the server path — logged once per session in
+  the build drawer when the toggle had asked for wasm. Opting in also
+  prefetches the artifacts on idle, so the first compile does not pay the
+  download.
+- **Artifacts are never committed.** `just wasm-web` builds them on demand
+  into the gitignored `web/src/wasm-generated/` (wasm-bindgen-cli 0.2.127 +
+  the `wasm32-unknown-unknown` target — not prerequisites for any other web
+  work). Without them, everything (install, lint, test, build, run) works
+  identically and every compile uses the server; the loader's presence probe
+  is what makes absence a plain runtime fact rather than a build error. The
+  compile module alone is tens of megabytes (mostly the embedded
+  `typst-assets` fonts; ~18 MB gzipped), which is why it is lazy, opt-in,
+  and cached by the browser.
+- **What it is not.** The server route stays authoritative for exports,
+  headless/API clients, and e2e tests, and the compile service remains a
+  required deployment component while the default is the server path.
+  Client compiles are not audited (no app round trip happens); the export
+  audit trail is unchanged.
 
 ### 4.2 `sync` — WebSocket (+ an internal state read)
 
@@ -345,7 +389,10 @@ controls for reviewers.
 2. **Storing citation numbers** — corrupts export filenames on renumber.
 3. **Physically deleting tracked-deletion text** — makes reject impossible.
 4. **CRDT convergence ≠ syntactic validity** — reparse every keystroke.
-5. **Compile-pool memory** — warm caches for large projects are big.
+5. **Compile-pool memory** — warm caches for large projects are big. The
+   optional in-browser path relocates this cost to the writer's own tab (the
+   issue's intent), bounded by a small per-tab pool; the server pool is
+   unchanged.
 6. **Leaking product-specific hierarchy into storage** — keep the file model general.
 
 ---

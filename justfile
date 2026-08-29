@@ -178,6 +178,36 @@ web-test:
 web-lint:
     bun install --frozen-lockfile && cd web && bun run lint
 
+# Build the OPTIONAL in-browser compile WASM artifacts (issue #20 stage 2c)
+# into web/src/wasm-generated/ (gitignored — never committed; the compile
+# module is tens of megabytes, mostly embedded typst fonts). Without these
+# files the web client builds and runs exactly as shipped: compiles go to the
+# server, and an opted-in tab (localStorage nisaba.compilePath=wasm) logs one
+# line saying why it fell back. With them, an opted-in tab compiles in a Web
+# Worker instead (docs/architecture.md §4.1).
+#
+# Prerequisites (NOT needed for any other web work): the wasm32 target
+# (`rustup target add wasm32-unknown-unknown`) and wasm-bindgen-cli matching
+# the crates' pinned wasm-bindgen 0.2.127
+# (`cargo install wasm-bindgen-cli --version 0.2.127`) — a mismatched CLI
+# fails against the generated glue, so the version is checked here.
+wasm-web:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v wasm-bindgen >/dev/null || { echo "wasm-bindgen-cli is required: cargo install wasm-bindgen-cli --version 0.2.127"; exit 1; }
+    if [ "$(wasm-bindgen --version | awk '{print $2}')" != "0.2.127" ]; then
+        echo "wasm-bindgen-cli 0.2.127 is required (matches the crates' wasm-bindgen); found: $(wasm-bindgen --version)"
+        exit 1
+    fi
+    rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || { echo "missing target: rustup target add wasm32-unknown-unknown"; exit 1; }
+    cargo build -p nisaba-core-wasm -p nisaba-compile-wasm --release --locked --target wasm32-unknown-unknown
+    rm -rf web/src/wasm-generated
+    mkdir -p web/src/wasm-generated
+    wasm-bindgen --target web --out-dir web/src/wasm-generated "$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/nisaba_core_wasm.wasm"
+    wasm-bindgen --target web --out-dir web/src/wasm-generated "$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/nisaba_compile_wasm.wasm"
+    echo "Built in-browser compile artifacts (gitignored):"
+    ls -lh web/src/wasm-generated
+
 # ---------- Supply chain ---------------------------------------------------
 
 # Run cargo-deny (licenses, advisories, bans, sources). The tool reads the

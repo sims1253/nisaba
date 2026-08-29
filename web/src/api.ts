@@ -92,7 +92,11 @@ const Fulltext = Schema.Struct({
 })
 export type Fulltext = typeof Fulltext.Type
 
-const CompileResponse = Schema.Struct({
+// Exported as a value (not just the type): the in-browser compile path
+// (wasm-compile/) decodes its responses through the same schema, so a drift
+// between the wasm boundary's output and this contract surfaces as a typed
+// error on whichever path produced it, not as `[object Object]` downstream.
+export const CompileResponse = Schema.Struct({
   pdf_base64: Schema.NullOr(Schema.String),
   span_map: Schema.Array(Schema.Unknown),
   diagnostics: Schema.Array(Schema.Unknown),
