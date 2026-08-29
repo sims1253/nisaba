@@ -3533,6 +3533,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nisaba-compile-core"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde",
+ "tinymist-project",
+ "tinymist-vfs",
+ "tinymist-world",
+ "tracing",
+ "typst",
+ "typst-layout",
+ "typst-pdf",
+ "typst-svg",
+]
+
+[[package]]
 name = "nisaba-core"
 version = "0.1.0"
 dependencies = [
