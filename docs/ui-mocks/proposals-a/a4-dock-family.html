@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal A — The dock family · Nisaba</title>
+<!--
+  PROPOSAL A · one design language for every dock (proposed state).
+
+  Two windows, one file — the same dock chrome on two different workflows:
+    K1  the six-tool switcher strip (no dead ends: History → Share is one click)
+    K2  each dock opens with a one-line summary of its contents
+    K4  Settings states its three scopes: Opening file · Editor typography ·
+        Keyboard (the existing dock h3 language, applied to the settings stack)
+    K5  Share members are people, not strings: avatar chips on the author hue
+  Everything functional (invite control, role descriptions in the select,
+  links with copy/revoke, chord capture, live-applied typography) is unchanged
+  from the shipped design.
+-->
+<style>
+:root{
+  --paper:#fdfcf9; --chrome:#f2f3f0; --chrome-raised:#f8f8f6; --shell:#e9eae6; --overlay:#ffffff;
+  --ink:#1b1e1c; --ink-soft:#3d443e; --muted:#6a706a; --faint:#8d938c;
+  --rule:#e2e3dd; --rule-strong:#c8cac2;
+  --accent:#23508a; --accent-strong:#1b3f6e; --accent-soft:#e8eef6; --accent-line:#b9cbe1;
+  --insert:#2e7d4f; --comment:#9a6f18; --comment-soft:#f7edd4;
+  --sans:"DM Sans",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+  --mono:"DM Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --serif:"Source Serif 4",Charter,Georgia,"Times New Roman",serif;
+  --appbar-h:46px; --radius:3px;
+}
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.45 var(--sans);color:var(--ink);background:var(--shell);padding:34px 0 60px}
+button{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums}
+.page{width:1440px;margin:0 auto 44px}
+.caption{font:600 9.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 10px 2px}
+.caption span{color:var(--faint);font-weight:400;letter-spacing:.04em;text-transform:none}
+
+.window{height:560px;border:1px solid var(--rule-strong);border-radius:4px;overflow:hidden;display:grid;grid-template-rows:var(--appbar-h) minmax(0,1fr);box-shadow:0 10px 30px #1b1e1c1e;background:var(--rule)}
+
+/* app bar, compressed as in a3 */
+.appbar{display:flex;align-items:center;gap:14px;padding:0 12px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule-strong)}
+.brand{display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:4px 6px}
+.brand .mark{width:21px;height:21px;display:grid;place-items:center;background:var(--accent);color:#fff;border-radius:2px;font:700 12px/1 var(--mono)}
+.brand .wordmark{font:600 14.5px/1 var(--serif);font-variant:small-caps;letter-spacing:.09em}
+.crumbs{display:flex;align-items:center;gap:2px}
+.crumbs span{font:11.5px/1 var(--mono);color:var(--muted);padding:4px 5px}
+.crumbs .sep{color:var(--rule-strong)}
+.crumbs .current{color:var(--ink);font-weight:500}
+.appbar-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.presence{display:flex;align-items:center}
+.avatar{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:600 9.5px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%);border:1.5px solid var(--chrome);margin-left:-7px}
+.presence .avatar:first-child{margin-left:0}
+.avatar.you{box-shadow:0 0 0 1.5px var(--chrome),0 0 0 3px var(--accent-line)}
+.save-status{font-size:11.5px;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--ink-soft);padding:5px 10px;border-radius:var(--radius);cursor:pointer;white-space:nowrap}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--muted)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-small{font-size:11px;padding:3px 8px}
+
+.workspace{display:grid;grid-template-columns:minmax(0,1fr) 4px 360px;min-height:0;background:var(--rule)}
+.gutter{background:var(--rule-strong)}
+.doc-pane,.dock{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.doc-pane{background:var(--paper)}
+.pane-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule)}
+.doc-id{display:flex;align-items:baseline;gap:8px;min-width:0}
+.doc-id strong{font-size:13px;font-weight:600}
+.doc-id code{font:10px var(--mono);color:var(--faint)}
+.doc-bar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.doc-rev{font:10px var(--mono);color:var(--faint)}
+.vsep{width:1px;height:16px;background:var(--rule-strong)}
+.switch{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--muted);font-size:11.5px;padding:4px 9px;border-radius:999px}
+.switch::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--rule-strong)}
+.count-badge{min-width:16px;padding:0 4px;border-radius:8px;background:var(--comment);color:#fff;font:600 10px/16px var(--mono);text-align:center;display:inline-block;margin-left:2px}
+/* abbreviated text column: the document is context here, not the subject */
+.ed{flex:1;overflow:hidden;padding:26px 0 0;display:flex;justify-content:center;font-family:var(--mono);font-size:14px;line-height:1.75}
+.ed-inner{max-width:64ch;width:100%;padding:0 20px;color:var(--ink-soft)}
+.ed-inner .hd{font-weight:700;color:var(--ink)}
+.ed-inner .mk{color:var(--faint)}
+.ed-inner p{margin:0}
+
+/* ── the dock, one language ── */
+.dock{background:var(--chrome);border-left:1px solid var(--rule-strong)}
+.dock-tabs{flex:0 0 auto;display:flex;align-items:stretch;height:27px;border-bottom:1px solid var(--rule);background:var(--chrome);overflow-x:auto;scrollbar-width:none}
+.dock-tabs::-webkit-scrollbar{display:none}
+.dock-tab{border:0;background:transparent;color:var(--muted);font:600 9px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase;padding:0 8px;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.dock-tab:hover{color:var(--ink);background:#00000008}
+.dock-tab[aria-selected="true"]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+.dock-tab .n{background:var(--comment);color:#fff;border-radius:8px;font:600 9px/14px var(--mono);padding:0 4px;min-width:14px;text-align:center}
+.btn-icon{border:0;background:transparent;color:var(--faint);width:20px;height:20px;display:grid;place-items:center;border-radius:var(--radius);cursor:pointer;font-size:13px;line-height:1;padding:0}
+.dock-tabs .btn-icon{margin-left:auto;align-self:center;margin-right:4px}
+.dock-body{flex:1;min-height:0;overflow:auto;padding:14px 14px 18px}
+.dock-summary{font:10px/1.5 var(--mono);color:var(--muted);margin:-2px 0 12px;padding-bottom:10px;border-bottom:1px solid var(--rule)}
+.dock-body h3{font:600 9.5px/1.4 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:20px 0 8px}
+.dock-body h3:first-of-type{margin-top:0}
+.dock-note{font-size:11.5px;color:var(--muted);line-height:1.6;margin:8px 0}
+
+/* settings rows (shipped) under K4's stated sections */
+.settings-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--rule)}
+.settings-row label{flex:0 0 118px;font-size:11.5px;color:var(--muted)}
+.settings-row output{font:11px var(--mono);color:var(--muted);min-width:44px;text-align:right}
+.settings-row input[type="range"]{flex:1;accent-color:var(--accent)}
+.settings-row select,.inline-form select{border:1px solid var(--rule-strong);border-radius:var(--radius);padding:6px 7px;font:12px var(--sans);background:var(--overlay);color:var(--ink)}
+.settings-row select{flex:1}
+.segmented{display:inline-flex;border:1px solid var(--rule-strong);border-radius:var(--radius);overflow:hidden}
+.seg{font:600 10px/1 var(--sans);letter-spacing:.04em;text-transform:uppercase;padding:7px 10px;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.seg + .seg{border-left:1px solid var(--rule-strong)}
+.seg[aria-pressed="true"]{background:var(--rule);color:var(--ink)}
+.keybind-btn{font:12px var(--mono);min-width:110px;text-align:center;margin-left:auto}
+.settings-note{color:var(--muted);font-size:11px;margin:10px 0 0;line-height:1.6}
+
+/* share (shipped) with K5's people rows */
+.inline-form{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0 4px}
+.inline-form input{border:1px solid var(--rule-strong);border-radius:var(--radius);padding:6px 8px;font:12px var(--sans);background:var(--overlay);color:var(--ink);flex:1 1 150px}
+.list{display:flex;flex-direction:column;border-top:1px solid var(--rule)}
+.list-item{display:grid;gap:5px;padding:10px 2px;border-bottom:1px solid var(--rule);font-size:12px}
+.list-item .row{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.list-item strong{font-weight:600;line-height:1.4}
+.role-tag{font:600 9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--rule-strong);color:var(--muted);padding:3px 5px;border-radius:2px;flex:0 0 auto}
+.pav{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;font:600 8px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%);flex:0 0 auto}
+.btn-danger-hover{opacity:0;margin-left:auto}
+.list-item:hover .btn-danger-hover{opacity:1}
+.link-row{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--rule);padding:8px 0}
+.link-row code{flex:1;min-width:0;font:10px var(--mono);color:var(--accent-strong);background:var(--accent-soft);border-radius:2px;padding:3px 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.tag{position:fixed;right:14px;top:14px;z-index:99;font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:var(--overlay);border:1px solid var(--rule-strong);padding:6px 9px;box-shadow:0 4px 14px #1b1e1c1a}
+</style>
+</head>
+<body>
+
+<!-- ═════════ window 1 · Settings ═════════ -->
+<div class="page">
+  <p class="caption">Window 1 — Settings dock <span>· three scopes, stated (K4) · switcher header (K1) · summary (K2)</span></p>
+  <div class="window">
+    <header class="appbar">
+      <button class="brand" type="button"><span class="mark">N</span><span class="wordmark">Nisaba</span></button>
+      <nav class="crumbs"><span>Projects</span><span class="sep">›</span><span>Field lab</span><span class="sep">›</span><span class="current">main.typ</span></nav>
+      <div class="appbar-right">
+        <div class="presence">
+          <span class="avatar" style="--hue:280">SP</span>
+          <span class="avatar you" style="--hue:145">CL</span>
+        </div>
+        <span class="save-status">Saved 12:04</span>
+        <button class="btn btn-quiet" type="button">Sign out</button>
+      </div>
+    </header>
+    <div class="workspace">
+      <section class="doc-pane">
+        <div class="pane-bar">
+          <div class="doc-id"><strong>Honey Badgers at Fairy Raves</strong><code>main.typ</code></div>
+          <div class="doc-bar-right">
+            <span class="doc-rev num">v128</span><span class="vsep"></span>
+            <button class="switch" type="button">Track changes: off</button><span class="vsep"></span>
+            <button class="btn" type="button">Review<span class="count-badge num">3</span></button>
+          </div>
+        </div>
+        <div class="ed"><div class="ed-inner">
+          <p><span class="mk">==</span> <span class="hd">Results</span></p>
+          <p>Honey badgers attended 74% of recorded rave events.</p>
+          <p>Vocalizations in the 40–60 Hz range were phase-locked</p>
+          <p>to the fairy audio system (see @tbl-acoustic).</p>
+        </div></div>
+      </section>
+      <div class="gutter"></div>
+      <aside class="dock">
+        <div class="dock-tabs" role="tablist">
+          <button class="dock-tab">Review <span class="n num">3</span></button>
+          <button class="dock-tab">References</button>
+          <button class="dock-tab">History</button>
+          <button class="dock-tab">Share</button>
+          <button class="dock-tab">Export</button>
+          <button class="dock-tab" aria-selected="true">Settings</button>
+          <button class="btn-icon" title="Close (Esc)" aria-label="Close panel">×</button>
+        </div>
+        <div class="dock-body">
+          <p class="dock-summary">Local to this browser — nothing here is project data</p>
+
+          <h3>Opening file — this project</h3>
+          <div class="settings-row" style="border-top:0">
+            <label id="f">Opens</label>
+            <select aria-labelledby="f">
+              <option>Last file you had open</option>
+              <option selected>main.typ</option>
+              <option>chapters/intro.typ</option>
+              <option>chapters/methods.typ</option>
+            </select>
+          </div>
+          <p class="settings-note">Applies when this project is entered without a more recent file in this tab. It is this browser's choice, not the project's.</p>
+
+          <h3>Editor typography — applied live</h3>
+          <div class="settings-row" style="border-top:0">
+            <label>Typeface</label>
+            <div class="segmented" role="group">
+              <button class="seg" aria-pressed="true">Mono</button>
+              <button class="seg" aria-pressed="false">Serif</button>
+              <button class="seg" aria-pressed="false">Sans</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label for="fs">Font size</label>
+            <input id="fs" type="range" min="12" max="24" step="1" value="14">
+            <output>14px</output>
+          </div>
+          <div class="settings-row">
+            <label for="lh">Line spacing</label>
+            <input id="lh" type="range" min="1.2" max="2.2" step="0.05" value="1.75">
+            <output>1.75</output>
+          </div>
+          <p class="settings-note">Editor look only — your choices never affect collaborators or compiled output. <button class="btn btn-small" type="button">Reset to defaults</button></p>
+
+          <h3>Keyboard — click a chord, then press its replacement</h3>
+          <div class="settings-row" style="border-top:0">
+            <label>Command palette</label>
+            <button class="btn keybind-btn" type="button">⌘K</button>
+          </div>
+          <div class="settings-row">
+            <label>Update preview</label>
+            <button class="btn keybind-btn" type="button">⌘↵</button>
+          </div>
+          <div class="settings-row">
+            <label>Save + preview</label>
+            <button class="btn keybind-btn" type="button">⌘S</button>
+          </div>
+          <div class="settings-row">
+            <label>Focus mode</label>
+            <button class="btn keybind-btn" type="button">⌘⇧F</button>
+          </div>
+          <div class="settings-row">
+            <label>Navigator</label>
+            <button class="btn keybind-btn" type="button">⌘B</button>
+          </div>
+          <p class="settings-note">Esc cancels a capture; browser-owned chords are refused with a reason. <button class="btn btn-small" type="button">Reset chords</button></p>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════ window 2 · Share ═════════ -->
+<div class="page">
+  <p class="caption">Window 2 — Share dock <span>· members as people, not strings (K5) · same switcher, same summary</span></p>
+  <div class="window">
+    <header class="appbar">
+      <button class="brand" type="button"><span class="mark">N</span><span class="wordmark">Nisaba</span></button>
+      <nav class="crumbs"><span>Projects</span><span class="sep">›</span><span>Field lab</span><span class="sep">›</span><span class="current">main.typ</span></nav>
+      <div class="appbar-right">
+        <div class="presence">
+          <span class="avatar" style="--hue:280">SP</span>
+          <span class="avatar you" style="--hue:145">CL</span>
+        </div>
+        <span class="save-status">Saved 12:04</span>
+        <button class="btn btn-quiet" type="button">Sign out</button>
+      </div>
+    </header>
+    <div class="workspace">
+      <section class="doc-pane">
+        <div class="pane-bar">
+          <div class="doc-id"><strong>Honey Badgers at Fairy Raves</strong><code>main.typ</code></div>
+          <div class="doc-bar-right">
+            <span class="doc-rev num">v128</span><span class="vsep"></span>
+            <button class="switch" type="button">Track changes: off</button><span class="vsep"></span>
+            <button class="btn" type="button">Review<span class="count-badge num">3</span></button>
+          </div>
+        </div>
+        <div class="ed"><div class="ed-inner">
+          <p><span class="mk">==</span> <span class="hd">Results</span></p>
+          <p>Honey badgers attended 74% of recorded rave events.</p>
+          <p>Vocalizations in the 40–60 Hz range were phase-locked</p>
+          <p>to the fairy audio system (see @tbl-acoustic).</p>
+        </div></div>
+      </section>
+      <div class="gutter"></div>
+      <aside class="dock">
+        <div class="dock-tabs" role="tablist">
+          <button class="dock-tab">Review <span class="n num">3</span></button>
+          <button class="dock-tab">References</button>
+          <button class="dock-tab">History</button>
+          <button class="dock-tab" aria-selected="true">Share</button>
+          <button class="dock-tab">Export</button>
+          <button class="dock-tab">Settings</button>
+          <button class="btn-icon" title="Close (Esc)" aria-label="Close panel">×</button>
+        </div>
+        <div class="dock-body">
+          <p class="dock-summary num">4 people have access · 2 here now</p>
+
+          <p class="dock-note">Invite a collaborator by their username (e.g. <code>alice@nisaba.local</code>). They'll see this project after their next sign-in.</p>
+          <div class="inline-form">
+            <input type="text" placeholder="Username to invite" autocomplete="off">
+            <select aria-label="Role">
+              <option>Author — can edit the text</option>
+              <option selected>Reviewer — can suggest and comment</option>
+              <option>Read-only — can read and preview</option>
+            </select>
+            <button class="btn btn-primary" type="button">Invite</button>
+          </div>
+
+          <h3>Who has access</h3>
+          <div class="list">
+            <div class="list-item"><span class="row">
+              <span class="pav" style="--hue:45">TW</span><strong>twinkleburst</strong><span class="role-tag">Owner</span>
+            </span></div>
+            <div class="list-item"><span class="row">
+              <span class="pav" style="--hue:280">SP</span><strong>sparkletoes</strong><span class="role-tag">Author</span>
+              <button class="btn btn-small btn-danger-hover" type="button">Remove</button>
+            </span></div>
+            <div class="list-item"><span class="row">
+              <span class="pav" style="--hue:145">CL</span><strong>clawson</strong><span class="role-tag">Reviewer</span>
+              <button class="btn btn-small btn-danger-hover" type="button">Remove</button>
+            </span></div>
+            <div class="list-item"><span class="row">
+              <span class="pav" style="--hue:200">MM</span><strong>moonmoss</strong><span class="role-tag">Read-only</span>
+              <button class="btn btn-small btn-danger-hover" type="button">Remove</button>
+            </span></div>
+          </div>
+
+          <h3>Links</h3>
+          <p class="dock-note">Generate a link that grants access to this project at a chosen role. Anyone who opens the link while signed in gets that role.</p>
+          <div class="inline-form">
+            <select aria-label="Link role">
+              <option selected>Reviewer</option><option>Author</option><option>Read-only</option>
+            </select>
+            <button class="btn" type="button">Create link</button>
+          </div>
+          <div class="link-row">
+            <code>https://nisaba.local/?share=9f2c-41ab-7e</code>
+            <button class="btn btn-small" type="button">Copy</button>
+            <button class="btn btn-small" type="button">Revoke</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<span class="tag">PROPOSAL A · DOCK FAMILY</span>
+</body>
+</html>

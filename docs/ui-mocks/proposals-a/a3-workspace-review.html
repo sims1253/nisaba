@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal A — Workspace, review · Nisaba</title>
+<!--
+  PROPOSAL A · the workspace in review mode (proposed state).
+
+  Proposed changes shown here:
+    K1  the dock header becomes the six-tool dock switcher
+    K2  every dock opens with a one-line summary
+    K3  review rows: progressive emphasis — quiet actions everywhere,
+        the filled primary Accept only on the selected row
+    R1  the review popover gains its location line
+    B1  problems sorted errors-first (drawer open)
+  Everything else is the current design, token for token.
+-->
+<style>
+:root{
+  --paper:#fdfcf9; --chrome:#f2f3f0; --chrome-raised:#f8f8f6; --shell:#e9eae6; --overlay:#ffffff;
+  --ink:#1b1e1c; --ink-soft:#3d443e; --muted:#6a706a; --faint:#8d938c;
+  --rule:#e2e3dd; --rule-strong:#c8cac2;
+  --accent:#23508a; --accent-strong:#1b3f6e; --accent-soft:#e8eef6; --accent-line:#b9cbe1;
+  --insert:#2e7d4f; --insert-soft:#e4efe8; --comment:#9a6f18; --comment-soft:#f7edd4;
+  --delete:#a63a2e; --delete-soft:#f8e7e3;
+  --sans:"DM Sans",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+  --mono:"DM Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --serif:"Source Serif 4",Charter,Georgia,"Times New Roman",serif;
+  --appbar-h:46px; --statusbar-h:30px; --radius:3px;
+}
+*{box-sizing:border-box} html,body{height:100%}
+body{margin:0;font:13px/1.45 var(--sans);color:var(--ink);background:var(--chrome);overflow:hidden;min-width:1440px}
+button{font:inherit;color:inherit}
+kbd{font:500 9.5px/1 var(--mono);letter-spacing:.04em;border:1px solid var(--rule-strong);border-radius:2px;padding:2px 4px;color:var(--muted);background:var(--chrome-raised);white-space:nowrap}
+.num{font-variant-numeric:tabular-nums}
+
+#app{height:100vh;display:grid;grid-template-rows:var(--appbar-h) minmax(0,1fr) auto var(--statusbar-h)}
+
+/* ───────────── app bar (as a2 — summary of changes A1–A3) ───────────── */
+.appbar{display:flex;align-items:center;gap:14px;padding:0 12px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule-strong)}
+.brand{display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:4px 6px}
+.brand .mark{width:21px;height:21px;display:grid;place-items:center;background:var(--accent);color:#fff;border-radius:2px;font:700 12px/1 var(--mono)}
+.brand .wordmark{font:600 14.5px/1 var(--serif);font-variant:small-caps;letter-spacing:.09em}
+.crumbs{display:flex;align-items:center;gap:2px;min-width:0}
+.crumbs button,.crumbs span{font:11.5px/1 var(--mono);color:var(--muted);background:none;border:0;padding:4px 5px}
+.crumbs button{cursor:pointer}
+.crumbs .sep{color:var(--rule-strong);padding:0}
+.crumbs .current{color:var(--ink);font-weight:500}
+.palette-hint{margin:0 auto;display:flex;align-items:center;gap:8px;width:220px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--faint);font-size:12px;padding:5px 8px;border-radius:var(--radius);cursor:pointer}
+.palette-hint .lead{color:var(--accent);font-family:var(--mono);font-weight:700}
+.palette-hint kbd{margin-left:auto}
+.appbar-tools{display:flex;align-items:center;gap:2px}
+.appbar-tools .divider{width:1px;height:20px;background:var(--rule-strong);margin:0 8px 0 10px}
+.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--ink-soft);padding:5px 10px;border-radius:var(--radius);cursor:pointer;white-space:nowrap}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--muted)}
+.people{display:flex;align-items:center;gap:5px;margin-right:6px}
+.person{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--rule);border-radius:var(--radius);padding:2px 7px 2px 3px;font-size:11px;color:var(--ink-soft);background:var(--chrome-raised)}
+.person .pav{width:17px;height:17px;border-radius:50%;display:grid;place-items:center;font:600 8px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%)}
+.person strong{font-weight:600;max-width:9ch}
+.role-tag{font:600 9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--rule-strong);color:var(--muted);padding:3px 5px;border-radius:2px}
+.person.more{border-style:dashed;color:var(--muted)}
+.appbar-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.save-status{font-size:11.5px;color:var(--muted)}
+.presence{display:flex;align-items:center}
+.avatar{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:600 9.5px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%);border:1.5px solid var(--chrome);margin-left:-7px}
+.presence .avatar:first-child{margin-left:0}
+.avatar.you{box-shadow:0 0 0 1.5px var(--chrome),0 0 0 3px var(--accent-line)}
+
+/* ───────────── workspace grid with the dock open ───────────── */
+.workspace{display:grid;grid-template-columns:250px 4px minmax(300px,1fr) 4px 340px 4px minmax(300px,.95fr);min-height:0;background:var(--rule)}
+.gutter{background:var(--rule-strong);cursor:col-resize}
+.navigator,.doc-pane,.dock,.preview-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.navigator{background:var(--chrome);border-right:1px solid var(--rule-strong)}
+.pane-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule)}
+.btn-icon{border:0;background:transparent;color:var(--faint);width:20px;height:20px;display:grid;place-items:center;border-radius:var(--radius);cursor:pointer;font-size:13px;line-height:1;padding:0}
+
+/* navigator (unchanged from a2 apart from G3/N3) */
+.nav-section{display:flex;flex-direction:column;min-height:0}
+.nav-section-files{flex:1 1 0}
+.nav-section-outline{flex:1 1 0;border-top:1px solid var(--rule)}
+.nav-head{flex:0 0 auto;display:flex;align-items:center;gap:6px;margin:0;padding:10px 6px 6px 12px;font:600 9.5px/1.4 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.nav-head .count{color:var(--rule-strong);font-weight:400}
+.nav-head-actions{margin-left:auto;display:flex;gap:2px}
+.nav-body{overflow:auto;min-height:0;padding-bottom:8px}
+.tree-item{display:flex;align-items:stretch}
+.tree-item .indent{flex:0 0 auto;width:11px;border-right:1px dotted var(--rule-strong);margin-left:6px}
+.tree-row{width:100%;display:flex;align-items:center;gap:6px;border:0;background:none;cursor:pointer;text-align:left;padding:3px 8px 3px 0;color:var(--ink-soft);font:12px/1.6 var(--sans);border-left:2px solid transparent}
+.tree-row:hover{background:#00000008}
+.tree-row.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent-strong);font-weight:600}
+.tree-row .twist{flex:0 0 auto;width:13px;text-align:center;color:var(--faint);font-size:9px}
+.tree-row .label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-row .tag{margin-left:auto;flex:0 0 auto;font:600 8.5px/1 var(--mono);letter-spacing:.1em;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-line);padding:2px 4px;border-radius:2px}
+.tree-row.folder{color:var(--muted);font-weight:500}
+.outline-row{width:100%;display:flex;align-items:center;gap:8px;border:0;background:none;cursor:pointer;text-align:left;padding:3px 10px 3px 12px;color:var(--ink-soft);font-size:12px;border-left:2px solid transparent}
+.outline-row .guide{flex:0 0 auto;width:11px;border-right:1px dotted var(--rule-strong);margin-left:6px;align-self:stretch}
+.outline-row .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.outline-row .ln{margin-left:auto;font:9.5px var(--mono);color:var(--faint)}
+.outline-row.active{color:var(--accent-strong);border-left-color:var(--accent);font-weight:600;background:var(--accent-soft)}
+.outline-row[data-level="1"]{font-weight:600;color:var(--ink)}
+.nav-foot{flex:0 0 auto;border-top:1px solid var(--rule);padding:10px 12px 12px;font:10px/1.9 var(--mono);color:var(--faint)}
+.nav-foot .fact{display:flex;justify-content:space-between;gap:10px}
+.nav-foot b{color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* document pane */
+.doc-pane{background:var(--paper)}
+.doc-id{display:flex;align-items:baseline;gap:8px;min-width:0}
+.doc-id strong{font-size:13px;font-weight:600;white-space:nowrap}
+.doc-id code{font:10px var(--mono);color:var(--faint)}
+.doc-bar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.doc-bar-right .vsep{width:1px;height:16px;background:var(--rule-strong);margin:0 4px}
+.doc-rev{font:10px var(--mono);color:var(--faint)}
+.switch{display:inline-flex;align-items:center;gap:7px;border:1px solid #d9bd77;background:var(--comment-soft);color:#7c5a12;font-size:11.5px;padding:4px 9px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.switch::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--comment)}
+.count-badge{min-width:16px;padding:0 4px;border-radius:8px;background:var(--comment);color:#fff;font:600 10px/16px var(--mono);text-align:center;display:inline-block;margin-left:2px}
+.sticky-heading{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:5px 16px;border-bottom:1px solid var(--rule);background:#fbfaf5cc;font-size:11.5px;color:var(--muted);min-height:26px}
+.sticky-heading .leaf{color:var(--ink);font-weight:600}
+.editor-host{flex:1;min-height:0;overflow:hidden;background:var(--paper);display:flex;position:relative}
+.cm-editor{flex:1;min-width:0;height:100%}
+.cm-scroller{height:100%;overflow:auto;display:flex;justify-content:center;padding:22px 0 45vh;font-family:var(--mono);font-size:14px;line-height:1.75}
+.cm-gutters{background:transparent;border:0;color:var(--rule-strong);font-size:10.5px;text-align:right;padding-right:4px;flex:0 0 auto}
+.cm-content{flex-grow:0;max-width:74ch;width:100%;padding:0 20px}
+.cl{min-height:1.75em;white-space:pre-wrap;color:var(--ink-soft);padding:0 6px}
+.cl.active{background:#00000005}
+.cl .mk{color:var(--faint)}
+.cl .hd{font-weight:700;color:var(--ink)}
+.ins{background:var(--insert-soft);border-bottom:1.5px solid var(--insert);cursor:pointer}
+.del{background:var(--delete-soft);color:var(--delete);text-decoration:line-through;cursor:pointer}
+.cmt{background:var(--comment-soft);border-bottom:1.5px solid var(--comment);cursor:pointer}
+.cite-chip{display:inline-flex;font-family:var(--sans);font-size:11.5px;font-weight:500;background:var(--accent-soft);color:var(--accent-strong);border:1px solid var(--accent-line);border-radius:8px;padding:0 7px;line-height:1.5;vertical-align:baseline}
+.rcaret{position:relative;display:inline-block;width:0;border-left:2px solid hsl(280 62% 45%);margin-left:-1px;pointer-events:none}
+.rcaret i{position:absolute;bottom:calc(100% + 1px);left:-2px;font:600 9px/1 var(--sans);font-style:normal;color:#fff;background:hsl(280 62% 45%);padding:2px 4px;border-radius:2px 2px 2px 0;white-space:nowrap}
+
+/* R1: the inline popover — with its location line */
+.review-popover{position:absolute;z-index:50;width:272px;background:var(--overlay);border:1px solid var(--rule-strong);border-top:2px solid var(--comment);border-radius:var(--radius);box-shadow:0 10px 30px #1b1e1c26;font-size:12px;color:var(--ink)}
+.review-popover-head{display:flex;align-items:flex-start;gap:8px;padding:9px 10px 5px}
+.review-popover-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+.review-popover-meta strong{font-size:11.5px}
+.review-popover-author{font-size:10.5px;color:var(--muted)}
+.review-popover-kind{align-self:flex-start;font:600 8.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;border-radius:2px;padding:3px 5px;background:var(--comment-soft);color:var(--comment);margin-bottom:3px}
+.review-popover-head .avatar{margin-left:auto;width:19px;height:19px;font-size:8px;border-color:transparent}
+.review-popover-body{margin:0;padding:2px 11px 9px;line-height:1.5;white-space:pre-wrap}
+.review-popover-loc{display:block;padding:0 11px 8px;font:9.5px var(--mono);color:var(--faint)}
+.review-popover-actions{display:flex;justify-content:flex-end;gap:6px;padding:8px 10px;border-top:1px solid var(--rule)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-primary:hover{background:var(--accent-strong)}
+
+/* ───────────── the dock ───────────── */
+.dock{background:var(--chrome);border-left:1px solid var(--rule-strong)}
+/* K1: the dock header is the dock switcher — six tools, one open at a time */
+.dock-tabs{flex:0 0 auto;display:flex;align-items:stretch;height:27px;border-bottom:1px solid var(--rule);background:var(--chrome);overflow-x:auto;scrollbar-width:none}
+.dock-tabs::-webkit-scrollbar{display:none}
+.dock-tab{border:0;background:transparent;color:var(--muted);font:600 9px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase;padding:0 8px;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.dock-tab:hover{color:var(--ink);background:#00000008}
+.dock-tab[aria-selected="true"]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+.dock-tab .n{background:var(--comment);color:#fff;border-radius:8px;font:600 9px/14px var(--mono);padding:0 4px;min-width:14px;text-align:center}
+.dock-tabs .btn-icon{margin-left:auto;align-self:center;margin-right:4px;height:20px}
+.dock-body{flex:1;min-height:0;overflow:auto;padding:12px 12px 16px}
+/* K2: the room states its contents at the door */
+.dock-summary{font:10px/1.5 var(--mono);color:var(--muted);margin:-2px 0 10px;padding-bottom:9px;border-bottom:1px solid var(--rule)}
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+.chip{font:10px var(--mono);letter-spacing:.04em;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--muted);padding:3px 8px;border-radius:2px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.dock-toolbar{display:flex;gap:6px;margin-bottom:10px}
+.btn-small{font-size:11px;padding:3px 8px}
+.review-queue{list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}
+.review-card{border-bottom:1px solid var(--rule);border-left:2px solid transparent;padding:9px 10px 9px 8px;cursor:pointer}
+.review-card[aria-selected="true"]{background:var(--overlay);border-left-color:var(--accent)}
+.review-card-head{display:flex;align-items:center;gap:6px;margin-bottom:4px;min-width:0}
+.review-chip{font:600 8.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:3px 5px;border-radius:2px;flex:0 0 auto}
+.review-chip-insert{background:var(--insert-soft);color:var(--insert)}
+.review-chip-delete{background:var(--delete-soft);color:var(--delete)}
+.review-chip-comment{background:var(--comment-soft);color:var(--comment)}
+.review-card-author{display:inline-flex;align-items:baseline;gap:5px;min-width:0;font-size:11.5px;font-weight:600;color:var(--ink-soft)}
+.review-card-time{font:10px var(--mono);color:var(--faint);font-weight:400}
+.review-card-head .avatar{margin-left:auto;width:19px;height:19px;font-size:8px;border-color:transparent}
+.review-card-orphan{font:9px var(--mono);color:var(--comment);background:var(--comment-soft);border-radius:2px;padding:2px 4px;flex:0 0 auto}
+.review-card-text{margin:0 0 6px;font-size:12px;color:var(--ink-soft);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.review-card-quote{font-style:italic}
+.review-card-loc{font:9.5px var(--mono);color:var(--faint);display:block;margin-bottom:6px}
+.review-card-note{margin:0 0 6px;font-size:10.5px;color:var(--muted)}
+.review-card-actions{display:flex;gap:6px;justify-content:flex-end}
+/* K3: progressive emphasis — quiet until selected */
+.act{font-size:11px;padding:3px 8px;border-radius:3px;border:1px solid transparent;background:transparent;cursor:pointer}
+.act-accept{color:var(--insert);font-weight:600}
+.act-reject,.act-resolve{color:var(--muted)}
+.act-reject:hover{color:var(--delete)}
+.act-resolve:hover{color:var(--ink)}
+.review-card[aria-selected="true"] .act-accept{background:var(--accent);border-color:var(--accent);color:#fff}
+.dock-foot{flex:0 0 auto;border-top:1px solid var(--rule);background:var(--chrome);padding:7px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font:10px var(--mono);color:var(--faint)}
+.dock-foot .keys{margin-left:auto;display:flex;gap:8px}
+
+/* preview (narrower here; the dock takes its width) */
+.preview-pane{background:var(--shell)}
+.view-switch{display:flex;border:1px solid var(--rule-strong);border-radius:var(--radius);overflow:hidden}
+.view-switch button{border:0;border-right:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--muted);font:10px var(--sans);padding:4px 7px;cursor:pointer}
+.view-switch button:last-child{border-right:0}
+.view-switch button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+.build-label,.page-position{font:10px var(--mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.build-label .stale{color:var(--comment);font-weight:600}
+.pdf-viewer{flex:1;min-height:0;overflow:auto;padding:14px;background:var(--shell)}
+.pdf-page{width:300px;min-height:420px;margin:0 auto;background:#fff;box-shadow:0 1px 2px #0000001f,0 8px 22px #0000001a;font-family:var(--serif);color:#22261f;padding:26px 28px}
+.pdf-page .run{display:flex;justify-content:space-between;font-family:var(--mono);font-size:6.5px;letter-spacing:.14em;color:#9a9584;border-bottom:1px solid #e4e0d2;padding-bottom:6px}
+.pdf-page h1{font-size:13px;font-weight:400;margin:16px 0 6px}
+.pdf-page p{font-size:7.6px;line-height:1.6;text-align:justify;margin:0 0 6px}
+
+/* ───────────── build drawer ───────────── */
+.drawer{display:flex;flex-direction:column;min-height:0;height:150px;background:var(--chrome);border-top:1px solid var(--rule-strong)}
+.drawer-tabs{flex:0 0 auto;display:flex;align-items:center;border-bottom:1px solid var(--rule)}
+.drawer-tabs .tab{border:0;border-right:1px solid var(--rule);background:transparent;color:var(--muted);font:10px var(--mono);letter-spacing:.12em;text-transform:uppercase;padding:8px 13px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.drawer-tabs .tab[aria-selected="true"]{background:var(--paper);color:var(--ink);font-weight:700;box-shadow:inset 0 -2px 0 var(--accent)}
+.drawer-tabs .tab .n{display:inline-grid;place-items:center;min-width:15px;height:15px;padding:0 3px;background:var(--delete);color:#fff;font-size:9px;border-radius:2px}
+.drawer-tabs .btn-icon{margin-left:auto;margin-right:4px}
+.drawer-body{flex:1;min-height:0;overflow:auto;background:var(--paper)}
+/* B1: the blocking problem is row one */
+.problem{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start;width:100%;text-align:left;border:0;border-bottom:1px solid var(--rule);background:transparent;cursor:pointer;padding:8px 12px;color:var(--ink-soft);font:12px/1.45 var(--sans)}
+.problem:hover{background:var(--chrome-raised)}
+.problem .sev{font:600 8.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:3px 5px;border-radius:2px;margin-top:2px}
+.problem .sev-error{background:var(--delete-soft);color:var(--delete)}
+.problem .sev-warning{background:var(--comment-soft);color:var(--comment)}
+.problem .loc{font:10px var(--mono);color:var(--faint);margin-top:3px}
+
+/* ───────────── status bar ───────────── */
+.statusbar{display:flex;align-items:stretch;height:var(--statusbar-h);background:var(--chrome);border-top:1px solid var(--rule-strong);font:11px var(--mono);color:var(--muted);overflow:hidden}
+.status-cell{display:flex;align-items:center;gap:7px;padding:0 11px;border:0;border-right:1px solid var(--rule);background:transparent;color:inherit;font:inherit}
+button.status-cell{cursor:pointer}
+.status-spacer{flex:1;border-right:0}
+.statusbar .right{display:flex;align-items:stretch;margin-left:auto}
+.statusbar .right .status-cell{border-right:0;border-left:1px solid var(--rule)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--insert)}
+.status-warn{color:var(--comment);font-weight:700}
+#compile-button{border:0;padding:0 16px;gap:9px;font:600 11.5px var(--sans);display:inline-flex;align-items:center;background:var(--accent);color:#fff;cursor:pointer}
+#compile-button kbd{border-color:#ffffff59;background:transparent;color:#ffffffb3}
+
+.tag{position:fixed;right:14px;top:60px;z-index:99;font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:var(--overlay);border:1px solid var(--rule-strong);padding:6px 9px;box-shadow:0 4px 14px #1b1e1c1a}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header class="appbar">
+    <button class="brand" type="button"><span class="mark">N</span><span class="wordmark">Nisaba</span></button>
+    <nav class="crumbs" aria-label="Location">
+      <button type="button">Projects</button><span class="sep">›</span>
+      <button type="button">Field lab</button><span class="sep">›</span>
+      <button type="button" class="current">main.typ</button><span class="sep">›</span>
+      <button type="button">§Abstract</button>
+    </nav>
+    <button class="palette-hint" type="button"><span class="lead">⌕</span><kbd>⌘K</kbd></button>
+    <div class="appbar-tools">
+      <div class="people" aria-label="People with access">
+        <span class="person" style="--hue:280"><span class="pav">SP</span><strong>sparkletoes</strong><span class="role-tag">Author</span></span>
+        <span class="person" style="--hue:145"><span class="pav">CL</span><strong>clawson</strong><span class="role-tag">Reviewer</span></span>
+        <span class="person more num" title="moonmoss · Read-only — see all 4 in Share">+1</span>
+      </div>
+      <button class="btn btn-quiet" type="button">Share</button>
+      <span class="divider"></span>
+      <button class="btn btn-quiet" type="button">References</button>
+      <button class="btn btn-quiet" type="button">History</button>
+      <button class="btn btn-quiet" type="button">Export</button>
+    </div>
+    <div class="appbar-right">
+      <div class="presence">
+        <span class="avatar" style="--hue:280" title="sparkletoes — main.typ · §Abstract · line 13">SP</span>
+        <span class="avatar" style="--hue:145" title="clawson — main.typ · §Abstract · line 10">CL</span>
+        <span class="avatar you" style="--hue:45" title="twinkleburst (you)">TW</span>
+      </div>
+      <span class="save-status">Saved 12:04</span>
+      <button class="btn btn-quiet" type="button">Settings</button>
+      <button class="btn btn-quiet" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+
+    <aside class="navigator">
+      <div class="nav-section nav-section-files">
+        <h2 class="nav-head"><span>Files</span><span class="count num">6</span>
+          <span class="nav-head-actions">
+            <button class="btn-icon" type="button" title="New file">＋</button>
+            <button class="btn-icon" type="button" title="Hide the sidebar (⌘B)">‹</button>
+          </span>
+        </h2>
+        <div class="nav-body">
+          <div class="tree-item"><button class="tree-row folder"><span class="twist">▾</span><span class="label">chapters</span></button></div>
+          <div class="tree-item"><span class="indent"></span><button class="tree-row"><span class="twist"></span><span class="label">intro.typ</span></button></div>
+          <div class="tree-item"><span class="indent"></span><button class="tree-row"><span class="twist"></span><span class="label">methods.typ</span></button></div>
+          <div class="tree-item"><span class="indent"></span><button class="tree-row"><span class="twist"></span><span class="label">results.typ</span></button></div>
+          <div class="tree-item"><button class="tree-row folder"><span class="twist">▸</span><span class="label">figures</span></button></div>
+          <div class="tree-item"><button class="tree-row active"><span class="twist"></span><span class="label">main.typ</span><span class="tag">MAIN</span></button></div>
+          <div class="tree-item"><button class="tree-row"><span class="twist"></span><span class="label">refs.bib</span></button></div>
+        </div>
+      </div>
+      <div class="nav-section nav-section-outline">
+        <h2 class="nav-head"><span>Outline</span></h2>
+        <div class="nav-body">
+          <button class="outline-row" data-level="1"><span class="title">Honey Badgers at Fairy Raves</span><span class="ln num">1</span></button>
+          <button class="outline-row active" data-level="2"><span class="guide"></span><span class="title">Abstract</span><span class="ln num">5</span></button>
+          <button class="outline-row" data-level="2"><span class="guide"></span><span class="title">Background</span><span class="ln num">15</span></button>
+          <button class="outline-row" data-level="2"><span class="guide"></span><span class="title">Results</span><span class="ln num">23</span></button>
+          <button class="outline-row" data-level="2"><span class="guide"></span><span class="title">Discussion</span><span class="ln num">34</span></button>
+        </div>
+      </div>
+      <div class="nav-foot">
+        <div class="fact"><span>files</span><b>6</b></div>
+        <div class="fact"><span>references</span><b>3 of 12 with a PDF</b></div>
+        <div class="fact"><span>preview builds</span><b>main.typ</b></div>
+      </div>
+    </aside>
+
+    <div class="gutter"></div>
+
+    <section class="doc-pane">
+      <div class="pane-bar doc-bar">
+        <div class="doc-id"><strong>Honey Badgers at Fairy Raves</strong><code>main.typ</code></div>
+        <div class="doc-bar-right">
+          <span class="doc-rev num">v128</span><span class="vsep"></span>
+          <button class="switch" type="button" aria-checked="true" title="Record your edits as suggestions instead of changing the text">Track changes: on</button><span class="vsep"></span>
+          <button class="btn" type="button" aria-expanded="true">Review<span class="count-badge num">3</span></button>
+        </div>
+      </div>
+      <div class="sticky-heading"><span>Honey Badgers at Fairy Raves</span><span>›</span><span class="leaf">Abstract</span></div>
+      <div class="editor-host">
+        <div class="cm-editor"><div class="cm-scroller">
+          <div class="cm-gutters"><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div><div>10</div><div>11</div><div>12</div><div>13</div><div>14</div><div>15</div><div>16</div><div>17</div><div>18</div><div>19</div><div>20</div><div>21</div><div>22</div></div>
+          <div class="cm-content">
+            <div class="cl blank"></div>
+            <div class="cl"><span class="mk">==</span> <span class="hd">Abstract</span></div>
+            <div class="cl blank"></div>
+            <div class="cl">We document seventeen months of field observations of honey</div>
+            <div class="cl">badgers (_Mellivora capensis_) attending subterranean fairy</div>
+            <div class="cl">raves in the Welsh countryside. Using enchanted monitoring</div>
+            <div class="cl active">crystals and <span class="cmt">glitter-spectroscopy</span>, we characterize</div>
+            <div class="cl">attendance patterns, acoustic entrainment, and interspecies</div>
+            <div class="cl">social dynamics. <span class="ins">Our findings suggest a stable</span></div>
+            <div class="cl"><span class="ins">relationship mediated by low-frequency bass.</span><span class="rcaret"><i>sparkletoes</i></span></div>
+            <div class="cl blank"></div>
+            <div class="cl"><span class="mk">==</span> <span class="hd">Background</span></div>
+            <div class="cl blank"></div>
+            <div class="cl">The honey badger has long been regarded as a solitary species.</div>
+            <div class="cl">Recent anecdotal reports, however, describe badgers</div>
+            <div class="cl">congregating at fairy social gatherings</div>
+            <div class="cl"><span class="cite-chip">#cite(&lt;twinkleburst-2024&gt;)</span>, raising questions</div>
+            <div class="cl">about the ecological drivers of this behaviour. <span class="del">Some</span></div>
+            <div class="cl"><span class="del">researchers dispute this entirely.</span></div>
+          </div>
+        </div></div>
+
+        <!-- the office-native gesture: click the mark, read the thread (kept),
+             now with its location (R1) -->
+        <div class="review-popover" role="dialog" aria-label="Review thread" style="left:210px;top:158px">
+          <div class="review-popover-head">
+            <div class="review-popover-meta">
+              <span class="review-popover-kind">comment</span>
+              <strong>Comment</strong>
+              <span class="review-popover-author">clawson · 18 min ago</span>
+            </div>
+            <span class="avatar" style="--hue:145">CL</span>
+            <button class="btn-icon" type="button" aria-label="Close thread" style="font-size:17px">×</button>
+          </div>
+          <p class="review-popover-body">Do we want to name the vendor of the spectroscopy rig? Reviewers will ask.</p>
+          <span class="review-popover-loc">main.typ · line 10</span>
+          <div class="review-popover-actions">
+            <button class="btn btn-primary btn-small" type="button">Resolve</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="gutter"></div>
+
+    <!-- ═══ the dock: one standing workflow, switchable in place (K1) ═══ -->
+    <aside class="dock" aria-label="Tools">
+      <div class="dock-tabs" role="tablist">
+        <button class="dock-tab" aria-selected="true" role="tab">Review <span class="n num">3</span></button>
+        <button class="dock-tab" role="tab">References</button>
+        <button class="dock-tab" role="tab">History</button>
+        <button class="dock-tab" role="tab">Share</button>
+        <button class="dock-tab" role="tab">Export</button>
+        <button class="dock-tab" role="tab">Settings</button>
+        <button class="btn-icon" type="button" title="Close (Esc)" aria-label="Close panel" style="margin-left:auto">×</button>
+      </div>
+      <div class="dock-body">
+        <!-- K2 -->
+        <p class="dock-summary num">3 open — 2 from other people</p>
+        <div class="chips">
+          <button class="chip" aria-pressed="true">All 3</button>
+          <button class="chip" aria-pressed="false">Changes 2</button>
+          <button class="chip" aria-pressed="false">Comments 1</button>
+          <button class="chip" aria-pressed="false">Mine</button>
+        </div>
+        <div class="dock-toolbar">
+          <button class="btn btn-small" type="button">Add a comment here</button>
+        </div>
+        <ul class="review-queue" role="listbox" aria-label="Open review items">
+          <!-- selected row: the one filled primary Accept (K3) -->
+          <li class="review-card" aria-selected="true" role="option">
+            <div class="review-card-head">
+              <span class="review-chip review-chip-insert">Added</span>
+              <span class="review-card-author">sparkletoes <span class="review-card-time">12 min ago</span></span>
+              <span class="avatar" style="--hue:280">SP</span>
+            </div>
+            <p class="review-card-text review-card-quote">“Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.”</p>
+            <span class="review-card-loc">main.typ · line 13</span>
+            <div class="review-card-actions">
+              <button class="act act-reject" type="button">Reject</button>
+              <button class="act act-accept" type="button">Accept</button>
+            </div>
+          </li>
+          <li class="review-card" aria-selected="false" role="option">
+            <div class="review-card-head">
+              <span class="review-chip review-chip-comment">Comment</span>
+              <span class="review-card-author">clawson <span class="review-card-time">18 min ago</span></span>
+              <span class="avatar" style="--hue:145">CL</span>
+            </div>
+            <p class="review-card-text">Do we want to name the vendor of the spectroscopy rig? Reviewers will ask.</p>
+            <span class="review-card-loc">main.typ · line 10</span>
+            <div class="review-card-actions">
+              <button class="act act-resolve" type="button">Resolve</button>
+            </div>
+          </li>
+          <li class="review-card" aria-selected="false" role="option">
+            <div class="review-card-head">
+              <span class="review-chip review-chip-delete">Deleted</span>
+              <span class="review-card-author">moonmoss <span class="review-card-time">2 h ago</span></span>
+              <span class="review-card-orphan" title="The text this was attached to has changed too much to locate">needs re-anchoring</span>
+              <span class="avatar" style="--hue:200">MM</span>
+            </div>
+            <p class="review-card-text review-card-quote">“Some researchers dispute this entirely.”</p>
+            <span class="review-card-loc">main.typ · line 21</span>
+            <p class="review-card-note">Already removed from the text — Reject puts it back.</p>
+            <div class="review-card-actions">
+              <button class="act act-reject" type="button">Reject</button>
+              <button class="act act-accept" type="button">Accept</button>
+            </div>
+          </li>
+        </ul>
+      </div>
+      <div class="dock-foot">
+        <button class="btn btn-small" type="button">Accept all 2</button>
+        <button class="btn btn-small" type="button">Reject all</button>
+        <span class="keys">↑↓ move · ↵ show · A accept · R reject · C comment</span>
+      </div>
+    </aside>
+
+    <div class="gutter"></div>
+
+    <section class="preview-pane">
+      <div class="pane-bar">
+        <div class="view-switch">
+          <button aria-pressed="true">Final</button>
+          <button aria-pressed="false">Original</button>
+          <button aria-pressed="false">All markup</button>
+          <button aria-pressed="false">Public copy</button>
+        </div>
+        <span class="build-label num" title="Build #41 · 1.24 s">Final · built 2 min ago <span class="stale">· edited since</span></span>
+      </div>
+      <div class="pdf-viewer">
+        <div class="pdf-page">
+          <div class="run"><span>TWINKLEBURST ET AL.</span><span>FIELD LAB</span></div>
+          <h1>Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</h1>
+          <p>We document seventeen months of field observations of honey badgers (<i>Mellivora capensis</i>) attending subterranean fairy raves in the Welsh countryside. Using enchanted monitoring crystals and glitter-spectroscopy, we characterize attendance patterns, acoustic entrainment, and interspecies social dynamics.</p>
+          <p>Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked to the fairy audio system.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ═══ build drawer, open on the blocking problem (B1) ═══ -->
+  <section class="drawer" aria-label="Problems and build log">
+    <div class="drawer-tabs" role="tablist">
+      <button class="tab" aria-selected="true" role="tab">Problems <span class="n num">1</span></button>
+      <button class="tab" aria-selected="false" role="tab">Log</button>
+      <button class="btn-icon" type="button" title="Close" aria-label="Close the problems panel">×</button>
+    </div>
+    <div class="drawer-body" role="tabpanel">
+      <button class="problem" type="button">
+        <span class="sev sev-error">error</span>
+        <span>
+          <span>unknown variable: bass-frequency — did you mean `bass.freq`?</span>
+          <span class="loc">main.typ · line 21</span>
+        </span>
+      </button>
+      <button class="problem" type="button">
+        <span class="sev sev-warning">warning</span>
+        <span>
+          <span>table has no caption: readers relying on the list of tables will not find it</span>
+          <span class="loc">main.typ · line 26</span>
+        </span>
+      </button>
+    </div>
+  </section>
+
+  <footer class="statusbar">
+    <button class="status-cell" type="button"><span class="status-dot"></span><span>Live · 3 here</span></button>
+    <span class="status-cell num">Ln 10, Col 23</span>
+    <span class="status-cell num">4,812 words</span>
+    <span class="status-cell status-spacer"></span>
+    <div class="right">
+      <button class="status-cell" type="button"><span class="status-warn">1 error · 1 warning</span></button>
+      <button id="compile-button" type="button">Update preview <kbd>⌘↵</kbd></button>
+    </div>
+  </footer>
+</div>
+
+<span class="tag">PROPOSAL A · WORKSPACE — REVIEW</span>
+</body>
+</html>
