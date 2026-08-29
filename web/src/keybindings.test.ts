@@ -62,10 +62,12 @@ describe("browser-essential policy", () => {
     expect(isBrowserEssential("Mod+K")).toBe(false)
   })
 
-  it("bindingRefusal explains essential and duplicate chords", () => {
+  it("bindingRefusal explains essential, modifierless, and duplicate chords", () => {
     expect(bindingRefusal(DEFAULT_BINDINGS, "palette", "Mod+Shift+R")).toContain("browser")
+    expect(bindingRefusal(DEFAULT_BINDINGS, "palette", "B")).toContain("Cmd/Ctrl")
     expect(bindingRefusal(DEFAULT_BINDINGS, "palette", "Mod+S")).toContain("Save")
     expect(bindingRefusal(DEFAULT_BINDINGS, "palette", "Mod+Shift+K")).toBeUndefined()
+    expect(bindingRefusal(DEFAULT_BINDINGS, "palette", "F9")).toBeUndefined()
   })
 })
 
@@ -83,19 +85,40 @@ describe("persistence", () => {
     expect(loadBindings()).toEqual(next)
   })
 
-  it("drops essential, duplicate, and malformed entries on load", () => {
+  it("drops essential, duplicate, malformed, and modifierless entries on load", () => {
     localStorage.setItem("nisaba.keybindings", JSON.stringify({
       palette: "Mod+Shift+R", // browser-essential
-      save: "Mod+B",          // duplicate of navigator
+      save: "Mod+B",          // collides with navigator's RETAINED default…
       compile: "!!",          // malformed
-      focus: "Mod+Shift+L",   // fine
+      focus: "B",             // modifierless — untypeable app-wide
+      navigator: "Mod+Shift+L", // …but navigator is rebound here, so Mod+B is free
     }))
-    expect(loadBindings()).toEqual({ ...DEFAULT_BINDINGS, focus: "Mod+Shift+L" })
+    expect(loadBindings()).toEqual({
+      ...DEFAULT_BINDINGS,
+      save: "Mod+B",
+      navigator: "Mod+Shift+L",
+    })
   })
 
   it("returns defaults for corrupt storage", () => {
     localStorage.setItem("nisaba.keybindings", "{nope")
     expect(loadBindings()).toEqual(DEFAULT_BINDINGS)
+  })
+
+  it("resolves a custom colliding with a retained default (fixpoint)", () => {
+    // save takes navigator's default; navigator takes save's old default —
+    // the swap must survive, not collapse both to defaults.
+    expect(clampBindings({ save: "Mod+B", navigator: "Mod+S" })).toEqual({
+      ...DEFAULT_BINDINGS,
+      save: "Mod+B",
+      navigator: "Mod+S",
+    })
+  })
+
+  it("drops a custom that collides with another action's retained default", () => {
+    // compile tries to take palette's default; palette stays on it, so the
+    // custom reverts to compile's own default rather than stealing.
+    expect(clampBindings({ compile: "Mod+K" })).toEqual(DEFAULT_BINDINGS)
   })
 })
 

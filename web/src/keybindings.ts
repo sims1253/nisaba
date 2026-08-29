@@ -98,11 +98,15 @@ export const isChord = (value: string): boolean => {
 /** Parses and validates a stored bindings record, falling back per action. */
 export function clampBindings(raw: unknown): Keybindings {
   const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {}
-  // Pass 1: keep the well-formed, non-essential customs.
+  // Pass 1: keep the well-formed, non-essential customs. Modifierless
+  // chords are invalid bindings for the same reason bindingRefusal gives:
+  // a bare key as a global binding is untypeable app-wide.
   const customs = new Map<BindingAction, string>()
   for (const action of BINDING_ACTIONS) {
     const value = record[action]
-    if (typeof value === "string" && isChord(value) && !isBrowserEssential(value)) customs.set(action, value)
+    if (typeof value !== "string" || !isChord(value) || isBrowserEssential(value)) continue
+    if (!value.startsWith("Mod") && !/^F([1-9]|1[0-2])$/.test(value)) continue
+    customs.set(action, value)
   }
   const result = { ...DEFAULT_BINDINGS }
   for (const [action, chord] of customs) result[action] = chord
@@ -142,12 +146,18 @@ export function saveBindings(bindings: Keybindings): void {
 }
 
 /**
- * Whether a binding may be taken: not browser-essential and not already used
- * by another action. Returns undefined when allowed, else the refusal reason.
+ * Whether a binding may be taken: not browser-essential, not modifierless
+ * (a bare letter/space/enter as a global binding would make that key
+ * untypeable app-wide — chords need Mod, with bare F-keys as the one
+ * exception), and not already used by another action. Returns undefined
+ * when allowed, else the refusal reason.
  */
 export function bindingRefusal(bindings: Keybindings, action: BindingAction, chord: string): string | undefined {
   if (isBrowserEssential(chord)) {
-    return "That chord belongs to the browser (reload, devtools, or history) and stays available"
+    return "That chord belongs to the browser (reload, devtools, history, or zoom) and stays available"
+  }
+  if (!chord.startsWith("Mod") && !/^F([1-9]|1[0-2])$/.test(chord)) {
+    return "Chords need Cmd/Ctrl (or a bare F-key) — a bare key would become untypeable"
   }
   for (const other of BINDING_ACTIONS) {
     if (other !== action && bindings[other] === chord) {

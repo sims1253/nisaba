@@ -501,7 +501,7 @@ let focusMode = false
 function toggleFocusMode(): void {
   focusMode = !focusMode
   document.body.classList.toggle("focus-mode", focusMode)
-  status(focusMode ? "Focus mode — press ⌘⇧F to bring the panels back" : "Ready")
+  status(focusMode ? `Focus mode — press ${prettyChord(bindings.focus)} to bring the panels back` : "Ready")
   editor.focus()
 }
 
@@ -2962,10 +2962,21 @@ const ROLE_LABELS: Record<string, string> = {
 
 let settings: Settings = loadSettings()
 let bindings: Keybindings = loadBindings()
+// The armed chord capture (Settings → Keyboard), if one is listening. Kept
+// module-level so arming a second capture disarms the first, and so any
+// capture whose button left the DOM (dock closed, settings re-rendered,
+// click-away navigation) disarms itself on its next event.
+let armedCapture: ((event: KeyboardEvent) => void) | undefined
 
-/** Refreshes every place that displays a chord (palette hint, drawer hints). */
+/** Refreshes every chord display: kbds, hints, and titled buttons. */
 function refreshChordDisplays(): void {
   setText("#palette-hint-chord", prettyChord(bindings.palette))
+  for (const node of document.querySelectorAll<HTMLElement>("[data-chord]")) {
+    const action = node.dataset.chord as BindingAction
+    node.textContent = prettyChord(bindings[action])
+  }
+  const navigatorButton = el<HTMLElement>("[data-chord-title='navigator']")
+  if (navigatorButton) navigatorButton.title = `Hide the sidebar (${prettyChord(bindings.navigator)})`
 }
 
 function openSettings(): void {
@@ -3055,17 +3066,31 @@ function openSettings(): void {
   // Chord rebinding: the armed button consumes the next chord via a
   // capture-phase listener, so the global handler never sees it. Esc
   // cancels, modifier-only presses keep waiting, and refused chords
-  // (browser-owned, duplicate, malformed) explain themselves.
+  // (browser-owned, modifierless, duplicate, malformed) explain themselves.
+  // Arming disarms any previous capture; a capture whose button has left
+  // the DOM (re-render, dock closed, navigation) disarms itself.
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-rebind]")) {
     button.addEventListener("click", () => {
       const action = button.dataset.rebind as BindingAction
+      if (armedCapture !== undefined) {
+        document.removeEventListener("keydown", armedCapture, true)
+        armedCapture = undefined
+      }
       button.textContent = "Press keys…"
       button.classList.add("capturing")
       const finish = (): void => {
         document.removeEventListener("keydown", capture, true)
-        openSettings()
+        if (armedCapture === capture) armedCapture = undefined
+        if (document.contains(button)) openSettings()
       }
       const capture = (event: KeyboardEvent): void => {
+        // Disarm when the capture's UI is gone — the button is removed by
+        // any settings re-render or dock close, so this covers click-away.
+        if (!document.contains(button)) {
+          document.removeEventListener("keydown", capture, true)
+          if (armedCapture === capture) armedCapture = undefined
+          return
+        }
         event.preventDefault()
         event.stopPropagation()
         if (event.key === "Escape") { status(`${bindingLabel(action)}: unchanged`); finish(); return }
@@ -3079,6 +3104,7 @@ function openSettings(): void {
         status(`${bindingLabel(action)} is now ${prettyChord(chord)}`)
         finish()
       }
+      armedCapture = capture
       document.addEventListener("keydown", capture, true)
     })
   }
@@ -4700,8 +4726,11 @@ document.addEventListener("keydown", (event) => {
   if (chord === bindings.navigator) { event.preventDefault(); togglePane("navigator"); return }
   // Zoom chords act on the preview — but only while the pointer is over the
   // preview pane, so the same chords still zoom the page everywhere else
-  // (they are browser zoom defaults; a global intercept stole them).
-  if (pointerOverPreview && chord === "Mod+=") { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
+  // (they are browser zoom defaults; a global intercept stole them). The
+  // shifted plus is "=" with Shift, which the chord encoding cannot
+  // represent, so it is matched explicitly like the pre-chord handler did.
+  const zoomModifier = event.metaKey || event.ctrlKey
+  if (pointerOverPreview && (chord === "Mod+=" || (zoomModifier && event.key === "+"))) { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
   if (pointerOverPreview && chord === "Mod+-") { event.preventDefault(); pdfViewer.zoomOut(); updateZoomLabel() }
   // Esc backs out of the current surface, innermost first. The review popover
   // handles its own Esc (capture phase), so by the time we get here it is closed.

@@ -180,6 +180,9 @@ function setCompileButtonBusy(busy: boolean): void {
   button.append(busy ? "Building…" : "Update preview")
   if (!busy) {
     const key = document.createElement("kbd")
+    // data-chord lets the chord-display refresh (main.ts) keep this in sync
+    // with the user's rebindable compile binding.
+    key.dataset.chord = "compile"
     key.textContent = "⌘↵"
     button.append(" ", key)
   }
