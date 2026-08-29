@@ -92,3 +92,46 @@ export function applySettings(settings: Settings): void {
   root.style.setProperty("--ed-size", `${settings.fontSize}px`)
   root.style.setProperty("--ed-line", String(settings.lineHeight))
 }
+
+// ---------------------------------------------------------------------------
+// Per-project default file: which document opens when entering a project
+// with no per-tab target (see main.ts openProject / readLastOpen). Local to
+// this browser by the same rule as the typography settings — the project's
+// shared "main document", if it ever matters server-side, is API data and
+// does not belong here.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_FILES_KEY = "nisaba.defaultFiles"
+
+type DefaultFileMap = Record<string, string>
+
+const readDefaultFileMap = (): DefaultFileMap => {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(DEFAULT_FILES_KEY) ?? "{}")
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {}
+    const map: DefaultFileMap = {}
+    for (const [projectId, path] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof path === "string" && path !== "") map[projectId] = path
+    }
+    return map
+  } catch {
+    return {}
+  }
+}
+
+/** The file path this browser opens on entering the project, if set. */
+export function loadDefaultFile(projectId: string): string | undefined {
+  return readDefaultFileMap()[projectId]
+}
+
+/** Sets (or clears, with undefined/"") the project's default opening file. */
+export function saveDefaultFile(projectId: string, path: string | undefined): void {
+  try {
+    const map = readDefaultFileMap()
+    if (path === undefined || path === "") delete map[projectId]
+    else map[projectId] = path
+    localStorage.setItem(DEFAULT_FILES_KEY, JSON.stringify(map))
+  } catch {
+    /* storage may be unavailable — the session still works without it */
+  }
+}

@@ -22,7 +22,8 @@ import { downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { filterAndSortProjects, type ProjectSort } from "./projects-list"
 import {
-  DEFAULT_SETTINGS, TYPEFACE_LABELS, applySettings, clampSettings, loadSettings, saveSettings,
+  DEFAULT_SETTINGS, TYPEFACE_LABELS, applySettings, clampSettings, loadDefaultFile,
+  loadSettings, saveDefaultFile, saveSettings,
   type Settings, type TypefaceId,
 } from "./settings"
 import { VirtualPdfViewer } from "./pdf-viewer"
@@ -1247,12 +1248,18 @@ function restoreLastOpen(): void {
   if (!last.projectId) return
   const project = state.projects.find((p) => p.id === last.projectId)
   if (!project) return
-  openProject(project)
+  // With a remembered document, that document wins; without one, the
+  // project's default file (if any) gets its chance inside openProject.
+  openProject(project, { fromLastOpen: last.documentId !== undefined })
   if (!last.documentId) return
   // openProject loads the outline asynchronously; wait for it, then open the document.
   const tryOpen = (attempts: number): void => {
     // Abort if the user has already manually opened a document during the
-    // polling window — don't override their choice.
+    // polling window — don't override their choice. (Same still-open guard
+    // as the default-file poller: ids are globally unique so a stale
+    // outline from a previous project can't produce a false match here,
+    // but a switch away must stop the polling.)
+    if (state.project?.id !== last.projectId) return
     if (state.selected) return
     const entry = state.outline.find((e) => e.document.id === last.documentId)
     if (entry) { openDocument(entry); return }
@@ -1261,10 +1268,15 @@ function restoreLastOpen(): void {
   setTimeout(() => tryOpen(20), 200) // up to ~4s for the outline to load
 }
 
-function openProject(project: Project): void {
+function openProject(project: Project, options: { readonly fromLastOpen?: boolean } = {}): void {
   state.project = project
   state.selected = undefined
   state.document = undefined
+  // Drop the outgoing project's outline immediately: until loadOutline's
+  // fetch resolves, any consumer reading state.outline (file tree, the
+  // default-file poller below) would otherwise see the previous project's
+  // entries — and paths like main.typ collide across projects.
+  state.outline = []
   // Role is unknown until the membership fetch resolves; reset so a stale role
   // from a previous project can't leak into the reviewer UX gates.
   state.role = undefined
@@ -1272,7 +1284,28 @@ function openProject(project: Project): void {
   // of dropping the user back on the project list.
   persistLastOpen({ projectId: project.id })
   renderWorkspaceState()
+  renderFileTree()
   loadOutline()
+  // The per-project default file (Settings dock) opens only when this entry
+  // carries no more specific target of its own — a restore WITH a last-open
+  // document arms its own poller instead, so exactly one poller runs. A
+  // manual pick during the window overrides either (abort-if-selected).
+  if (!options.fromLastOpen) {
+    const defaultPath = loadDefaultFile(project.id)
+    if (defaultPath !== undefined) {
+      const tryDefault = (attempts: number): void => {
+        if (state.project?.id !== project.id) return
+        if (state.selected) return
+        // Match by path AND owning project: the outline is per-project by
+        // construction, but this guard keeps the poller correct even if the
+        // outline is ever populated cross-project again.
+        const entry = state.outline.find((e) => e.document.project_id === project.id && e.document.path === defaultPath)
+        if (entry) { openDocument(entry); return }
+        if (attempts > 0) setTimeout(() => tryDefault(attempts - 1), 200)
+      }
+      setTimeout(() => tryDefault(20), 200) // same ~4s outline window as restoreLastOpen
+    }
+  }
   // Each of these callbacks writes project-scoped state (references, fulltexts,
   // role). Rapidly opening project A then B delivers responses out of order, so
   // without the same still-open guard loadOutline uses, a late response for A
@@ -2927,9 +2960,27 @@ let settings: Settings = loadSettings()
 
 function openSettings(): void {
   const typefaces: readonly TypefaceId[] = ["mono", "serif", "sans"]
+  const project = state.project
+  const defaultFile = project ? loadDefaultFile(project.id) : undefined
+  const defaultFileRow = project
+    ? `<div class="settings-row">
+        <label id="settings-default-file-label">Opening file</label>
+        <select id="settings-default-file" aria-labelledby="settings-default-file-label">
+          <option value="" ${defaultFile === undefined ? "selected" : ""}>Last file you had open</option>
+          ${state.outline
+            .map((entry) => `<option value="${escapeHtml(entry.document.path)}" ${entry.document.path === defaultFile ? "selected" : ""}>${escapeHtml(entry.document.path)}</option>`)
+            .join("")}
+          ${defaultFile !== undefined && !state.outline.some((e) => e.document.path === defaultFile)
+            ? `<option value="${escapeHtml(defaultFile)}" selected disabled>${escapeHtml(defaultFile)} — not in this project</option>`
+            : ""}
+        </select>
+      </div>
+      <p class="settings-note">“Opening file” applies when this project is entered without a more recent file in this tab. It is this browser's choice, not the project's.</p>`
+    : ""
   showPanel(
     "settings",
     `<div class="settings-body">
+      ${defaultFileRow}
       <div class="settings-row">
         <label id="settings-typeface-label">Typeface</label>
         <div class="segmented" role="group" aria-labelledby="settings-typeface-label" id="settings-typeface">
@@ -2977,6 +3028,13 @@ function openSettings(): void {
   el("#settings-reset")?.addEventListener("click", () => {
     commit(DEFAULT_SETTINGS)
     openSettings()
+  })
+  const defaultFileSelect = el<HTMLSelectElement>("#settings-default-file")
+  defaultFileSelect?.addEventListener("change", () => {
+    if (!project) return
+    const path = defaultFileSelect.value === "" ? undefined : defaultFileSelect.value
+    saveDefaultFile(project.id, path)
+    status(path === undefined ? "Opening file cleared — this project opens where you left it" : `“${path}” opens when this project is entered`)
   })
 }
 
