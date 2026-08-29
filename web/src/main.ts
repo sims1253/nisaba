@@ -3242,8 +3242,8 @@ function renderReviewBanner(): void {
   if (reviewButton) {
     reviewButton.disabled = !state.selected
     reviewButton.title = open === 0
-      ? "Comments and suggested changes (⌘⇧R)"
-      : `${open} open item${open === 1 ? "" : "s"} (⌘⇧R)`
+      ? "Comments and suggested changes"
+      : `${open} open item${open === 1 ? "" : "s"}`
   }
   // Reviewers are locked into suggesting mode: every edit they make is recorded
   // as a proposal rather than silently changing the text. The switch shows the
@@ -4419,7 +4419,7 @@ const palette = createPalette((): readonly PaletteItem[] => {
     ({ id: `cmd:${id}`, group: "Commands", kind: "run", label, hint, run: runCommand })
   items.push(
     command("compile", "Update preview", "⌘↵", compileCurrent),
-    command("review", "Review: comments and suggested changes", "⌘⇧R", toggleReviewSidebar),
+    command("review", "Review: comments and suggested changes", "", toggleReviewSidebar),
     command("track", `Track changes: turn ${state.review.suggesting ? "off" : "on"}`, "", toggleSuggesting),
     command("comment", "Add a comment here", "", () => addCommentAtSelection()),
     command("focus", focusMode ? "Leave focus mode" : "Focus mode: hide everything but the text", "⌘⇧F", toggleFocusMode),
@@ -4451,8 +4451,21 @@ function insertCitation(referenceId: string): void {
   editor.focus()
 }
 
+// True while the pointer is over the preview pane: the zoom chords are
+// browser defaults, so they are intercepted only where the preview is the
+// active context — everywhere else ⌘+/⌘− zoom the page as the browser intends.
+let pointerOverPreview = false
+el<HTMLElement>(".preview-pane")?.addEventListener("pointerenter", () => { pointerOverPreview = true })
+el<HTMLElement>(".preview-pane")?.addEventListener("pointerleave", () => { pointerOverPreview = false })
+
 document.addEventListener("keydown", (event) => {
   const modifier = event.metaKey || event.ctrlKey
+  // Policy: never intercept browser-essential chords — the reload family
+  // (⌘R, ⌘⇧R, F5), devtools, history. ⌘⇧R used to open the Review dock and
+  // silently swallowed hard reload; the Review dock is a button and a palette
+  // command instead. ⌘S/⌘K/⌘B/⌘⇧F are editor-standard overrides (the
+  // browser action under them — save page — is meaningless here); zoom is
+  // scoped to the preview pane below.
   // ⌘K reaches everything, including from inside a dialog-free overlay, so it is
   // handled before the modal guard below.
   if (modifier && event.key.toLowerCase() === "k") { event.preventDefault(); palette.open(); return }
@@ -4464,11 +4477,12 @@ document.addEventListener("keydown", (event) => {
   // ⌘S saves and then updates the preview: a writer pressing save expects both.
   if (modifier && !event.shiftKey && event.key.toLowerCase() === "s") { event.preventDefault(); saveNow(); compileCurrent() }
   if (modifier && event.shiftKey && event.key.toLowerCase() === "f") { event.preventDefault(); toggleFocusMode() }
-  if (modifier && event.shiftKey && event.key.toLowerCase() === "r") { event.preventDefault(); toggleReviewSidebar() }
   if (modifier && !event.shiftKey && event.key.toLowerCase() === "b") { event.preventDefault(); togglePane("navigator") }
-  // ⌘= / ⌘- zoom the preview.
-  if (modifier && (event.key === "=" || event.key === "+")) { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
-  if (modifier && event.key === "-") { event.preventDefault(); pdfViewer.zoomOut(); updateZoomLabel() }
+  // ⌘= / ⌘− zoom the preview — but only while the pointer is over the preview
+  // pane, so the same chords still zoom the page everywhere else (they are
+  // browser zoom defaults; a global intercept stole them).
+  if (pointerOverPreview && modifier && (event.key === "=" || event.key === "+")) { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
+  if (pointerOverPreview && modifier && event.key === "-") { event.preventDefault(); pdfViewer.zoomOut(); updateZoomLabel() }
   // Esc backs out of the current surface, innermost first. The review popover
   // handles its own Esc (capture phase), so by the time we get here it is closed.
   if (event.key === "Escape" && !modifier) {

@@ -156,10 +156,13 @@ read it; pick a second to see what changed between them.
 | `⌘⏎` / `Ctrl+Enter` | Update the preview |
 | `⌘S` / `Ctrl+S` | Save, then update the preview |
 | `⌘⇧F` / `Ctrl+Shift+F` | Focus mode — hide everything but the text |
-| `⌘⇧R` / `Ctrl+Shift+R` | Open the review queue |
 | `⌘B` / `Ctrl+B` | Show or hide the sidebar |
-| `⌘=` / `⌘−` | Zoom the preview in and out |
+| `⌘=` / `⌘−` | Zoom the preview in and out (while the pointer is over the preview) |
 | `↑` `↓` `Enter` `A` `R` `C` `Esc` | Work through the review queue (while it has focus) |
+
+The review queue opens from the Review button or the `⌘K` palette. Browser
+shortcuts are never taken over: reload (`⌘R`, `⌘⇧R`, `F5`), zoom outside the
+preview, and devtools all do what your browser normally does.
 
 Standard editing keys (undo/redo, find, multi-cursor) work as they do anywhere,
 and autocompletion offers Typst constructs and your references as you type.

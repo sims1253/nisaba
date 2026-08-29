@@ -90,7 +90,7 @@ export const SHELL_HTML = `
         <span class="doc-rev num" id="revision-label"></span>
         <button id="suggesting-button" class="switch" type="button" role="switch" aria-checked="false"
                 title="Record your edits as suggestions instead of changing the text">Track changes: off</button>
-        <button id="review-button" class="btn" type="button" aria-expanded="false" title="Comments and suggested changes (⌘⇧R)">
+        <button id="review-button" class="btn" type="button" aria-expanded="false" title="Comments and suggested changes">
           Review<span class="count-badge num" id="review-count" hidden></span>
         </button>
       </div>

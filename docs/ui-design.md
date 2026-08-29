@@ -363,14 +363,21 @@ only carrier of meaning — insertions are underlined, deletions struck, comment
 | `⌘⏎` | Update preview | Global |
 | `⌘S` | Save, then update preview | Global |
 | `⌘⇧F` | Focus mode | Global |
-| `⌘⇧R` | Review dock | Global |
 | `⌘B` | Navigator | Global |
-| `⌘=` / `⌘−` | Zoom the preview | Global |
+| `⌘=` / `⌘−` | Zoom the preview | Pointer over the preview pane |
 | `↑` `↓` `Enter` `A` `R` `C` `Esc` | Triage the review queue | Review dock only |
 | `Esc` | Close the palette, popover, or dock | Contextual |
 
 Single-letter shortcuts bind **only** while focus is inside the review dock, so they can
 never fire into the text.
+
+**Browser defaults are not hijacked.** No chord the browser needs is intercepted:
+the reload family (`⌘R`, `⌘⇧R`, `F5`), devtools, and history all reach the browser
+untouched — the Review dock deliberately has no global chord (button and palette
+command instead), and the zoom chords act on the preview only while the pointer is
+over the preview pane, leaving page zoom working everywhere else. The editor-standard
+overrides the app does keep (`⌘S`, `⌘K`, `⌘B`) replace browser actions that are
+meaningless in the app.
 
 ---
 
