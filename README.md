@@ -25,6 +25,7 @@ Folders are derived from those paths, so Nisaba does not impose a content-specif
 - `crates/nisaba-core` — document projections, marks, review, and validation
 - `crates/nisaba-core-wasm` — wasm-bindgen projection wrapper for the web client
 - `crates/nisaba-compile-core` — pure Typst compilation core (workers, span map, outline, diagnostics)
+- `crates/nisaba-compile-wasm` — wasm-bindgen compile wrapper for the web client
 - `crates/nisaba-references` — RIS, bibliography numbering, and reference validation
 - `crates/nisaba-export` — deterministic project-archive assembly
 - `services/app` — authorization, project/document/reference APIs, and export orchestration

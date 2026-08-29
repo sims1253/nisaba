@@ -25,6 +25,7 @@ The following table is validated by CI against the Cargo workspace members
 | `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
 | `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection + bibliography wrapper over `nisaba-core`/`nisaba-references` for the web client (issue #20 stage 1) | impl. (pure, no I/O, no server use yet) |
 | `nisaba-compile-core` | Rust (lib)  | Pure Typst compile core (worker cache, compile pipeline, span map, outline, diagnostics) behind the compile service's HTTP plane (issue #20 stage 2a) | impl. (pure, no I/O, no async) |
+| `nisaba-compile-wasm` | Rust (lib, wasm-bindgen) | Compile wrapper over `nisaba-compile-core` for the web client; golden-response parity incl. PDF bytes on native and wasm32 (issue #20 stage 2b) | impl. (pure, no I/O, no server use yet) |
 | `nisaba-auth`      | Rust (lib)  | Shared role vocabulary (`Role` spellings for tokens and the app/sync authz contract) | impl. |
 | `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
 | `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
@@ -54,6 +55,17 @@ library. The `nisaba-compile` service is its HTTP plane (bearer auth, body
 limits, concurrency semaphore, timeouts, the RSS gauge); the same core is
 what the planned in-browser compile module wraps (issue #20, stage 2).
 
+`nisaba-compile-wasm` is that in-browser module (stage 2b): a wasm-bindgen
+boundary over the exact same core — one long-lived project worker per tab
+plus the service-style LRU/TTL worker pool, requests and responses in the
+compile service's wire shapes, the `typst-assets` fonts embedded exactly as
+the service embeds them. A golden-response parity suite (PDF bytes included,
+made comparable by the core's fixed PDF timestamp) runs natively and on
+wasm32, so the client-side compile cannot drift from the server's. The
+service's HTTP-only concerns (auth, body limits, semaphore, timeouts, the
+RSS gauge) have no analogue here and are gone. The web client wiring is
+stage 2c; server paths do not use this crate.
+
 ### Rust workspace members
 
 ```
@@ -61,6 +73,7 @@ crates/nisaba-auth        — shared role vocabulary (Role spellings)
 crates/nisaba-core        — pure domain: Position, projection, marks
 crates/nisaba-core-wasm   — wasm-bindgen projection wrapper for the web client
 crates/nisaba-compile-core — pure Typst compilation core (workers, span map, outline)
+crates/nisaba-compile-wasm — wasm-bindgen compile wrapper for the web client
 crates/nisaba-references  — RIS reference format
 crates/nisaba-export      — export utilities
 services/app              — CRUD, references, export orchestration, auth
