@@ -116,6 +116,9 @@ jobs:
           restore-keys: ${{ runner.os }}-bun-
       - name: Install dependencies (workspace root, frozen lockfile)
         run: bun install --frozen-lockfile
+      - name: Lint
+        run: bun run lint
+        working-directory: tools
       - name: Typecheck
         run: bun run typecheck
         working-directory: tools

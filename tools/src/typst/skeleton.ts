@@ -109,15 +109,15 @@ export function generateTypstSkeleton(manifest: Manifest): string {
     lines.push(`  height: ${pt(section.pageSize.heightTwips)},${orient}`);
     lines.push(`  margin: (top: ${pt(section.margins.topTwips)}, bottom: ${pt(section.margins.bottomTwips)}, left: ${pt(section.margins.leftTwips)}, right: ${pt(section.margins.rightTwips)}),`);
     lines.push(`  header: align(right)[Nisaba Skeleton],`);
-    lines.push(`  numbering: \"1\",`);
+    lines.push(`  numbering: "1",`);
     lines.push(`)`);
   }
-  lines.push(`#set text(lang: \"de\", font: \"Libertinus Serif\")`);
+  lines.push(`#set text(lang: "de", font: "Libertinus Serif")`);
   lines.push(`#set par(justify: true)`);
   lines.push("");
 
   // Heading styling.
-  lines.push(`#set heading(numbering: \"1.1.1\")`);
+  lines.push(`#set heading(numbering: "1.1.1")`);
   lines.push("#show heading.where(level: 1): it => pagebreak(weak: true) + it");
   lines.push("");
 

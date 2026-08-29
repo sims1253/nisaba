@@ -19,6 +19,7 @@ cargo test --workspace --all-targets --locked
 bun run --cwd web lint
 bun run --cwd web test
 bun run --cwd web build
+bun run --cwd tools lint
 bun run --cwd tools typecheck
 bun run --cwd tools test
 ```

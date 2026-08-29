@@ -26,7 +26,7 @@ workflows on every push to `main` and on every pull request.
 - `cargo fmt --check` / `cargo clippy` / `cargo deny` / `cargo audit`
 - [oxlint](https://oxc.rs/docs/guide/usage/linter.html) + `tsc` (web — `bun run
   lint` / `bun run build` in CI; oxlint replaces ESLint)
-- `tsc --noEmit` (tools)
+- `oxlint` + `tsc --noEmit` (tools — `bun run lint` / `bun run typecheck`)
 - `shellcheck` (deploy scripts)
 - `docker compose config` validation (`validate-compose.sh`)
 
