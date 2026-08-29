@@ -14,9 +14,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Every run is an explicit human dispatch: serialize per ref. No
+  # cancel-in-progress — the queued agent run keeps its work; a cancelled
+  # one loses everything mid-task.
+  group: pullfrog-${{ github.ref }}
+
 jobs:
   pullfrog:
     runs-on: ubuntu-latest
+    # Observed agent runs finish within ~8 minutes; 60 bounds a runaway
+    # agent without cutting off a legitimately large task.
+    timeout-minutes: 60
     permissions:
       id-token: write
       contents: read

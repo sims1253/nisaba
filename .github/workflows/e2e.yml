@@ -7,8 +7,11 @@ on:
     - cron: "17 3 * * *"
 
 concurrency:
+  # Nightly schedule + manual dispatches, always on the default branch: a
+  # single ref-keyed group serializes them. Deliberately NO
+  # cancel-in-progress — a dispatch arriving mid-nightly queues behind it
+  # instead of killing a 30-minute run that is already deep in Playwright.
   group: e2e-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read

@@ -30,8 +30,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: security-${{ github.ref }}
-  cancel-in-progress: true
+  # PR runs key on the PR number so a new push supersedes the stale run for
+  # the same PR. Pushes to main, the weekly advisory scan, and dispatches
+  # share the ref-keyed group but queue instead of cancelling — a scheduled
+  # scan must not be killed by an unrelated trigger landing mid-run.
+  group: security-${{ github.event_name == 'pull_request' && github.event.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -43,6 +47,9 @@ jobs:
   # exactly the dependency set the lockfile pins (no generate-lockfile needed).
   cargo-audit:
     runs-on: ubuntu-latest
+    # Same shape as rust.yml's deny (toolchain + audit binary + run); that
+    # job budgets 15.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
@@ -53,6 +60,7 @@ jobs:
 
   bun-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -74,6 +82,7 @@ jobs:
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # continue-on-error: this requires GitHub Advanced Security (dependency
