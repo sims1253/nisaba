@@ -36,6 +36,7 @@ export const SHELL_HTML = `
   <div class="appbar-right">
     <div class="presence" id="presence" aria-live="polite" aria-label="People in this document"></div>
     <span class="save-status" id="save-status">Ready</span>
+    <button id="settings-button" class="btn btn-quiet" type="button" title="Editor settings: typeface, size, spacing">Settings</button>
     <button id="sign-in" class="btn btn-quiet" type="button">Sign in</button>
   </div>
 </header>

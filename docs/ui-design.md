@@ -106,7 +106,8 @@ Five persistent regions, each with exactly one job:
    safe (save state), and the project-scope actions.
 2. **Navigator** — where things are: files, then the sections of the open document.
 3. **Document** — the text, with its own identity bar (name, version, track-changes).
-4. **Dock** — one standing workflow at a time: Review, References, History, Share, Export.
+4. **Dock** — one standing workflow at a time: Review, References, History, Share, Export,
+   Settings.
 5. **Preview** — the artefact, with the view switch and its provenance.
 
 Plus two conditional regions: the **build drawer** (problems and log; opens itself when a
@@ -305,6 +306,17 @@ The status bar answers "is anything wrong?" in one glance, left to right:
 Sync honesty is preserved: the browser's offline event dims the indicator immediately
 rather than waiting for a WebSocket timeout, and the label never claims "Live" when it is
 not.
+
+### 4.13 Make the editor yours (settings)
+
+The Settings button (app bar, right side — reachable on every screen, no project needed)
+opens the Settings dock. First scope: **editor typography** — typeface (mono/serif/sans,
+the stylesheet's font stacks), font size (12–24 px), and line spacing (1.2–2.2), applied
+live. Settings are **local to this browser** (localStorage): a collaborator's serif
+preference must not leak into anyone else's editor or into compiled output, so nothing
+here is project data. Every field is validated on load — a corrupt record degrades to
+the defaults per field, never to a broken editor. Coming scopes: per-project default
+file and rebindable app chords (which will refuse browser-essential chords per §6).
 
 ---
 
