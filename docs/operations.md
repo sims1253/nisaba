@@ -29,7 +29,8 @@ open http://127.0.0.1:8090     # Keycloak admin (admin / <KEYCLOAK_ADMIN_PASSWOR
 open http://127.0.0.1:9100     # SeaweedFS S3 endpoint (<NISABA_S3_ADMIN_KEY>)
 
 # app tier (templates; builds the Rust/web images)
-just up-all                     # = docker compose --profile app up -d --build
+just up-all                     # app-profile up --build; injects the dev realm
+                                # JWKS when NISABA_OIDC_JWKS_JSON is unset/empty
 just e2e                        # full app-profile smoke: build images, dev token,
                                 # compile→PDF through nginx, sync WS reachability
 ```

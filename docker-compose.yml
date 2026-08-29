@@ -243,8 +243,10 @@ services:
       NISABA_OIDC_CLIENT_ID: ${NISABA_OIDC_CLIENT_ID:-nisaba-web}
       # JWKS the app verifies token signatures against, read INLINE at startup
       # (the app does not fetch a discovery URL today). Empty → deny all tokens
-      # (the safe default). Populate via NISABA_OIDC_JWKS_JSON in .env, or use
-      # `just e2e` (which mints a dev key + JWKS via deploy/dev-token.py).
+      # (the safe default). `just up-all` fetches the dev realm's JWKS and
+      # passes it here when the variable is unset/empty; otherwise populate
+      # NISABA_OIDC_JWKS_JSON in .env, or use `just e2e` (which mints a dev
+      # key + JWKS via deploy/dev-token.py).
       NISABA_OIDC_JWKS_JSON: ${NISABA_OIDC_JWKS_JSON:-}
       # app calls compile over svc-net; the shared token authorises the call.
       NISABA_COMPILE_URL: ${NISABA_COMPILE_URL:-http://compile:8080}

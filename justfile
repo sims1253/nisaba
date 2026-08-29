@@ -27,7 +27,21 @@ up:
     docker compose up -d
 
 # Bring up everything, including application service images (re)built on demand.
+# The app verifies tokens against the INLINE JWKS in NISABA_OIDC_JWKS_JSON, and
+# .env.example ships it empty (deny-all: every user-token API call 401s). When
+# the variable is unset/empty here, fetch the dev realm's JWKS from Keycloak
+# (scripts/fetch-jwks.sh, which starts infra first if needed) and inject it into
+# this invocation — a value the operator set explicitly (.env or the
+# environment, with the usual env-wins precedence) is never clobbered.
 up-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "${NISABA_OIDC_JWKS_JSON:-}" ]; then
+        echo "[up-all] NISABA_OIDC_JWKS_JSON empty; fetching the dev realm JWKS..."
+        export NISABA_OIDC_JWKS_JSON="$(./scripts/fetch-jwks.sh)"
+    else
+        echo "[up-all] NISABA_OIDC_JWKS_JSON set; using it as-is."
+    fi
     docker compose --profile app up -d --build
 
 # Stop and remove containers (named volumes are preserved).
@@ -193,7 +207,10 @@ audit:
 # ---------- E2E (browser) --------------------------------------------------
 
 # Start the full stack for e2e testing (requires .env with generated secrets).
-# The web image must be rebuilt with OIDC env vars baked in.
+# The web image must be rebuilt with OIDC env vars baked in. Always injects the
+# live dev realm JWKS via scripts/fetch-jwks.sh (same helper as `up-all`),
+# overriding any NISABA_OIDC_JWKS_JSON from .env: the tests must validate
+# against the Keycloak that is actually running.
 e2e-up:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -201,27 +218,7 @@ e2e-up:
         echo "[e2e] .env not found. Copy .env.example and generate secrets first." >&2
         exit 1
     fi
-    # Read KEYCLOAK_HTTP_PORT from .env (the same file compose interpolates), so
-    # a non-default port works here too. dotenv-load already exports it; the
-    # explicit sourcing keeps the script correct when just is invoked with
-    # --no-dotenv.
-    # shellcheck disable=SC1091
-    set -a && . ./.env && set +a
-    KC_PORT="${KEYCLOAK_HTTP_PORT:-8090}"
-    CERTS_URL="http://127.0.0.1:${KC_PORT}/realms/nisaba/protocol/openid-connect/certs"
-    # Fetch JWKS from the running Keycloak (or start infra first).
-    if ! curl -fsS "$CERTS_URL" >/dev/null 2>&1; then
-        docker compose up -d
-        echo "[e2e] waiting for Keycloak on port ${KC_PORT}..."
-        for i in $(seq 1 60); do
-            if curl -fsS "$CERTS_URL" >/dev/null 2>&1; then
-                break
-            fi
-            sleep 5
-        done
-    fi
-    JWKS="$(curl -fsS "$CERTS_URL")"
-    NISABA_OIDC_JWKS_JSON="$JWKS" docker compose --profile app up -d --build
+    NISABA_OIDC_JWKS_JSON="$(./scripts/fetch-jwks.sh)" docker compose --profile app up -d --build
 
 # Run Playwright e2e tests against a running stack.
 e2e-test:
