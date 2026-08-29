@@ -181,8 +181,10 @@ function setCompileButtonBusy(busy: boolean): void {
   button.append(busy ? "Building…" : "Update preview")
   if (!busy) {
     const key = document.createElement("kbd")
-    // Rendered from the live bindings (keybindings.ts owns them) so a
-    // rebound compile chord survives this busy→idle re-creation.
+    // Rendered from the live bindings so a busy→idle re-creation shows the
+    // current chord, and tagged data-chord so the rebind sweep can still
+    // find this re-created kbd after a build (both directions are needed).
+    key.dataset.chord = "compile"
     key.textContent = prettyChord(currentBindings().compile)
     button.append(" ", key)
   }
