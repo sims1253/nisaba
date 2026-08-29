@@ -21,6 +21,10 @@ import { hybridEditorField, revealConstruct, reviewEditorField, setReviewItems, 
 import { downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { filterAndSortProjects, type ProjectSort } from "./projects-list"
+import {
+  DEFAULT_SETTINGS, TYPEFACE_LABELS, applySettings, clampSettings, loadSettings, saveSettings,
+  type Settings, type TypefaceId,
+} from "./settings"
 import { VirtualPdfViewer } from "./pdf-viewer"
 import * as api from "./api"
 import type { CompileView, Fulltext, MembershipRole, NisabaDocument, Project, Reference } from "./api"
@@ -291,14 +295,15 @@ const hiddenPanes: HiddenPanes = { navigator: false, preview: false }
  * Review is the only one that also re-renders on state changes, so the rest are
  * plain "render once when opened" panels.
  */
-type DockTool = "review" | "references" | "history" | "share" | "export"
+type DockTool = "review" | "references" | "history" | "share" | "export" | "settings"
 
 const DOCK_TITLES: Record<DockTool, string> = {
   review: "Review",
   references: "References",
   history: "History",
   share: "Share",
-  export: "Export"
+  export: "Export",
+  settings: "Settings"
 }
 
 /** Which tool is docked, or undefined when the dock is closed. */
@@ -640,7 +645,8 @@ function syncDockButtons(): void {
     references: "#references-button",
     history: "#history-button",
     share: "#share-button",
-    export: "#export-button"
+    export: "#export-button",
+    settings: "#settings-button"
   }
   for (const [tool, selector] of Object.entries(buttons)) {
     el<HTMLElement>(selector)?.setAttribute("aria-expanded", String(dockTool === tool))
@@ -2913,6 +2919,67 @@ const ROLE_LABELS: Record<string, string> = {
   "read-only": "Read-only"
 }
 
+// ---------------------------------------------------------------------------
+// Settings (editor typography; see web/src/settings.ts for the storage model)
+// ---------------------------------------------------------------------------
+
+let settings: Settings = loadSettings()
+
+function openSettings(): void {
+  const typefaces: readonly TypefaceId[] = ["mono", "serif", "sans"]
+  showPanel(
+    "settings",
+    `<div class="settings-body">
+      <div class="settings-row">
+        <label for="settings-typeface">Typeface</label>
+        <div class="segmented" role="group" aria-label="Editor typeface" id="settings-typeface">
+          ${typefaces
+            .map((id) => `<button class="seg" type="button" data-typeface="${id}" aria-pressed="${settings.typeface === id}">${TYPEFACE_LABELS[id]}</button>`)
+            .join("")}
+        </div>
+      </div>
+      <div class="settings-row">
+        <label for="settings-font-size">Font size</label>
+        <input id="settings-font-size" type="range" min="12" max="24" step="1" value="${settings.fontSize}" aria-label="Editor font size">
+        <output id="settings-font-size-out" for="settings-font-size">${settings.fontSize}px</output>
+      </div>
+      <div class="settings-row">
+        <label for="settings-line-height">Line spacing</label>
+        <input id="settings-line-height" type="range" min="1.2" max="2.2" step="0.05" value="${settings.lineHeight}" aria-label="Editor line spacing">
+        <output id="settings-line-height-out" for="settings-line-height">${settings.lineHeight.toFixed(2)}</output>
+      </div>
+      <p class="settings-note">Editor look only — your choices live in this browser and never affect collaborators or compiled output. <button type="button" class="btn" id="settings-reset">Reset to defaults</button></p>
+    </div>`
+  )
+  const commit = (next: Settings): void => {
+    settings = next
+    saveSettings(settings)
+    applySettings(settings)
+  }
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#settings-typeface [data-typeface]")) {
+    button.addEventListener("click", () => {
+      commit(clampSettings({ ...settings, typeface: button.dataset.typeface as TypefaceId }))
+      openSettings()
+    })
+  }
+  const fontSize = el<HTMLInputElement>("#settings-font-size")
+  fontSize?.addEventListener("input", () => {
+    const size = clampSettings({ ...settings, fontSize: Number(fontSize.value) }).fontSize
+    setText("#settings-font-size-out", `${size}px`)
+    commit({ ...settings, fontSize: size })
+  })
+  const lineHeight = el<HTMLInputElement>("#settings-line-height")
+  lineHeight?.addEventListener("input", () => {
+    const height = clampSettings({ ...settings, lineHeight: Number(lineHeight.value) }).lineHeight
+    setText("#settings-line-height-out", height.toFixed(2))
+    commit({ ...settings, lineHeight: height })
+  })
+  el("#settings-reset")?.addEventListener("click", () => {
+    commit(DEFAULT_SETTINGS)
+    openSettings()
+  })
+}
+
 function openShare(): void {
   const project = state.project
   if (!project) { showPanel("share", `<p class="empty-note">Open a project first.</p>`); return }
@@ -4365,6 +4432,7 @@ el("#add-demo")?.addEventListener("click", addDemoFile)
 el("#references-button")?.addEventListener("click", () => toggleDock("references", openReferences))
 el("#history-button")?.addEventListener("click", () => toggleDock("history", openHistory))
 el("#share-button")?.addEventListener("click", () => toggleDock("share", openShare))
+el("#settings-button")?.addEventListener("click", () => toggleDock("settings", openSettings))
 
 // Projects screen: search-as-you-type and the Recent/Name sort toggle. The
 // sort choice persists; both re-render the list through the pure shaper.
@@ -4386,6 +4454,8 @@ el("#sort-name")?.addEventListener("click", () => {
   renderProjects()
 })
 syncProjectToolState()
+// Editor typography from saved settings before the first paint of text.
+applySettings(settings)
 el("#export-button")?.addEventListener("click", () => toggleDock("export", openExport))
 el("#review-button")?.addEventListener("click", toggleReviewSidebar)
 el("#dock-close")?.addEventListener("click", closeDock)
@@ -4466,6 +4536,7 @@ const palette = createPalette((): readonly PaletteItem[] => {
     command("references", "References library", "", () => toggleDock("references", openReferences)),
     command("history", "Earlier versions of this file", "", () => toggleDock("history", openHistory)),
     command("share", "Share with people", "", () => toggleDock("share", openShare)),
+    command("settings", "Settings: typeface, font size, line spacing", "", () => toggleDock("settings", openSettings)),
     command("export", "Export and download", "", () => toggleDock("export", openExport)),
     command("newfile", "New file", "", addDocument),
     command("projects", "All projects", "", leaveProject)
