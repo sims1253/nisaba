@@ -19,7 +19,6 @@ tracing = "0.1.44"
 typst = { version = "0.15.1", features = [] }
 typst-layout = "0.15.1"
 typst-pdf = "0.15.1"
-typst-svg = "0.15.1"
 tinymist-vfs = "=0.15.0"
 tinymist-world = { version = "=0.15.0", features = ["mock"] }
 tinymist-project = { version = "0.15.0", features = ["no-content-hint"] }
