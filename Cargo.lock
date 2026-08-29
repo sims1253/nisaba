@@ -3514,22 +3514,15 @@ name = "nisaba-compile"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64",
+ "nisaba-compile-core",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "subtle",
- "tinymist-project",
- "tinymist-vfs",
- "tinymist-world",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
- "typst",
- "typst-layout",
- "typst-pdf",
- "typst-svg",
 ]
 
 [[package]]

@@ -633,8 +633,8 @@ fn valid_document_path(path: &str) -> bool {
     // titles): paths feed compile/export include statements and URLs, so an
     // unbounded path would bloat exports. 1024 matches the project-name cap.
     //
-    // Deliberately stricter than the compile service's validate_virtual_path
-    // (services/compile/src/lib.rs): stored paths are user-facing identifiers
+    // Deliberately stricter than the compile core's validate_virtual_path
+    // (crates/nisaba-compile-core/src/lib.rs): stored paths are user-facing identifiers
     // rendered in listings and URLs, so `.`/`..` segments and control
     // characters are rejected outright. The compile validator only guards its
     // per-request virtual filesystem and therefore tolerates `.` and
