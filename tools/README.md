@@ -71,5 +71,6 @@ verify.sh                   full local verification (CI-ready)
 ## Testing
 
 `bunx vitest run` runs the unit suite plus external-gated tests (PDF compliance,
-visual diff) that render the fixture DOCX with LibreOffice. The gated tests
-`console.warn`-skip when a tool is absent, so the suite is portable.
+visual diff) that render the fixture DOCX with LibreOffice. When a tool is
+absent the gated tests skip through Vitest's test context, so the reporter
+lists them as skipped (naming the missing tools) instead of silently passing.

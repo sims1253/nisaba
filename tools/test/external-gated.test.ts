@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, type TestContext } from "vitest";
 import { Effect, Layer } from "effect";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { checkPdfCompliance } from "../src/pdf/compliance.js";
 import { runVisualDiff } from "../src/visualdiff/harness.js";
-import { detectCapabilities } from "../src/externals/capabilities.js";
+import { detectCapabilities, type CapabilitiesReport, type ToolId } from "../src/externals/capabilities.js";
 import { Shell, ShellLive } from "../src/externals/shell.js";
 import { FileSystem, FileSystemLive } from "../src/externals/fs.js";
 import { buildSampleDocumentDocx } from "../src/fixtures/generate.js";
@@ -42,19 +42,39 @@ beforeAll(async () => {
   }
 }, 120_000);
 
-const guard = (...required: string[]): boolean => {
-  // tools are checked via capsP inside each test; reason reflects render readiness.
-  return pdfPath !== null && reason === null && required.length > 0;
+/** Names of `tools` that the probed environment does not provide. */
+const missingTools = (caps: CapabilitiesReport, tools: readonly ToolId[]): string[] =>
+  tools.filter((id) => !caps.tools[id].available);
+
+/**
+ * Skip the current test unless the fixture DOCX rendered to PDF and none of
+ * `tools` (or anything in `extraMissing`) is unavailable. Skipping goes
+ * through the Vitest test context so the reporter lists the test as skipped —
+ * an early `return` here would report it as passed on machines without the
+ * external tools, hiding that nothing was tested.
+ */
+const gateOn = (
+  ctx: TestContext,
+  caps: CapabilitiesReport,
+  tools: readonly ToolId[],
+  extraMissing: readonly string[] = [],
+): void => {
+  const missing = [...missingTools(caps, tools), ...extraMissing];
+  if (pdfPath === null || missing.length > 0) {
+    const note = [
+      reason,
+      missing.length > 0 ? `missing tools: ${missing.join(", ")}` : null,
+    ]
+      .filter((s): s is string => s !== null)
+      .join("; ");
+    ctx.skip(true, note);
+  }
 };
 
 describe("pdf compliance (gated on libreoffice + poppler + qpdf)", () => {
-  it("passes the full battery on the rendered fixture", async () => {
+  it("passes the full battery on the rendered fixture", async (ctx) => {
     const caps = await capsP;
-    const ready = guard("x") && caps.tools.pdfinfo.available && caps.tools.pdftotext.available && caps.tools.qpdf.available;
-    if (!ready) {
-      console.warn(`[skip] pdf-compliance: ${reason ?? "missing poppler/qpdf"}`);
-      return;
-    }
+    gateOn(ctx, caps, ["pdfinfo", "pdftotext", "qpdf"]);
     const work = mkdtempSync(path.join(tmpdir(), "nisaba-comp-"));
     const report = await run(checkPdfCompliance(pdfPath!, work));
     const byId = Object.fromEntries(report.checks.map((c) => [c.id, c])) as Record<string, (typeof report.checks)[number]>;
@@ -66,14 +86,12 @@ describe("pdf compliance (gated on libreoffice + poppler + qpdf)", () => {
 });
 
 describe("visual diff (gated on pdftoppm + compare)", () => {
-  it("self-diff is zero and asserts fidelity only with docx-render provenance", async () => {
+  it("self-diff is zero and asserts fidelity only with docx-render provenance", async (ctx) => {
     const caps = await capsP;
-    const ready =
-      guard("x") && caps.tools.pdftoppm.available && (caps.tools.compare.available || caps.tools.magick.available);
-    if (!ready) {
-      console.warn(`[skip] visual-diff: ${reason ?? "missing pdftoppm/compare"}`);
-      return;
-    }
+    // Per-pixel comparison needs `compare`, or `magick compare` as fallback.
+    const comparator =
+      caps.tools.compare.available || caps.tools.magick.available ? [] : ["compare/magick"];
+    gateOn(ctx, caps, ["pdftoppm"], comparator);
     const work = mkdtempSync(path.join(tmpdir(), "nisaba-vd-"));
     const report = await run(
       runVisualDiff(pdfPath!, pdfPath!, work, {
