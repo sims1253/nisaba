@@ -299,8 +299,9 @@ prebuilt artifacts to download — see the last point below.
 - **Cutting a release**: push a tag shaped `v0.1.0` — `v` followed by strict
   semver (`vMAJOR.MINOR.PATCH`, optional `-prerelease`/`+build`;
   [`release.yml`](../.github/workflows/release.yml) refuses any other shape
-  early). CI then re-runs the test gates (Rust fmt/clippy/test/cargo-deny,
-  tools typecheck + unit tests, web lint/build/test) and, when they pass,
+  early). CI then re-runs the test gates (Rust fmt/clippy/test/cargo-deny/
+  wasm32 parity, tools typecheck + unit tests, web lint/build/test) and, when
+  they pass,
   creates the GitHub Release with auto-generated notes. The notes are built
   from merged PR titles — which follow the conventional-commit style — so the
   changelog needs no separate bookkeeping.
