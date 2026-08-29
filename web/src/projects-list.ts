@@ -12,7 +12,7 @@ export type ProjectSort = "recent" | "name"
 export interface SortableProject {
   readonly id: string
   readonly name: string
-  /** RFC 3339 timestamp; lexicographic order equals chronological order. */
+  /** RFC 3339 timestamp; subsecond width varies, so compare parsed instants. */
   readonly updated_at: string
 }
 
@@ -37,7 +37,11 @@ export function filterAndSortProjects<T extends SortableProject>(
     return filtered.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }))
   }
   return filtered.sort((a, b) => {
-    const byTime = b.updated_at.localeCompare(a.updated_at)
-    return byTime !== 0 ? byTime : a.id.localeCompare(b.id)
+    // Parsed instants, not string compare: chrono emits variable-width
+    // subseconds (`.500Z` vs `.500123Z`) and `Z` sorts after digits, so
+    // lexicographic order swaps same-second pairs. JS Dates are millisecond
+    // precision, so sub-millisecond differences tie and fall to the id.
+    const byTime = Date.parse(b.updated_at) - Date.parse(a.updated_at)
+    return byTime !== 0 && Number.isFinite(byTime) ? byTime : a.id.localeCompare(b.id)
   })
 }

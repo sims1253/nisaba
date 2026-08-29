@@ -30,6 +30,28 @@ describe("filterAndSortProjects", () => {
     ])
   })
 
+  it("orders same-second pairs with variable subsecond width by instant, not string", () => {
+    // `.500Z` vs `.501123Z`: lexicographic compare puts `.501123Z` BEFORE
+    // `.500Z` is fine here, but the mirrored case `.500Z` vs `.500123Z`
+    // (see below) is where strings lie. A full millisecond of difference
+    // must order by instant.
+    const half = mk("a", "Half a second", "2026-08-29T10:00:00.500Z")
+    const more = mk("b", "Half a second plus", "2026-08-29T10:00:00.501123Z")
+    expect(filterAndSortProjects([half, more], "", "recent").map((p) => p.name)).toEqual([
+      "Half a second plus",
+      "Half a second",
+    ])
+  })
+
+  it("breaks sub-millisecond ties deterministically by id", () => {
+    // JS Dates have millisecond precision: `.500Z` and `.500123Z` parse to
+    // the same instant, so the pair is a tie and the id tiebreaker decides
+    // (mirroring the API's deterministic ORDER BY …, id).
+    const half = mk("a", "Half a second", "2026-08-29T10:00:00.500Z")
+    const more = mk("b", "Half a second plus", "2026-08-29T10:00:00.500123Z")
+    expect(filterAndSortProjects([more, half], "", "recent").map((p) => p.id)).toEqual(["a", "b"])
+  })
+
   it("breaks updated_at ties deterministically by id", () => {
     const tied = [mk("b", "Late id", "2026-08-29T10:00:00Z"), mk("a", "Early id", "2026-08-29T10:00:00Z")]
     expect(filterAndSortProjects(tied, "", "recent").map((p) => p.id)).toEqual(["a", "b"])
