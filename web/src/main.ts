@@ -58,6 +58,19 @@ import {
   type CompileDiagnostic
 } from "./compile"
 import "./styles.css"
+// The bundled faces the design system names first in its font stacks
+// (styles.css --mono/--sans/--serif). Without these the stacks silently
+// fall through to system fallbacks on machines without the fonts installed
+// — which is most machines — and the settings' typeface presets collapsed
+// into each other. OFL-licensed; the weights the stylesheet actually uses.
+import "@fontsource/dm-mono/400.css"
+import "@fontsource/dm-mono/500.css"
+import "@fontsource/dm-sans/400.css"
+import "@fontsource/dm-sans/500.css"
+import "@fontsource/dm-sans/700.css"
+import "@fontsource/source-serif-4/400.css"
+import "@fontsource/source-serif-4/400-italic.css"
+import "@fontsource/source-serif-4/600.css"
 
 const root = document.querySelector<HTMLDivElement>("#app")
 if (!root) throw new Error("Application root missing")
@@ -124,11 +137,14 @@ const editableComp = new Compartment()
  * preventDefault, so Mod+Enter both compiled and broke the line. This
  * keymap claims the chord inside the editor (run: () => true — handled,
  * preventDefaulted, no newline); the event still bubbles, and the global
- * handler performs the compile exactly once. Reconfigured when the chord
- * is rebound.
+ * handler performs the compile exactly once. Prec.highest makes the claim
+ * authoritative over CodeMirror's own bindings for ANY rebindable chord
+ * (e.g. Mod+Backspace otherwise loses to deleteGroupBackward — the same
+ * reason the redo interceptor below wraps itself the same way).
+ * Reconfigured when the chord is rebound.
  */
 const compileChordCompartment = new Compartment()
-const compileChordKeymap = (chord: string) => keymap.of([{ key: chord.replace(/\+/g, "-"), run: () => true }])
+const compileChordKeymap = (chord: string) => Prec.highest(keymap.of([{ key: chord.replace(/\+/g, "-"), run: () => true }]))
 const syncCompileChord = (): void => {
   editor.dispatch({ effects: compileChordCompartment.reconfigure(compileChordKeymap(bindings.compile)) })
 }
@@ -258,6 +274,10 @@ const escapeHtml = (value: string): string => {
   div.textContent = value
   return div.innerHTML
 }
+/** Attribute-context escaping: escapeHtml's round-trip leaves double quotes
+ *  intact, so a quoted value (font stacks like "Iosevka", monospace) would
+ *  terminate the attribute early. */
+const escapeAttr = (value: string): string => escapeHtml(value).replaceAll('"', "&quot;")
 
 /**
  * Compact relative timestamp ("just now", "2 min ago", "1 h ago", "3 d ago", then a
@@ -3035,7 +3055,7 @@ function openSettings(): void {
       ${settings.typeface === "custom"
         ? `<div class="settings-row">
              <label id="settings-custom-font-label">Font stack</label>
-             <input id="settings-custom-font" type="text" placeholder="e.g. \"Iosevka\", \"JetBrains Mono\", monospace" value="${escapeHtml(settings.customFont ?? "")}" aria-labelledby="settings-custom-font-label" autocomplete="off" spellcheck="false">
+             <input id="settings-custom-font" type="text" placeholder="e.g. Iosevka, JetBrains Mono, monospace" value="${escapeAttr(settings.customFont ?? "")}" aria-labelledby="settings-custom-font-label" autocomplete="off" spellcheck="false">
            </div>`
         : ""}
       <div class="settings-row">
