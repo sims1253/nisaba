@@ -290,3 +290,25 @@ this as the procedure to rehearse, not a proven one.
   [`operations.md`](operations.md) §3.
 - Zero-downtime upgrades (Compose `--build` recreates containers; brief
   downtime is expected and acceptable at this scale).
+
+## 11. Releases
+
+A release is a git tag plus the GitHub Release created from it. There are no
+prebuilt artifacts to download — see the last point below.
+
+- **Cutting a release**: push a tag shaped `v0.1.0` — `v` followed by strict
+  semver (`vMAJOR.MINOR.PATCH`, optional `-prerelease`/`+build`;
+  [`release.yml`](../.github/workflows/release.yml) refuses any other shape
+  early). CI then re-runs the test gates (Rust fmt/clippy/test/cargo-deny/
+  wasm32 parity, tools typecheck + unit tests, web lint/build/test) and, when
+  they pass,
+  creates the GitHub Release with auto-generated notes. The notes are built
+  from merged PR titles — which follow the conventional-commit style — so the
+  changelog needs no separate bookkeeping.
+- **Upgrading a deployment** does not change: `git fetch --tags` +
+  `git checkout <tag>`, then rebuild from source exactly as in §8. Releases
+  attach no downloadable files.
+- **Docker image publishing is deliberately deferred** until a registry is
+  chosen (GHCR vs an external registry, image naming, multi-arch builds,
+  digest pinning for the Compose file). Until then the deployable remains
+  images built on the host from the tagged tree, as in local development.
