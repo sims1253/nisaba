@@ -24,6 +24,7 @@ artifacts/
 # Agent, editor, and OS state
 /.claude/
 /.prime/
+/.zcode/
 .vscode/
 .idea/
 *.swp
