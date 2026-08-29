@@ -376,7 +376,7 @@ the reload family (`⌘R`, `⌘⇧R`, `F5`), devtools, and history all reach the
 untouched — the Review dock deliberately has no global chord (button and palette
 command instead), and the zoom chords act on the preview only while the pointer is
 over the preview pane, leaving page zoom working everywhere else. The editor-standard
-overrides the app does keep (`⌘S`, `⌘K`, `⌘B`) replace browser actions that are
+overrides the app does keep (`⌘S`, `⌘K`, `⌘B`, `⌘⇧F`) replace browser actions that are
 meaningless in the app.
 
 ---
