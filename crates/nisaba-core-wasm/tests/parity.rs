@@ -334,7 +334,9 @@ fn app_wire_semantics() {
         "def"
     );
 
-    // Unknown mark kind: same message shape as the app's BadRequest. The plain
+    // Unknown mark kind: the one error string byte-identical to the app's
+    // BadRequest body (malformed marks JSON / unknown views fail in axum's
+    // extractor there, with different strings). The plain
     // function carries the message the JS wrapper wraps in a `JsError`.
     let err = projected_source(
         "abc",

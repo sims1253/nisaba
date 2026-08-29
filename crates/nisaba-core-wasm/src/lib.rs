@@ -158,10 +158,12 @@ mod dto {
 /// - `view` — one of `"baseline"`, `"proposed"`, `"redline"`, `"public"`.
 ///
 /// # Errors
-/// Returns an error string when `marks_json` is not valid JSON for the DTO, or
-/// when a mark kind or view name is unknown — the same conditions and message
-/// strings for which the app answers `400 Bad Request` (`invalid marks JSON:
-/// ...`, `unknown mark kind: ...`, `unknown view: ...`).
+/// Returns an error string when `marks_json` is not valid JSON for the DTO,
+/// when a mark kind is unknown, or when the view name is unknown. Only
+/// `unknown mark kind: ...` is byte-identical to the app's `400 Bad Request`
+/// body — the app rejects malformed marks JSON and unknown views earlier, in
+/// axum's `Json` extractor, with its own message shape, so those two match
+/// the app's *conditions*, not its exact strings.
 pub fn projected_source(source: &str, marks_json: &str, view: &str) -> Result<String, String> {
     let view = dto::parse_view(view)?;
     let marks: Vec<dto::Mark> =
