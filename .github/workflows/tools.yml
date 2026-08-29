@@ -205,6 +205,7 @@ jobs:
           shellcheck \
             scripts/cargo-audit.sh \
             scripts/check-architecture.sh \
+            scripts/fetch-jwks.sh \
             scripts/wait-healthy.sh \
             deploy/validate-compose.sh \
             deploy/smoke.sh \

@@ -51,7 +51,10 @@ just up-all
 ```
 
 When the build finishes, open http://127.0.0.1:8103 and sign in with `demo`/`demo`
-(the other demo accounts are listed in the user guide).
+(the other demo accounts are listed in the user guide). `just up-all` waits for
+Keycloak and injects the dev realm's signing keys (`NISABA_OIDC_JWKS_JSON`) for
+that invocation, so authenticated API calls work out of the box; a value set
+explicitly in `.env` or the environment takes precedence.
 
 The default Compose configuration binds published ports to `127.0.0.1` only. It includes a
 **development-only** Keycloak realm with documented demo accounts; never import that realm into
