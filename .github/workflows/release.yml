@@ -1,0 +1,178 @@
+# Tag-driven release: pushing a vMAJOR.MINOR.PATCH tag re-runs the test gates
+# and, when they pass, publishes a GitHub Release with auto-generated notes
+# (assembled from PR titles, which are conventional-commit style — that is the
+# whole changelog mechanism; there is no changeset bookkeeping).
+#
+# No files are attached: the deployable is the Docker Compose stack, and image
+# BUILDING is already gated by tools.yml (compose-build). PUBLISHING images is
+# deliberately deferred until a registry is chosen (GHCR vs external, image
+# naming, multi-arch, digest pinning) — out of scope here. Until then
+# `fail_on_unmatched_files` stays unset (it only matters once `files:` exists).
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  # Per tag: a re-pushed tag supersedes its own stale run; different tags
+  # never interact (the group includes the full ref).
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # The 'v*.*.*' trigger pattern is a glob, not semver — v1.2, v1.2.3.4 or
+  # v01.2.3 would all match it. Refuse anything that is not v + strict semver
+  # (official semver.org regex, ERE form) before any expensive job starts.
+  # GITHUB_REF_NAME is read through the env, never interpolated into the
+  # script — tag names must not end up inside the shell command.
+  validate-tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse non-semver tag shapes
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if ! echo "$tag" | grep -Eq "$semver"; then
+            echo "::error::refusing to release: tag '$tag' is not v + semver (expected vMAJOR.MINOR.PATCH with optional -prerelease/+build). Delete the tag and re-push a well-formed one."
+            exit 1
+          fi
+          echo "'$tag' is a valid release tag."
+
+  # ---- Test gates: the exact commands and pins from rust.yml --------------
+
+  rust-fmt:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  rust-clippy:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Pedantic workspace lints fail the build via RUSTFLAGS=-D warnings;
+      # --locked verifies against the committed Cargo.lock (rust.yml comments).
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --all-features --locked
+
+  rust-test:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # --locked builds against the committed Cargo.lock and fails on drift.
+      - run: cargo test --workspace --all-targets --locked
+      - run: cargo test --workspace --doc --locked
+
+  # Licences, advisories, bans, and sources are a blocking policy gate
+  # (rust.yml) — a release must not ship past them either.
+  rust-deny:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
+  # ---- Test gates: the exact commands and pins from tools.yml --------------
+
+  tools-verify:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.3'
+      # setup-bun has no dependency-cache input (it only caches the bun binary),
+      # so cache the global bun install cache ourselves, keyed on the lockfile.
+      - name: Cache bun install cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - name: Install dependencies (workspace root, frozen lockfile)
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+        working-directory: tools
+      - name: Unit tests (external-tool suite excluded; runs in external-pdf-tools)
+        run: bun run test -- --exclude 'test/external-gated.test.ts'
+        working-directory: tools
+
+  # ---- Test gates: the exact commands and pins from web.yml ----------------
+
+  web-verify:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.3'
+      - name: Cache bun install cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - name: Install dependencies (workspace root, frozen lockfile)
+        run: bun install --frozen-lockfile
+      - name: Lint
+        run: bun run lint
+        working-directory: web
+      - name: Build
+        run: bun run build
+        working-directory: web
+      - name: Test
+        run: bun run test
+        working-directory: web
+
+  # ---- The release itself --------------------------------------------------
+  # The ONLY job with contents: write — creating the GitHub Release needs it;
+  # everything above stays at the workflow's contents: read.
+  release:
+    needs: [validate-tag, rust-fmt, rust-clippy, rust-test, rust-deny, tools-verify, web-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # generate_release_notes: GitHub builds the notes from merged PR titles
+      # since the previous tag (all PRs for the first release) — conventional
+      # commit titles double as the changelog. No `files:` — see header.
+      - name: Create GitHub Release with generated notes
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          generate_release_notes: true
