@@ -318,6 +318,8 @@ body:not(.has-project) .appbar-tools { display: none }
   flex: 1; border: 1px solid var(--rule-strong); border-radius: var(--radius);
   padding: 6px 7px; font: 12px var(--sans); background: var(--overlay); color: var(--ink);
 }
+.keybind-btn { font: 12px var(--mono); min-width: 120px; text-align: center }
+.keybind-btn.capturing { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft) }
 .settings-note { color: var(--muted); font-size: 11px; margin: 12px 0 0 }
 
 .project-rows { border-top: 1px solid var(--rule) }

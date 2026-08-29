@@ -22,7 +22,7 @@ export const SHELL_HTML = `
   <button class="palette-hint" id="open-palette" type="button" aria-label="Search files, sections and commands">
     <span class="lead" aria-hidden="true">⌕</span>
     <span class="text">Search files, sections, commands…</span>
-    <kbd>⌘K</kbd>
+    <kbd id="palette-hint-chord">⌘K</kbd>
   </button>
 
   <div class="appbar-tools" id="appbar-tools">
