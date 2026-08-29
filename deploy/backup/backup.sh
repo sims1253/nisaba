@@ -33,7 +33,7 @@ if docker compose ps postgres 2>/dev/null | grep -q "postgres"; then
         -U "${NISABA_DB_USER:-nisaba_app}" "${NISABA_DB_NAME:-nisaba}" \
         > "${DEST}/postgres/nisaba.sql" 2>"${DEST}/postgres/pg_dump.stderr" \
         || {
-            echo "[backup] WARN: pg_dump failed — see ${DEST}/postgres/pg_dump.stderr" >&2
+            echo "[backup] ERROR: pg_dump failed — see ${DEST}/postgres/pg_dump.stderr; snapshot is INCOMPLETE (no database dump)." >&2
             exit 1
         }
     gzip -f "${DEST}/postgres/nisaba.sql" 2>/dev/null || true

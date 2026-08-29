@@ -118,9 +118,9 @@ Scripts: [`deploy/backup/backup.sh`](../deploy/backup/backup.sh),
 
 ### What is backed up
 - **Postgres** `nisaba` database: logical dump (`pg_dump --clean --if-exists`,
-  gzipped). **A failed dump aborts the backup** — `backup.sh` exits non-zero
-  instead of printing a warning and continuing, so a snapshot without the
-  database dump can never be mistaken for a good backup. Keycloak's DB is
+  gzipped). **A failed dump aborts the backup** — a snapshot without the
+  database dump is reported as INCOMPLETE and `backup.sh` exits non-zero
+  instead of printing a warning and continuing. Keycloak's DB is
   *not* in the dev backup (it is stateful identity; back it up separately in
   production).
 - **SeaweedFS** `nisaba-*` buckets: `aws s3 sync` (versioned) to a local dir. The
