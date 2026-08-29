@@ -19,7 +19,13 @@ certs_url="http://127.0.0.1:${kc_port}/realms/nisaba/protocol/openid-connect/cer
 
 # Fetch the JWKS from the running Keycloak (or start infra first and wait).
 if ! curl -fsS "$certs_url" >/dev/null 2>&1; then
-    docker compose up -d
+    # Both call sites capture this script's stdout as the JWKS value, and the
+    # app aborts startup on a JWKS that is not valid JSON — so the compose
+    # bring-up's stdout goes to stderr unconditionally. Compose sends `up -d`
+    # status lines to stderr by default, but honors COMPOSE_STATUS_STDOUT; a
+    # truthy value in the operator's environment would otherwise pollute the
+    # captured JWKS on the cold-start path.
+    docker compose up -d 1>&2
     echo "[fetch-jwks] waiting for Keycloak on port ${kc_port}..." >&2
     for _ in $(seq 1 60); do
         if curl -fsS "$certs_url" >/dev/null 2>&1; then
