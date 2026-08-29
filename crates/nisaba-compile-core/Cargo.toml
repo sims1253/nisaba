@@ -1,0 +1,24 @@
+[package]
+name = "nisaba-compile-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Pure Typst compilation core: worker cache, compile pipeline, span map, outline, diagnostics over in-memory sources."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1.44"
+typst = { version = "0.15.1", features = [] }
+typst-layout = "0.15.1"
+typst-pdf = "0.15.1"
+tinymist-vfs = "=0.15.0"
+tinymist-world = { version = "=0.15.0", features = ["mock"] }
+tinymist-project = { version = "0.15.0", features = ["no-content-hint"] }

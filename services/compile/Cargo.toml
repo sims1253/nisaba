@@ -13,21 +13,14 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { version = "0.8", features = ["json"] }
-base64 = "0.22"
+nisaba-compile-core = { path = "../../crates/nisaba-compile-core" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
-typst = { version = "0.15.1", features = [] }
-typst-layout = "0.15.1"
-typst-pdf = "0.15.1"
-typst-svg = "0.15.1"
-tinymist-vfs = "=0.15.0"
-tinymist-world = { version = "=0.15.0", features = ["mock"] }
 subtle = "2.6.1"
 sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tinymist-project = { version = "0.15.0", features = ["no-content-hint"] }
 
 [dev-dependencies]
+serde_json = "1"
 tower = { version = "0.5", features = ["util"] }
