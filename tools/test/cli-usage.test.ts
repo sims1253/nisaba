@@ -84,6 +84,18 @@ describe("CLI usage errors render the JSON error envelope", () => {
     expect(envelope.error!.message).toBe(`invalid ${key} value "${value}"; expected a finite number`);
   });
 
+  it("rejects a valueless numeric option instead of silently using the default", async () => {
+    // parseArgs files a bare `--dpi` (next token is an option) under `flags`;
+    // numOpt must reject it rather than treating the option as absent and
+    // running under default thresholds.
+    const { exitCode, envelope } = await runCommand([
+      "visual-diff", "--reference", "a.pdf", "--candidate", "b.pdf", "--dpi", "--fuzz-percent", "5",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error).toEqual({ kind: "UsageError", message: "--dpi requires a value" });
+  });
+
   it("accepts a valid numeric option and keeps the default when absent", async () => {
     // A valid --dpi (and, separately, no --dpi at all) must pass validation:
     // the failure below is the invalid provenance that follows the numeric

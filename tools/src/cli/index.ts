@@ -72,15 +72,19 @@ function cleanupWorkdir(workdir: string): void {
 
 /**
  * Parse a numeric option. Absent → `fallback`; present-but-unparseable
- * (e.g. `--dpi 15O`, or an empty value) → UsageError — a present-but-invalid
- * value must never silently fall back to the default, consistent with the
- * validated-CLI-input policy of `parseProvenanceOption`.
+ * (e.g. `--dpi 15O`, or an empty value) or valueless (a bare `--dpi`, which
+ * parseArgs files under `flags`) → UsageError — a present-but-invalid or
+ * valueless option must never silently fall back to the default, consistent
+ * with the validated-CLI-input policy of `parseProvenanceOption`.
  */
 function numOpt(
   args: ReturnType<typeof parseArgs>,
   key: string,
   fallback: number,
 ): Effect.Effect<number, UsageError> {
+  if (args.flags.has(key)) {
+    return Effect.fail(new UsageError(`--${key} requires a value`));
+  }
   const raw = args.options.get(key);
   if (raw === undefined) return Effect.succeed(fallback);
   const n = raw.trim() === "" ? Number.NaN : Number(raw);
