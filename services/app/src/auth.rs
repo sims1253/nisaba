@@ -105,6 +105,14 @@ impl Authenticator {
         validation.set_audience(std::slice::from_ref(&self.audience));
         let token = decode::<Claims>(token, &key, &validation)
             .map_err(|_| AppError::Unauthorized("JWT validation failed".into()))?;
+        if token.claims.sub.is_empty() {
+            // `sub: ""` is non-conformant but deserializes fine; letting it
+            // through would recreate the shared empty-identity membership row
+            // the required-`sub` change closed. App already rejects empty
+            // subjects at its other boundaries (internal sync authorize,
+            // membership add), so the auth edge must too.
+            return Err(AppError::Unauthorized("token has an empty subject".into()));
+        }
         let mut roles = HashSet::new();
         for role in &token.claims.roles {
             if let Some(role) = Role::parse(role) {
@@ -112,11 +120,7 @@ impl Authenticator {
             }
         }
         Ok(Principal {
-            subject: token
-                .claims
-                .sub
-                .clone()
-                .unwrap_or_else(|| token.claims.preferred_username.clone().unwrap_or_default()),
+            subject: token.claims.sub,
             roles,
             preferred_username: token.claims.preferred_username,
         })
@@ -126,11 +130,14 @@ impl Authenticator {
 // makes deserialization structurally reject tokens that lack them, while
 // `jsonwebtoken`'s own validation enforces their values. That is why the
 // dead-code allow below is intentional (mirrors services/sync/src/oidc.rs).
+// `sub` is required for a different reason: it keys memberships and the
+// project ACL, so a token without it must not authenticate at all — falling
+// back (to `preferred_username`, or worse "") would let distinct claim-less
+// users collide on one identity.
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Claims {
-    #[serde(default)]
-    sub: Option<String>,
+    sub: String,
     exp: usize,
     iss: String,
     aud: Value,

@@ -1,7 +1,11 @@
 #![cfg(test)]
 use crate::test_support::MemoryRepository;
 use crate::*;
-use axum::{body::Body, http::Request, response::Response};
+use axum::{
+    body::Body,
+    http::{HeaderMap, Request, header},
+    response::Response,
+};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use tower::util::ServiceExt;
 
@@ -32,14 +36,23 @@ fn auth() -> Authenticator {
 }
 
 fn token(subject: &str, role: &str) -> String {
+    mint(json!({"sub": subject, "roles": [role]}))
+}
+
+/// Mint a signed token whose claims are merged over the required registered
+/// claims, so tests can exercise tokens with missing claims (e.g. no `sub`).
+fn mint(overrides: Value) -> String {
     let expires_at = u64::try_from(Utc::now().timestamp() + 3600).unwrap();
-    let claims = json!({
-        "sub": subject,
-        "roles": [role],
+    let mut claims = json!({
         "exp": expires_at,
         "iss": "issuer",
         "aud": "audience"
     });
+    if let Value::Object(source) = overrides
+        && let Some(target) = claims.as_object_mut()
+    {
+        target.extend(source);
+    }
     encode(
         &Header {
             alg: Algorithm::HS256,
@@ -50,6 +63,15 @@ fn token(subject: &str, role: &str) -> String {
         &EncodingKey::from_secret(b"secret"),
     )
     .unwrap()
+}
+
+fn bearer_headers(token: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
+    headers
 }
 
 fn state() -> AppState {
@@ -127,6 +149,44 @@ async fn health_is_public() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn token_without_sub_is_unauthorized() {
+    // `sub` keys memberships and the project ACL; a token without it used to
+    // fall back to preferred_username (or "") and authenticate claim-less
+    // users onto one shared identity. It must be rejected outright.
+    let error = auth()
+        .authenticate(&bearer_headers(&mint(json!({"roles": ["author"]}))))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::Unauthorized(_)));
+}
+
+#[tokio::test]
+async fn token_with_empty_sub_is_unauthorized() {
+    // A non-conformant issuer can mint `sub: ""`, which the required-`sub`
+    // deserialization accepts; the boundary check must reject it before it
+    // can become a membership/ACL key.
+    let error = auth()
+        .authenticate(&bearer_headers(&mint(
+            json!({"sub": "", "roles": ["author"]}),
+        )))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::Unauthorized(_)));
+}
+
+#[tokio::test]
+async fn token_with_sub_but_no_preferred_username_authenticates() {
+    // `preferred_username` is only a membership-lookup alias, never a subject
+    // fallback: a plain `sub` token authenticates with that subject.
+    let principal = auth()
+        .authenticate(&bearer_headers(&token("alice", "author")))
+        .await
+        .unwrap();
+    assert_eq!(principal.subject, "alice");
+    assert_eq!(principal.preferred_username, None);
 }
 
 #[tokio::test]
