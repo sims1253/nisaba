@@ -12,10 +12,10 @@
 #   * nginx /api/* proxy works: a regression test that the set/rewrite ordering
 #     in nginx.conf is correct (a misordering returns HTTP 500 for all API calls).
 #   * sync completes a real HELLO handshake at GET /sync/{doc_id} — not just the
-#     101 upgrade. The dev stack configures sync with no OIDC issuer/JWKS, which
-#     means deny-all, so the assertion is that the relay answers a typed ERROR
-#     frame: proof the fail-closed path runs rather than silently admitting a
-#     peer.
+#     101 upgrade. This script strips the three NISABA_SYNC_OIDC_* variables
+#     from .env.example (see TMP_ENV below), leaving sync deny-all, so the
+#     assertion is that the relay answers a typed ERROR frame: proof the
+#     fail-closed path runs rather than silently admitting a peer.
 #   * The app half of the authorize loop is exercised for real: a project →
 #     a path-addressed document is created, then POST /internal/sync/authorize
 #     with the machine token resolves that document to the creator's role.
@@ -56,6 +56,9 @@ need openssl  # dev-token.py shells out to the openssl CLI
 TMP_ENV="$(mktemp)"
 TOKEN_DIR="$(mktemp -d -t nisaba-e2e-token-XXXXXX)"
 PROJECT="nisaba-e2e-$$"
+# .env.example SETS the sync OIDC trio (the local stack validates Keycloak
+# JWTs); strip all three here so this throwaway env runs sync deny-all, which
+# the handshake probe below asserts.
 grep -vE '^(NISABA_SYNC_OIDC_ISSUER|NISABA_SYNC_OIDC_AUDIENCE|NISABA_SYNC_OIDC_JWKS_URL)=' "$ENV_EXAMPLE" > "$TMP_ENV"
 
 # `--profile app` is required or the app tier (app/sync/compile/web) never
@@ -294,10 +297,11 @@ role="$(printf '%s' "$authz_json" | jq -r '.role // empty')"
 echo "[e2e] authorize ok (subject=${subject} role=${role})"
 
 # ---- sync: a real HELLO handshake, not just the upgrade ---------------------
-# Runs from the host against the published sync port. The dev stack leaves sync's
-# OIDC variables empty, which is deny-all, so a typed ERROR frame is the correct
-# and asserted outcome — the fail-closed path actually executing. Point sync at a
-# JWKS URL serving this token's key to turn this into `--expect welcome`.
+# Runs from the host against the published sync port. The env this script built
+# (TMP_ENV, with the NISABA_SYNC_OIDC_* trio stripped) leaves sync deny-all, so
+# a typed ERROR frame is the correct and asserted outcome — the fail-closed path
+# actually executing. Point sync at a JWKS URL serving this token's key to turn
+# this into `--expect welcome`.
 SYNC_PORT="$(grep -E '^SYNC_HOST_PORT=' "$TMP_ENV" | cut -d= -f2- || true)"
 SYNC_PORT="${SYNC_PORT:-8101}"
 
@@ -321,7 +325,7 @@ uv run deploy/sync-handshake.py \
 echo "[e2e] sync deny-all handshake ok (typed ERROR frame, fail-closed path runs)"
 
 # ---- sync: authorized handshake + one update, asserted in the op-log bucket --
-# The deny-all probe above proved the fail-closed path with the default env.
+# The deny-all probe above proved the fail-closed path with the OIDC-less env.
 # This step recreates sync with the dev allow-all toggle and drives the
 # success path end to end: a WELCOME handshake, one real Loro update (the
 # blob is generated and round-trip-verified by `cargo test -p nisaba-sync

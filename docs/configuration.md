@@ -84,10 +84,11 @@ replacement is documented in [`deploy/keycloak/README.md`](../deploy/keycloak/RE
 | `RUST_LOG` / `RUST_BACKTRACE` | `info` / `1` | Log verbosity / backtraces (all Rust services) | `tracing_subscriber` |
 | `TEST_DATABASE_URL` | — | **Reserved** for optional Postgres-backed adapter tests | `services/app` tests |
 
-`NISABA_OIDC_ROLE_AUTHOR` / `NISABA_OIDC_ROLE_REVIEWER` /
-`NISABA_OIDC_ROLE_READONLY` appear in `.env.example` but are **read by
-nothing** — roles come from the token's top-level `roles` claim as configured
-in the realm mapper.
+Role names are **not configurable**: the `author` / `reviewer` / `read-only`
+vocabulary is hardcoded in `crates/nisaba-auth` (`Role::parse`), and roles are
+read from the token's top-level `roles` claim as configured in the realm
+mapper. (Legacy `NISABA_OIDC_ROLE_AUTHOR` / `_REVIEWER` / `_READONLY`
+variables were removed from `.env.example` — nothing ever read them.)
 
 ## `sync` service
 
@@ -105,7 +106,7 @@ variables `.env.example` sets for the local stack:
 | `NISABA_S3_BUCKET_OPLOG` | — **required** in `s3` mode | Bucket for the `oplog/` and `snapshot/` key prefixes |
 | `NISABA_SYNC_DATA_DIR` | `data` | Op-log + snapshot directory (**`fs` backend only**; unused in compose) |
 | `NISABA_SYNC_DEV_ALLOW_ALL` | unset | **Never in production**: grants `author` to any non-empty token |
-| `NISABA_SYNC_OIDC_ISSUER` / `NISABA_SYNC_OIDC_AUDIENCE` / `NISABA_SYNC_OIDC_JWKS_URL` | unset (deny-all) | All three set together enable JWT/JWKS validation; a partial set is a fatal startup error |
+| `NISABA_SYNC_OIDC_ISSUER` / `NISABA_SYNC_OIDC_AUDIENCE` / `NISABA_SYNC_OIDC_JWKS_URL` | unset (deny-all); `.env.example` sets all three | All three set together enable JWT/JWKS validation — the local stack validates real Keycloak JWTs; a partial set is a fatal startup error |
 | `NISABA_SYNC_OIDC_ROLES_CLAIM` | `realm_access.roles` | Dotted path of the roles claim (set `roles` for this realm) |
 | `NISABA_SYNC_AUTHZ_URL` | unset → deny-all documents | App's `/internal/sync/authorize` endpoint |
 | `NISABA_SYNC_AUTHZ_TOKEN` | unset | Machine token for the authz endpoint (same value the app checks); also required by `GET /internal/docs/{id}/state` — unset → deny-all (fail-closed) |
