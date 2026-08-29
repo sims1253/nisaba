@@ -105,7 +105,9 @@ valid token can never open an arbitrary document:
 1. **JWT validation** (`JwtValidator`). Header `kid` → JWKS key lookup → the
    token algorithm must be in the allow-list **and** equal the matched JWK's
    configured algorithm (defeats RS↔HMAC confusion) → `iss`, `aud`, `exp` are
-   verified. Only the explicit roles claim is read (default
+   verified → the `sub` claim must be present **and non-empty** (it keys the
+   per-document authorization below; an empty subject is rejected as
+   unauthenticated). Only the explicit roles claim is read (default
    `realm_access.roles`, the Keycloak mapping); **scopes are never interpreted
    as roles**.
 2. **Document authorization** (`DocumentAuthorizer`). Even after a valid JWT,
