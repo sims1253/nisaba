@@ -72,6 +72,29 @@ jobs:
       - run: cargo test --workspace --all-targets --locked
       - run: cargo test --workspace --doc --locked
 
+  # Parity guard for the wasm projection wrapper (issue #20 stage 1): the
+  # golden projection fixtures must hold through the wasm-bindgen boundary on
+  # wasm32, not only natively. The test-runner binary version must match the
+  # wasm-bindgen crate version pinned via wasm-bindgen-test
+  # (crates/nisaba-core-wasm/Cargo.toml).
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2.86.1
+        with:
+          tool: wasm-bindgen-cli@0.2.127
+      # Clippy on the wasm target covers the target-specific cfg code the
+      # native clippy job never compiles.
+      - run: cargo clippy -p nisaba-core-wasm --target wasm32-unknown-unknown --all-targets --locked
+      - run: cargo test -p nisaba-core-wasm --target wasm32-unknown-unknown --locked
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+
   deny:
     runs-on: ubuntu-latest
     steps:
