@@ -23,6 +23,7 @@ The following table is validated by CI against the Cargo workspace members
 | `nisaba-sync`      | Rust        | Loro CRDT authority, relay, presence, op-log      | impl. (`/healthz`, `/health/ready`) |
 | `nisaba-app`       | Rust        | CRUD, references, export orchestration, auth      | impl. (`/healthz`, `/health/ready`; Postgres + S3, inline JWKS) |
 | `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
+| `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection + bibliography wrapper over `nisaba-core`/`nisaba-references` for the web client (issue #20 stage 1) | impl. (pure, no I/O, no server use yet) |
 | `nisaba-auth`      | Rust (lib)  | Shared role vocabulary (`Role` spellings for tokens and the app/sync authz contract) | impl. |
 | `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
 | `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
@@ -37,11 +38,19 @@ warm `comemo` caches only survive if the process stays alive. The
 other services are Rust for crate sharing, but the boundary is a process
 boundary regardless.
 
+`nisaba-core-wasm` re-exports the *same* projection the app applies
+server-side (`nisaba-core`) behind a wasm-bindgen boundary for the planned
+in-browser compile path (issue #20); a parity suite feeds the golden projection
+fixtures through the boundary on both the native and wasm32 targets so the
+client-side projection cannot drift from the server's. Server paths do not use
+it (planned, stage 2 will wire the client).
+
 ### Rust workspace members
 
 ```
 crates/nisaba-auth        — shared role vocabulary (Role spellings)
 crates/nisaba-core        — pure domain: Position, projection, marks
+crates/nisaba-core-wasm   — wasm-bindgen projection wrapper for the web client
 crates/nisaba-references  — RIS reference format
 crates/nisaba-export      — export utilities
 services/app              — CRUD, references, export orchestration, auth

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/nisaba-auth",
   "crates/nisaba-core",
+  "crates/nisaba-core-wasm",
   "crates/nisaba-references",
   "crates/nisaba-export",
   "services/app",
