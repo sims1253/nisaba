@@ -310,13 +310,20 @@ not.
 ### 4.13 Make the editor yours (settings)
 
 The Settings button (app bar, right side — reachable on every screen, no project needed)
-opens the Settings dock. First scope: **editor typography** — typeface (mono/serif/sans,
-the stylesheet's font stacks), font size (12–24 px), and line spacing (1.2–2.2), applied
-live. Settings are **local to this browser** (localStorage): a collaborator's serif
-preference must not leak into anyone else's editor or into compiled output, so nothing
-here is project data. Every field is validated on load — a corrupt record degrades to
-the defaults per field, never to a broken editor. Coming scopes: per-project default
-file and rebindable app chords (which will refuse browser-essential chords per §6).
+opens the Settings dock. Settings are **local to this browser** (localStorage): a
+collaborator's serif preference must not leak into anyone else's editor or into compiled
+output, so nothing here is project data. Every field is validated on load — a corrupt
+record degrades to the defaults per field, never to a broken editor.
+
+Scopes, in delivery order:
+
+- **Editor typography** — typeface (mono/serif/sans, the stylesheet's font stacks), font
+  size (12–24 px), line spacing (1.2–2.2), applied live.
+- **Opening file** (project open, per project) — which document opens when the project is
+  entered *without* a more recent file in that tab (a reload restoring your last file
+  still wins, and a manual pick during the open window overrides). This browser's
+  choice, not the project's — a shared "main document" would be API data.
+- Coming: rebindable app chords (which will refuse browser-essential chords per §6).
 
 ---
 

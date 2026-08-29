@@ -8,7 +8,9 @@ import {
   TYPEFACE_STACKS,
   applySettings,
   clampSettings,
+  loadDefaultFile,
   loadSettings,
+  saveDefaultFile,
   saveSettings,
 } from "./settings.js"
 
@@ -98,5 +100,40 @@ describe("applySettings", () => {
     expect(root.style.getPropertyValue("--ed-font")).toBe(TYPEFACE_STACKS.serif)
     expect(root.style.getPropertyValue("--ed-size")).toBe("17px")
     expect(root.style.getPropertyValue("--ed-line")).toBe("1.5")
+  })
+})
+
+describe("default file", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", memoryStorage())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("is unset by default and set per project", () => {
+    expect(loadDefaultFile("p1")).toBeUndefined()
+    saveDefaultFile("p1", "chapters/intro.typ")
+    saveDefaultFile("p2", "main.typ")
+    expect(loadDefaultFile("p1")).toBe("chapters/intro.typ")
+    expect(loadDefaultFile("p2")).toBe("main.typ")
+  })
+
+  it("clears with undefined or empty string", () => {
+    saveDefaultFile("p1", "main.typ")
+    saveDefaultFile("p1", undefined)
+    expect(loadDefaultFile("p1")).toBeUndefined()
+    saveDefaultFile("p1", "main.typ")
+    saveDefaultFile("p1", "")
+    expect(loadDefaultFile("p1")).toBeUndefined()
+  })
+
+  it("ignores corrupt or non-string entries", () => {
+    localStorage.setItem("nisaba.defaultFiles", "{broken")
+    expect(loadDefaultFile("p1")).toBeUndefined()
+    localStorage.setItem("nisaba.defaultFiles", JSON.stringify({ p1: 42, p2: "ok.typ", bad: "" }))
+    expect(loadDefaultFile("p1")).toBeUndefined()
+    expect(loadDefaultFile("p2")).toBe("ok.typ")
+    expect(loadDefaultFile("bad")).toBeUndefined()
   })
 })
