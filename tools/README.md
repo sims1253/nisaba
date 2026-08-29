@@ -24,7 +24,7 @@ fixtures and the golden manifest/skeleton outputs.
 cd tools
 bun install
 bun bin/nisaba-tools.ts capabilities
-./verify.sh                 # typecheck + tests + golden-stability + skeleton compile
+./verify.sh                 # lint + typecheck + tests + golden-stability + skeleton compile
 ```
 
 ## Commands

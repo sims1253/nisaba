@@ -3,10 +3,11 @@
 #
 # Runs the full local verification suite for the tools package:
 #   1. dependency install (bun) — only if node_modules is absent
-#   2. typecheck (tsc --noEmit)
-#   3. unit + external-gated tests (vitest)
-#   4. golden-file stability (re-introspect fixture == committed golden)
-#   5. skeleton compiles with Typst (if typst present)
+#   2. lint (oxlint)
+#   3. typecheck (tsc --noEmit)
+#   4. unit + external-gated tests (vitest)
+#   5. golden-file stability (re-introspect fixture == committed golden)
+#   6. skeleton compiles with Typst (if typst present)
 #
 # Safe to run in CI: no network after install, deterministic outputs, exits
 # non-zero on any failure. Usage: ./tools/verify.sh [--no-install]
@@ -29,6 +30,9 @@ if [[ "$NO_INSTALL" -eq 0 && ! -d node_modules ]]; then
   echo ":: installing dependencies (bun)"
   bun install --frozen-lockfile 2>/dev/null || bun install
 fi
+
+echo ":: lint"
+bunx oxlint .
 
 echo ":: typecheck"
 bunx tsc --noEmit

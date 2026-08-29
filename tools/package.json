@@ -20,6 +20,7 @@
     "pdf-compliance": "bun src/cli/index.ts pdf-compliance",
     "ris-roundtrip": "bun src/cli/index.ts ris-roundtrip",
     "fixtures:gen": "bun src/cli/index.ts fixtures-gen",
+    "lint": "oxlint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "oxlint": "^1.77.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
