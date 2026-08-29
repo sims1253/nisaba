@@ -26,6 +26,7 @@ export const SHELL_HTML = `
   </button>
 
   <div class="appbar-tools" id="appbar-tools">
+    <div class="people" id="project-people" aria-label="People with access" hidden></div>
     <button id="references-button" class="btn btn-quiet" type="button" title="The project's reference library">References</button>
     <button id="history-button" class="btn btn-quiet" type="button" title="Earlier versions of this file" hidden>History</button>
     <button id="share-button" class="btn btn-quiet" type="button" title="People with access" hidden>Share</button>
@@ -46,6 +47,13 @@ export const SHELL_HTML = `
       <button id="new-project" class="btn btn-primary" type="button">New project</button>
     </div>
     <p class="screen-lede">A project holds the files, references, and history of one document.</p>
+    <div class="project-tools" id="project-tools" hidden>
+      <input id="project-search" type="search" placeholder="Search projects…" aria-label="Search projects" autocomplete="off">
+      <div class="segmented" role="group" aria-label="Sort projects">
+        <button id="sort-recent" class="seg" type="button" aria-pressed="true" title="Most recently edited first">Recent</button>
+        <button id="sort-name" class="seg" type="button" aria-pressed="false" title="Alphabetical">Name</button>
+      </div>
+    </div>
     <div id="project-list"></div>
   </div>
 </main>

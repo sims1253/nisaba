@@ -228,6 +228,16 @@ kbd {
 .appbar-tools .btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent-strong) }
 body:not(.has-project) .appbar-tools { display: none }
 
+/* Who-has-access roster: always visible while a project is open, not just in
+   the Share dock. Chips clamp so a large roster cannot blow out the app bar. */
+.people { display: flex; align-items: center; gap: 5px; margin-right: 10px; overflow: hidden }
+.person {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 150px;
+  border: 1px solid var(--rule); border-radius: var(--radius); padding: 2px 6px;
+  font-size: 11px; color: var(--ink-soft); white-space: nowrap;
+}
+.person strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis }
+
 .appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; flex: 0 0 auto }
 
 .save-status { font-size: 11.5px; color: var(--muted); white-space: nowrap }
@@ -262,6 +272,25 @@ body:not(.has-project) .appbar-tools { display: none }
 .screen-head h2 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -.01em }
 .screen-head .btn { margin-left: auto }
 .screen-lede { color: var(--muted); font-size: 12.5px; margin: 0 0 22px }
+
+/* Search + sort above the rows: the list can hold hundreds of projects. */
+.project-tools { display: flex; align-items: center; gap: 10px; margin: -10px 0 14px }
+.project-tools input[type="search"] {
+  border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  padding: 6px 9px; font: 12.5px var(--sans); background: var(--overlay); color: var(--ink);
+  min-width: 220px;
+}
+.project-tools input[type="search"]:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 2px #23508a2e; outline: none;
+}
+.segmented { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden }
+.seg {
+  font: 600 10.5px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase;
+  padding: 7px 10px; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+}
+.seg + .seg { border-left: 1px solid var(--rule-strong) }
+.seg[aria-pressed="true"] { background: var(--rule); color: var(--ink) }
+.screen-note { color: var(--muted); font-size: 11px; margin: 0 0 8px }
 
 .project-rows { border-top: 1px solid var(--rule) }
 .project-row {
