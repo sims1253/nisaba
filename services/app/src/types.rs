@@ -325,7 +325,12 @@ impl From<RepoError> for AppError {
         match error {
             RepoError::NotFound => Self::NotFound,
             RepoError::Conflict(message) => Self::Conflict(message),
-            RepoError::Failure(_) => Self::Internal,
+            // Server-side trail only: the response stays a detail-free
+            // "internal error" so storage failures do not leak to clients.
+            RepoError::Failure(_) => {
+                tracing::error!(error = %error, "repository failure mapped to internal error");
+                Self::Internal
+            }
         }
     }
 }
