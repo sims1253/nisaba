@@ -121,8 +121,8 @@ mod reqwest_impl {
         ///
         /// This only clears reqwest's `https_only` scheme restriction; it does
         /// **not** disable TLS certificate verification. HTTPS connections are
-        /// still verified against the system roots, and plain-`http://` URLs
-        /// carry no TLS to verify in the first place.
+        /// still verified against the bundled webpki (Mozilla) root set, and
+        /// plain-`http://` URLs carry no TLS to verify in the first place.
         #[must_use]
         pub fn new_allow_http(
             connect_timeout: std::time::Duration,
