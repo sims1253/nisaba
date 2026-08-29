@@ -13,7 +13,8 @@
 //! 2. **JWT validation** ([`JwtValidator`]): header → `kid` lookup in the JWKS
 //!    cache → algorithm allow-list (never `none`) → algorithm must equal the
 //!    JWK's configured algorithm (defeats RS/HMAC confusion) → signature,
-//!    `iss`, `aud`, `exp` verified via `jsonwebtoken`. Only the explicit
+//!    `iss`, `aud`, `exp` verified via `jsonwebtoken`, and an explicitly empty
+//!    `sub` rejected (parity with the app's auth edge). Only the explicit
 //!    `roles` claim is read; **scopes are never interpreted as roles**.
 //! 3. **Document authorization** ([`DocumentAuthorizer`]): the per-document
 //!    gate. [`DenyAllAuthorizer`] (default, fail-closed) or
@@ -188,6 +189,20 @@ impl JwtValidator {
         let data = decode::<Claims>(token, &key, &validation)
             .map_err(|e| AuthError::Unauthenticated(jwt_error(&e)))?;
 
+        // `sub: ""` is non-conformant but deserializes fine; letting it
+        // through would collapse every such bearer onto one empty identity —
+        // the sync-side twin of the shared empty-identity membership row the
+        // app's required-`sub` change closed. Here the subject is what every
+        // document authorizer keys its (subject, document) decision on and
+        // is forwarded verbatim to the app's authorization endpoint, so it
+        // must be rejected before an `Identity` is built and cached (parity
+        // with the app's auth edge, `services/app/src/auth.rs`).
+        if data.claims.sub.is_empty() {
+            return Err(AuthError::Unauthenticated(
+                "token has an empty subject".into(),
+            ));
+        }
+
         // 5. Read the explicit roles claim only.
         let roles = extract_roles(&data.claims.extra, &self.roles_claim);
         Ok((
@@ -219,11 +234,12 @@ fn jwt_error(e: &jsonwebtoken::errors::Error) -> String {
     }
 }
 
-/// The claims we deserialize. `iss`/`aud`/`exp`/`sub` are validated by
+/// The claims we deserialize. `iss`/`aud`/`exp` are validated by
 /// `jsonwebtoken`; everything else lands in `extra` for the roles-path lookup.
 /// `iss`/`aud` are kept as required fields so a token lacking them fails to
 /// deserialize (an additional, structural denial), even though we never read
-/// their values here.
+/// their values here. `sub` is likewise required, and an explicitly empty
+/// `sub` is rejected after decode (see [`JwtValidator::validate`]).
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct Claims {
@@ -997,6 +1013,31 @@ mod tests {
         .unwrap();
         let doc = DocId::new("d1").unwrap();
         assert!(r.resolve(&doc, &token).await.is_err());
+    }
+
+    // ---- empty subject -----------------------------------------------------
+
+    #[tokio::test]
+    async fn rejects_empty_sub_token() {
+        // A non-conformant issuer can mint `sub: ""`, which the required-`sub`
+        // deserialization accepts; the validator must reject it before it
+        // becomes a cached identity that document authorization keys on
+        // (parity with the app's auth edge, `services/app/src/auth.rs`). The
+        // failure must be Unauthenticated — the same kind as any other
+        // invalid token — not a document-level Forbidden.
+        let (set, _) = hs_jwks();
+        let v = validator(&[Algorithm::HS256], "roles");
+        let jwks = jwks_cache(set);
+        let docs: Arc<dyn DocumentAuthorizer> = Arc::new(AllowAuthorizer { subject: "alice" });
+        let r = OidcAccessResolver::new(v, jwks, docs, TokenCache::new(60, 16));
+        let token = mint(
+            json!({"sub": "", "roles": ["author"]}),
+            Algorithm::HS256,
+            Some(KID),
+        );
+        let doc = DocId::new("d1").unwrap();
+        let err = r.resolve(&doc, &token).await.unwrap_err();
+        assert!(matches!(err, AuthError::Unauthenticated(_)));
     }
 
     // ---- scope escalation must NOT escalate -------------------------------
