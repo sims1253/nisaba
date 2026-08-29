@@ -1,0 +1,26 @@
+[package]
+name = "nisaba-compile-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "WebAssembly compile wrapper around nisaba-compile-core for the web client."
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nisaba-compile-core = { path = "../nisaba-compile-core" }
+serde_json = "1"
+# wasm-bindgen-test 0.3.77 pins `wasm-bindgen =0.2.127` exactly (the 0.2.x
+# test crate line stopped at 0.2.50). The wasm-bindgen-cli used to run the
+# wasm test suite must match the wasm-bindgen crate version — CI installs
+# 0.2.127 to match; the runner rejects a mismatched crate version.
+wasm-bindgen = "0.2.127"
+
+[dev-dependencies]
+base64 = "0.22"
+wasm-bindgen-test = "0.3.77"

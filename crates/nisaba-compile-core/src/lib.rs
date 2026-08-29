@@ -29,6 +29,15 @@
 //! The one host-plane seam: [`Instrumentation::rss_bytes`] is left `None` by
 //! the core (reading `/proc/self/status` is server I/O); the compile service
 //! fills it in before serializing the response.
+//!
+//! A second, target-plane seam: `wasm32-unknown-unknown` has no clock the
+//! core could read without JS imports — `Instant::now` and `SystemTime::now`
+//! panic there — so the two instrumentation timings read `0` on that target
+//! (see [`Stopwatch`]), build ids fall back to a process-global counter for
+//! uniqueness, and [`WorkerEntry::now_millis`] reports the epoch: the TTL
+//! sweep keeps everything, LRU eviction picks an arbitrary victim, and the
+//! capacity bound still holds. None of this touches any content-bearing
+//! output (PDF, span map, diagnostics, outline).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -41,7 +50,7 @@ use std::{
     collections::HashMap,
     path::Path,
     sync::{Arc, Mutex as StdMutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -65,6 +74,42 @@ pub const DEFAULT_MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 pub const DEFAULT_MAX_WORKERS: usize = 256;
 /// Workers untouched for this long are evicted by the TTL sweep.
 pub const DEFAULT_WORKER_IDLE_TTL: Duration = Duration::from_mins(30);
+
+/// Monotonic stopwatch for the instrumentation timings only.
+///
+/// `wasm32-unknown-unknown` has no monotonic clock the core could read
+/// without importing JavaScript (`Instant::now` panics there), and the
+/// timings are host-plane instrumentation — never content — so on that
+/// target the stopwatch reads `0` and the wasm host measures wall-clock time
+/// around the call instead. Natively this is `std::time::Instant`.
+pub struct Stopwatch {
+    #[cfg(not(target_arch = "wasm32"))]
+    started: std::time::Instant,
+}
+
+impl Stopwatch {
+    /// Starts the clock (a no-op value on `wasm32`).
+    #[must_use]
+    pub fn start() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            started: std::time::Instant::now(),
+        }
+    }
+
+    /// Milliseconds elapsed since [`Stopwatch::start`] (`0` on `wasm32`).
+    #[must_use]
+    pub fn elapsed_ms(&self) -> u128 {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.started.elapsed().as_millis()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0
+        }
+    }
+}
 
 /// One compile request: the projection of a project as plain Typst sources.
 ///
@@ -98,7 +143,8 @@ pub struct CompileResponse {
     pub diagnostics: Vec<Diagnostic>,
     /// Document outline (headings), in UTF-16 offsets.
     pub outline: Vec<OutlineEntry>,
-    /// Opaque build identifier (unique per process and compile counter).
+    /// Opaque build identifier (drawn from the process-global compile
+    /// sequence, so ids are unique per process even across workers).
     pub build_id: String,
     /// Timing and cache instrumentation for the compile.
     pub instrumentation: Instrumentation,
@@ -206,14 +252,23 @@ pub struct WorkerEntry {
 }
 
 impl WorkerEntry {
-    /// Current UNIX time in milliseconds (0 if the clock is before the epoch).
+    /// Current UNIX time in milliseconds (0 if the clock is before the epoch;
+    /// always 0 on `wasm32-unknown-unknown`, where reading a clock panics —
+    /// see the crate docs).
     #[must_use]
     pub fn now_millis() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |duration| {
-                u64::try_from(duration.as_millis()).unwrap_or(0)
-            })
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    u64::try_from(duration.as_millis()).unwrap_or(0)
+                })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0
+        }
     }
 
     /// Records this entry as just used (LRU/TTL bookkeeping).
@@ -312,7 +367,7 @@ impl Worker {
             reused,
         );
         let _enter = span.enter();
-        let started = Instant::now();
+        let started = Stopwatch::start();
         let fingerprint = fingerprint(request);
         if self.last_fingerprint == Some(fingerprint) {
             self.cache_hits += 1;
@@ -347,13 +402,13 @@ impl Worker {
                     span_map: source_span_map(None, &world, &request.sources),
                     diagnostics,
                     outline: outline(&request.sources),
-                    build_id: build_id(self.compile_count),
-                    instrumentation: instrumentation(started, 0, reused, self, convergence_passes),
+                    build_id: build_id(),
+                    instrumentation: instrumentation(&started, 0, reused, self, convergence_passes),
                 });
             }
         };
-        let compile_ms = started.elapsed().as_millis();
-        let pdf_started = Instant::now();
+        let compile_ms = started.elapsed_ms();
+        let pdf_started = Stopwatch::start();
         // The service always emits PDF/A-2b (the archival profile the export
         // contract requires). Making this per-project/per-profile is future
         // work; the old request field for it was never sent by any client.
@@ -381,10 +436,10 @@ impl Worker {
                     span_map: source_span_map(Some(&document), &world, &request.sources),
                     diagnostics,
                     outline: outline(&request.sources),
-                    build_id: build_id(self.compile_count),
+                    build_id: build_id(),
                     instrumentation: instrumentation(
-                        started,
-                        pdf_started.elapsed().as_millis(),
+                        &started,
+                        pdf_started.elapsed_ms(),
                         reused,
                         self,
                         convergence_passes,
@@ -392,14 +447,14 @@ impl Worker {
                 });
             }
         };
-        let pdf_ms = pdf_started.elapsed().as_millis();
+        let pdf_ms = pdf_started.elapsed_ms();
         let mut result = CompileResponse {
             pdf: Some(BASE64.encode(pdf)),
             span_map: source_span_map(Some(&document), &world, &request.sources),
             diagnostics,
             outline: outline(&request.sources),
-            build_id: build_id(self.compile_count),
-            instrumentation: instrumentation(started, pdf_ms, reused, self, convergence_passes),
+            build_id: build_id(),
+            instrumentation: instrumentation(&started, pdf_ms, reused, self, convergence_passes),
         };
         result.instrumentation.compile_ms = compile_ms;
         tracing::info!(
@@ -514,14 +569,14 @@ fn validate_virtual_path(value: &str) -> Result<(), String> {
 }
 
 fn instrumentation(
-    started: Instant,
+    started: &Stopwatch,
     pdf_ms: u128,
     reused: bool,
     worker: &Worker,
     convergence_passes: u8,
 ) -> Instrumentation {
     Instrumentation {
-        compile_ms: started.elapsed().as_millis().saturating_sub(pdf_ms),
+        compile_ms: started.elapsed_ms().saturating_sub(pdf_ms),
         pdf_ms,
         worker_reused: reused,
         worker_compiles: worker.compile_count,
@@ -719,19 +774,34 @@ fn fingerprint(request: &CompileRequest) -> u64 {
 }
 
 /// Per-process build prefix, so build ids stay globally unique across worker
-/// restarts; the worker's compile counter disambiguates within a process.
+/// restarts. Unused on `wasm32-unknown-unknown`, where reading the wall clock
+/// panics; there the process-global sequence counter alone keeps ids unique.
+#[cfg(not(target_arch = "wasm32"))]
 static BUILD_INSTANCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-fn build_id(number: u64) -> String {
-    let instance = BUILD_INSTANCE.get_or_init(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or_else(
-                |_| "0".to_owned(),
-                |duration| duration.as_nanos().to_string(),
-            )
-    });
-    format!("build-{instance}-{number}")
+/// Process-global compile sequence; keeps build ids unique even when the
+/// per-process prefix degenerates (several workers in one wasm module, no
+/// readable clock).
+static BUILD_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn build_id() -> String {
+    let sequence = BUILD_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let instance = BUILD_INSTANCE.get_or_init(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or_else(
+                    |_| "0".to_owned(),
+                    |duration| duration.as_nanos().to_string(),
+                )
+        });
+        format!("build-{instance}-{sequence}")
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        format!("build-0-{sequence}")
+    }
 }
 
 #[cfg(test)]

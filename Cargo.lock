@@ -3541,6 +3541,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nisaba-compile-wasm"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "nisaba-compile-core",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "nisaba-core"
 version = "0.1.0"
 dependencies = [
