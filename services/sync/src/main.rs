@@ -338,11 +338,13 @@ fn build_access_resolver(
 /// Build the shared outbound HTTP transport (rustls; never openssl — see
 /// `deny.toml`). `https_only` unless `NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME`
 /// is set, for local dev against an `http://` Keycloak or app authz endpoint.
+/// That toggle only widens the allowed URL scheme; TLS certificate
+/// verification remains fully enabled either way.
 fn build_http_transport() -> Result<Arc<dyn HttpFetch>, Box<dyn std::error::Error>> {
     let connect = Duration::from_secs(env_secs("NISABA_SYNC_HTTP_CONNECT_TIMEOUT_SECS", 5)?);
     let request = Duration::from_secs(env_secs("NISABA_SYNC_HTTP_REQUEST_TIMEOUT_SECS", 10)?);
     let client = if env::var_os("NISABA_SYNC_HTTP_ALLOW_INSECURE_SCHEME").is_some() {
-        ReqwestHttpFetch::new_insecure_scheme(connect, request)
+        ReqwestHttpFetch::new_allow_http(connect, request)
     } else {
         ReqwestHttpFetch::new(connect, request)?
     };
