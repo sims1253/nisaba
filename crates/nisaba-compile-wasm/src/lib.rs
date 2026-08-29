@@ -148,9 +148,13 @@ impl CompileWorker {
     }
 
     /// Compiles the request (`Worker::compile`) and returns the serialized
-    /// `CompileResponse`. The first compile on a fresh worker reports
-    /// `worker_reused: false`, later ones `true` — the same values the
-    /// service reports for a cold and a warm worker.
+    /// `CompileResponse`. The request's sources are applied first
+    /// (`Worker::update_sources`), exactly as the service handler and the
+    /// pool half below do before every compile — a caller passing edited
+    /// sources straight here must not get a PDF from the stale universe; the
+    /// update is a no-op when the sources are unchanged. The first compile on
+    /// a fresh worker reports `worker_reused: false`, later ones `true` —
+    /// the same values the service reports for a cold and a warm worker.
     ///
     /// # Errors
     /// Returns an error string on invalid requests or serialization failure;
@@ -158,6 +162,7 @@ impl CompileWorker {
     /// response, exactly as in the service.
     pub fn compile(&mut self, request_json: &str) -> Result<String, String> {
         let request = checked_request(request_json)?;
+        self.worker.update_sources(&request)?;
         let response = self.worker.compile(&request, self.served)?;
         self.served = true;
         response_json(&response)
@@ -304,13 +309,17 @@ pub fn new_compile_worker(request_json: &str) -> Result<JsCompileWorker, JsError
 #[must_use]
 #[wasm_bindgen]
 pub fn new_compile_workers(max_workers: usize, idle_ttl_millis: f64) -> JsCompileWorkers {
+    // f64::clamp propagates NaN and Duration::from_secs_f64(NaN) panics —
+    // a JS `Number(undefined)` or failed parseInt must trap neither the
+    // module nor the caller, so NaN is mapped to the zero-TTL documented
+    // above before the clamp runs.
+    let ttl_secs = if idle_ttl_millis.is_nan() {
+        0.0
+    } else {
+        (idle_ttl_millis / 1000.0).clamp(0.0, 100.0 * 365.0 * 24.0 * 3600.0)
+    };
     JsCompileWorkers {
-        inner: CompileWorkers::new(
-            max_workers,
-            Duration::from_secs_f64(
-                (idle_ttl_millis / 1000.0).clamp(0.0, 100.0 * 365.0 * 24.0 * 3600.0),
-            ),
-        ),
+        inner: CompileWorkers::new(max_workers, Duration::from_secs_f64(ttl_secs)),
     }
 }
 

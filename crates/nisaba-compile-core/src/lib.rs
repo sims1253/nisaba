@@ -143,7 +143,8 @@ pub struct CompileResponse {
     pub diagnostics: Vec<Diagnostic>,
     /// Document outline (headings), in UTF-16 offsets.
     pub outline: Vec<OutlineEntry>,
-    /// Opaque build identifier (unique per process and compile counter).
+    /// Opaque build identifier (drawn from the process-global compile
+    /// sequence, so ids are unique per process even across workers).
     pub build_id: String,
     /// Timing and cache instrumentation for the compile.
     pub instrumentation: Instrumentation,

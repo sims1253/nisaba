@@ -468,3 +468,41 @@ fn boundary_errors_reach_js() {
     let mut pool: JsCompileWorkers = new_compile_workers(4, 30.0 * 60.0 * 1000.0);
     assert!(pool.compile("nope").is_err());
 }
+
+/// `Duration::from_secs_f64(NaN)` panics and `f64::clamp` propagates NaN —
+/// the documented "`NaN` counts as zero" TTL contract must hold without
+/// trapping the module (a JS `Number(undefined)` or failed `parseInt` is
+/// exactly this shape).
+#[test]
+fn nan_idle_ttl_counts_as_zero() {
+    let _: nisaba_compile_wasm::JsCompileWorkers =
+        nisaba_compile_wasm::new_compile_workers(4, f64::NAN);
+    // Same for infinity: clamped to the ~100-year ceiling, not a panic.
+    let _: nisaba_compile_wasm::JsCompileWorkers =
+        nisaba_compile_wasm::new_compile_workers(4, f64::INFINITY);
+}
+
+/// The single-worker half applies the request's sources before compiling,
+/// like the service handler and the pool half — compiling edited sources on
+/// a warm worker must reflect the edit, not the stale universe. Before the
+/// fix this compiled `hello` while shaping outline/span map from `emphasis`.
+#[test]
+fn compile_applies_the_requests_sources_on_a_warm_worker() {
+    let cold = hello();
+    let warm = emphasis();
+    let mut worker = CompileWorker::new(&cold.request_json)
+        .unwrap_or_else(|error| panic!("boundary worker failed: {error}"));
+    worker.compile(&cold.request_json).expect("cold compile");
+
+    let actual = worker
+        .compile(&warm.request_json)
+        .expect("warm compile with edited sources");
+    let stripped = strip_volatile(&actual);
+    maybe_update_golden(&warm, &stripped);
+    let golden: Value = serde_json::from_str(&golden_text(&warm))
+        .unwrap_or_else(|error| panic!("golden is not valid JSON: {error}"));
+    assert_eq!(
+        stripped, golden,
+        "warm compile must reflect the edited sources (emphasis), not the stale universe (hello)"
+    );
+}
