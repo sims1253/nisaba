@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal B · Ink Desk — projects as a table of contents</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — the projects screen, rebuilt as the book's
+  table of contents. This is the direction's signature element: your work
+  presented the way a document presents itself. Self-contained; system fonts.
+-->
+<style>
+:root {
+  --bitumen: #262921;
+  --bitumen-2: #2e322a;
+  --bitumen-3: #383c31;
+  --irule: #41453a;
+  --irule-s: #575c4c;
+  --bone: #e9e7da;
+  --bone-muted: #aab0a0;
+  --bone-faint: #7e8372;
+  --lapis: #4a63d8;
+  --lapis-bright: #98a7ff;
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+html, body { height: 100% }
+body {
+  font: 13px/1.45 var(--sans); color: var(--bone); background: var(--bitumen);
+  overflow: hidden; display: grid; grid-template-rows: 52px minmax(0, 1fr);
+  font-synthesis: none;
+}
+:focus-visible { outline: 2px solid var(--lapis-bright); outline-offset: 2px }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer }
+kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid var(--irule-s);
+      border-radius: 2px; padding: 2px 4px; background: var(--bitumen-2) }
+.micro { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
+.num { font-variant-numeric: tabular-nums }
+
+/* --- app bar (projectless: brand, palette hint, settings, sign out) --- */
+.appbar { display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--irule-s) }
+.brand { display: flex; align-items: center; gap: 9px; padding: 4px 6px; border-radius: 2px }
+.brand:hover { background: var(--bitumen-3) }
+.brand .mark { width: 22px; height: 22px; display: grid; place-items: center; background: var(--lapis); color: #fff; font: 700 12.5px/1 var(--mono) }
+.brand .word { font: 600 16px/1 var(--display); color: var(--bone) }
+.palette-hint {
+  margin: 0 auto; display: flex; align-items: center; gap: 8px; width: min(400px, 30vw);
+  padding: 5px 8px; background: #fbfaf5; color: #8a8776; border-radius: 2px; font-size: 12px; text-align: left;
+}
+.palette-hint .lead { font: 700 12px var(--mono); color: #2b3fae }
+.palette-hint kbd { margin-left: auto; color: #8a8776; border-color: #c6c3ae; background: #f2f0e6 }
+.appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px }
+.tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px; border-radius: 2px }
+.tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
+
+/* --- the contents page --- */
+.screen { overflow: auto; padding: 52px 32px 70px }
+.inner { max-width: 780px; margin: 0 auto }
+
+.masthead { display: flex; align-items: baseline; gap: 18px; border-bottom: 2px solid var(--bone); padding-bottom: 18px; margin-bottom: 26px }
+.masthead h1 { font: 700 40px/1.05 var(--display); letter-spacing: -.005em; color: var(--bone) }
+.masthead .sub { font: 400 italic 13px var(--display); color: var(--bone-faint) }
+.masthead .newp {
+  margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 8px;
+  background: var(--lapis); color: #fff; font: 600 12px var(--sans); padding: 7px 14px; border-radius: 2px;
+}
+.masthead .newp:hover { background: #3a53c4 }
+
+.lede { font: italic 13.5px/1.6 var(--display); color: var(--bone-muted); margin: -14px 0 30px }
+
+.tools { display: flex; align-items: center; gap: 10px; margin-bottom: 6px }
+.tools input[type="search"] {
+  flex: 1; max-width: 340px; border: 1px solid var(--irule-s); border-radius: 2px;
+  background: var(--bitumen-2); color: var(--bone); padding: 6px 10px; font: 12.5px var(--sans);
+}
+.tools input[type="search"]::placeholder { color: var(--bone-faint) }
+.seg { display: inline-flex; border: 1px solid var(--irule-s); border-radius: 2px; overflow: hidden }
+.seg button { font: 600 10.5px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; padding: 7px 11px; color: var(--bone-muted) }
+.seg button + button { border-left: 1px solid var(--irule-s) }
+.seg button[aria-pressed="true"] { background: var(--bitumen-3); color: var(--bone) }
+
+/* the contents rows: name, dot leader, role, folio */
+.toc { margin-top: 14px }
+.toc-row {
+  width: 100%; display: flex; align-items: baseline; gap: 0;
+  padding: 13px 6px 13px 2px; border-bottom: 1px solid var(--irule); text-align: left;
+  color: var(--bone); border-left: 2px solid transparent;
+}
+.toc-row:hover { background: var(--bitumen-2) }
+.toc-row:focus-visible { border-left-color: var(--lapis-bright); background: var(--bitumen-2) }
+.toc-name { font: 500 17.5px/1.3 var(--display); color: var(--bone); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch }
+.toc-row:hover .toc-name { color: #fff }
+.toc-leader { flex: 1; min-width: 32px; margin: 0 12px; border-bottom: 2px dotted var(--irule-s); transform: translateY(-4px) }
+.toc-role { font: 600 8.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--bone-faint); border: 1px solid var(--irule-s); padding: 3px 6px; border-radius: 2px; margin-right: 12px }
+.toc-when { font: 10.5px var(--mono); color: var(--bone-faint); white-space: nowrap }
+.toc-row .del-x { opacity: 0; color: var(--bone-faint); margin-left: 10px; font-size: 15px; padding: 2px 5px; border-radius: 2px }
+.toc-row:hover .del-x, .toc-row:focus-within .del-x { opacity: 1 }
+.toc-row .del-x:hover { color: #e2705f; background: #3f241f }
+
+.count-note { font: 10.5px var(--mono); color: var(--bone-faint); margin: 10px 2px 0 }
+
+/* the running foot of the contents page */
+.colophon {
+  margin-top: 44px; padding-top: 14px; border-top: 2px solid var(--bone);
+  display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--bone-faint);
+}
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <button class="brand" title="All projects">
+    <span class="mark">N</span><span class="word">Nisaba</span>
+  </button>
+  <button class="palette-hint" aria-label="Search files, sections and commands">
+    <span class="lead">⌕</span><span>Search files, sections, commands…</span><kbd>⌘K</kbd>
+  </button>
+  <div class="appbar-right">
+    <button class="tbtn" title="Editor settings: typeface, size, spacing">Settings</button>
+    <button class="tbtn">Sign out</button>
+  </div>
+</header>
+
+<main class="screen">
+  <div class="inner">
+    <div class="masthead">
+      <h1>Projects</h1>
+      <span class="sub">or, the contents</span>
+      <button class="newp">＋ New project</button>
+    </div>
+    <p class="lede">A project holds the files, references, and history of one document.</p>
+
+    <div class="tools">
+      <input type="search" placeholder="Search projects…" aria-label="Search projects">
+      <div class="seg" role="group" aria-label="Sort projects">
+        <button aria-pressed="true">Recent</button>
+        <button aria-pressed="false">Name</button>
+      </div>
+    </div>
+
+    <div class="toc" role="list">
+      <button class="toc-row" role="listitem">
+        <span class="toc-name">Field lab</span>
+        <span class="toc-leader" aria-hidden="true"></span>
+        <span class="toc-role">Author</span>
+        <span class="toc-when num">edited 2 h ago</span>
+        <span class="del-x" title="Delete this project" aria-label="Delete Field lab">×</span>
+      </button>
+      <button class="toc-row" role="listitem">
+        <span class="toc-name">Mustelid Acoustics — second draft</span>
+        <span class="toc-leader" aria-hidden="true"></span>
+        <span class="toc-role">Owner</span>
+        <span class="toc-when num">edited yesterday</span>
+        <span class="del-x" title="Delete this project" aria-label="Delete Mustelid Acoustics — second draft">×</span>
+      </button>
+      <button class="toc-row" role="listitem">
+        <span class="toc-name">Faerie Studies quarterly</span>
+        <span class="toc-leader" aria-hidden="true"></span>
+        <span class="toc-role">Reviewer</span>
+        <span class="toc-when num">edited 3 d ago</span>
+        <span class="del-x" title="Delete this project" aria-label="Delete Faerie Studies quarterly">×</span>
+      </button>
+      <button class="toc-row" role="listitem">
+        <span class="toc-name">Glitter spectroscopy notes</span>
+        <span class="toc-leader" aria-hidden="true"></span>
+        <span class="toc-role">Read-only</span>
+        <span class="toc-when num">edited 11 d ago</span>
+        <span class="del-x" title="Delete this project" aria-label="Delete Glitter spectroscopy notes">×</span>
+      </button>
+    </div>
+    <p class="count-note num">4 of 4 projects</p>
+
+    <div class="colophon num">
+      <span>nisaba · self-hosted</span>
+      <span>contents refreshed 12:04</span>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>

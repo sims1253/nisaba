@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nisaba · Proposal B — Ink Desk</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — index of the proposed-view mockups.
+  The index itself is set in the proposed direction: ink ground, paper slip,
+  serif display, dot leaders. Open any link; every mock is self-contained.
+-->
+<style>
+:root {
+  --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
+  --irule: #41453a; --irule-s: #575c4c;
+  --paper: #fbfaf5; --paper-2: #f2f0e6;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+body {
+  min-height: 100vh; font: 14px/1.5 var(--sans); color: var(--bone);
+  background: var(--bitumen); padding: 60px 28px 80px;
+}
+:focus-visible { outline: 2px solid var(--lapis-bright); outline-offset: 2px }
+a { color: inherit }
+.wrap { max-width: 860px; margin: 0 auto }
+
+.mast { border-bottom: 2px solid var(--bone); padding-bottom: 20px; margin-bottom: 8px; display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap }
+.mast h1 { font: 700 42px/1.05 var(--display); letter-spacing: -.005em }
+.mast .tag { font: italic 14px var(--display); color: var(--bone-faint) }
+.mast .back { margin-left: auto; font: 12px var(--mono); color: var(--lapis-bright) }
+
+.thesis {
+  max-width: 68ch; font: italic 15px/1.65 var(--display); color: var(--bone-muted);
+  margin: 22px 0 40px;
+}
+.thesis b { color: var(--bone); font-style: normal; font-weight: 600 }
+
+.group { margin: 34px 0 10px; font: 600 10px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
+.toc a {
+  display: flex; align-items: baseline; gap: 0; padding: 13px 6px 13px 2px;
+  border-bottom: 1px solid var(--irule); text-decoration: none;
+}
+.toc a:hover .name { color: #fff }
+.toc .name { font: 500 18px/1.3 var(--display); color: var(--bone); white-space: nowrap }
+.toc .lead { flex: 1; min-width: 28px; margin: 0 12px; border-bottom: 2px dotted var(--irule-s); transform: translateY(-4px) }
+.toc .file { font: 10.5px var(--mono); color: var(--bone-faint); white-space: nowrap }
+.toc .desc { flex-basis: 100%; font: 12px/1.5 var(--sans); color: var(--bone-muted); padding-left: 2px; margin-top: 4px }
+
+.colophon { margin-top: 56px; border-top: 2px solid var(--bone); padding-top: 14px; display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; font: 10px var(--mono); color: var(--bone-faint) }
+.colophon a { color: var(--lapis-bright) }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="mast">
+    <h1>Proposal B — Ink Desk</h1>
+    <span class="tag">or, the interface is the ink; the document is the light</span>
+    <a class="back" href="../../ui-design.md">↩ current design record</a>
+  </div>
+
+  <p class="thesis">
+    <b>Ink Desk</b> inverts Nisaba's material: every piece of apparatus — bars,
+    navigator, docks, drawer, status — becomes one warm bitumen, and the two
+    surfaces that <b>are</b> the document, the source column and the rendered
+    page, become the only paper, so they glow for it. The accent becomes
+    <b>lapis</b>, the scribe's prestige material; the serif is promoted from the
+    rendered page into the chrome's few big moments; and the projects screen
+    becomes a <b>table of contents</b> — your work presented the way a document
+    presents itself. Same workflow, same bones: prose-first, docks-not-modals,
+    palette-driven, collaboration always visible.
+  </p>
+
+  <div class="group">The screens</div>
+  <nav class="toc">
+    <a href="01-projects.html">
+      <span class="name">Projects, as a table of contents</span><span class="lead"></span><span class="file">01-projects.html</span>
+      <span class="desc">The landing screen: serif names, dot leaders, role tags, edited-whens. The direction's signature element.</span>
+    </a>
+    <a href="02-workspace.html">
+      <span class="name">The writing workspace</span><span class="lead"></span><span class="file">02-workspace.html</span>
+      <span class="desc">App bar, navigator, document with track changes and remote carets, review dock, glowing preview, colophon status bar. The hero.</span>
+    </a>
+    <a href="03-review.html">
+      <span class="name">Review: marks, thread popover, comment affordance</span><span class="lead"></span><span class="file">03-review.html</span>
+      <span class="desc">Suggestions as text on paper; the thread as a paper slip; the selection Comment button; keyboard triage.</span>
+    </a>
+  </nav>
+
+  <div class="group">The occasional surfaces</div>
+  <nav class="toc">
+    <a href="04-problems.html">
+      <span class="name">Build drawer: problems and press log</span><span class="lead"></span><span class="file">04-problems.html</span>
+      <span class="desc">A failing build, self-opened; the selected tab is a light slip out of the ink; jump-to-line.</span>
+    </a>
+    <a href="05-palette.html">
+      <span class="name">Command palette</span><span class="lead"></span><span class="file">05-palette.html</span>
+      <span class="desc">⌘K as a slip of paper laid on the dimmed desk; grouped, fuzzy, keyboard-first.</span>
+    </a>
+    <a href="06-share.html">
+      <span class="name">Share</span><span class="lead"></span><span class="file">06-share.html</span>
+      <span class="desc">Invite with role guidance in place, the roster, shareable links — with the roster standing in the app bar.</span>
+    </a>
+    <a href="07-settings.html">
+      <span class="name">Settings</span><span class="lead"></span><span class="file">07-settings.html</span>
+      <span class="desc">Editor typography applied live (shown set to serif), opening file, rebindable chords — one mid-capture.</span>
+    </a>
+    <a href="08-history.html">
+      <span class="name">History</span><span class="lead"></span><span class="file">08-history.html</span>
+      <span class="desc">Version timeline in ink; the diff as a paper inset — a version is a document too.</span>
+    </a>
+    <a href="09-references.html">
+      <span class="name">References</span><span class="lead"></span><span class="file">09-references.html</span>
+      <span class="desc">The library at dock width: full-text state per entry, export-blocking truth stated, inline completer shown.</span>
+    </a>
+    <a href="10-signed-out-empty.html">
+      <span class="name">Signed out, and empty states</span><span class="lead"></span><span class="file">10-signed-out-empty.html</span>
+      <span class="desc">Two frames: the sign-in slip, and the workspace with nothing open — display voice, one instruction, one key.</span>
+    </a>
+  </nav>
+
+  <div class="colophon">
+    <span>proposal B · design review — challenges the current paper-and-hairline direction</span>
+    <span>argument + tokens + change lists: <a href="PROPOSAL.md">PROPOSAL.md</a></span>
+    <span>system font stacks only · open in any browser</span>
+  </div>
+
+</div>
+</body>
+</html>

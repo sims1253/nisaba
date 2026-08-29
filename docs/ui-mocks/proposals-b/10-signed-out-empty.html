@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal B · Ink Desk — signed-out state and empty states</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — two frames: the signed-out screen (a paper
+  slip with the sign-in question, nothing else), and the workspace's empty
+  states (no document, no preview). Self-contained; system font stacks only.
+-->
+<style>
+:root {
+  --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
+  --irule: #41453a; --irule-s: #575c4c;
+  --shell: #3a3e33;
+  --paper: #fbfaf5; --paper-2: #f2f0e6;
+  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #8a8776;
+  --prule: #e3e0d0; --prule-s: #c6c3ae;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+html { height: 100% }
+body { font: 13px/1.45 var(--sans); color: var(--bone); background: #1b1e18; padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 28px }
+:focus-visible { outline: 2px solid var(--lapis-bright); outline-offset: 1px }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer }
+kbd { font: 500 9.5px/1 var(--mono); color: var(--paper-muted); border: 1px solid var(--prule-s); border-radius: 2px; padding: 2px 4px; background: var(--paper-2) }
+.micro { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
+.num { font-variant-numeric: tabular-nums }
+
+/* each frame is a 1440x900 screen */
+.frame { width: 1440px; max-width: 100%; height: 900px; overflow: hidden; display: grid; grid-template-rows: 52px 1fr; background: var(--bitumen); box-shadow: 0 24px 60px #00000088 }
+.framelabel { width: 1440px; max-width: 100%; font: 600 10px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: #7e8372 }
+
+.appbar { display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--irule-s) }
+.brand { display: flex; align-items: center; gap: 9px }
+.brand .mark { width: 22px; height: 22px; display: grid; place-items: center; background: var(--lapis); color: #fff; font: 700 12.5px/1 var(--mono) }
+.brand .word { font: 600 16px/1 var(--display) }
+.tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px }
+.tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
+.btn-signin {
+  margin-left: auto; display: inline-flex; align-items: center;
+  background: var(--lapis); color: #fff; font: 600 12px var(--sans); padding: 6px 14px; border-radius: 2px;
+}
+.btn-signin:hover { background: #3a53c4 }
+
+/* frame 1: signed out — the desk, one paper slip, nothing else */
+.signed-out { display: grid; place-items: center; background:
+  radial-gradient(1100px 500px at 50% -10%, #2e322a 0%, var(--bitumen) 60%) }
+.slip {
+  width: 460px; background: var(--paper); color: var(--carbon); border-radius: 2px;
+  padding: 34px 36px 30px; box-shadow: 0 2px 6px #14160f66, 0 26px 60px #14160f99;
+}
+.slip .eyebrow { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--paper-muted) }
+.slip h1 { font: 700 26px/1.15 var(--display); margin: 8px 0 10px }
+.slip p { font-size: 12.5px; color: var(--carbon-soft); line-height: 1.6; margin-bottom: 18px }
+.slip label { display: block; font-size: 11.5px; color: var(--paper-muted); margin: 12px 0 5px }
+.slip input {
+  width: 100%; border: 1px solid var(--prule-s); border-radius: 2px; background: #fff;
+  color: var(--carbon); padding: 8px 10px; font: 13px var(--sans);
+}
+.slip input:focus { border-color: var(--lapis-deep); outline: none; box-shadow: 0 0 0 2px #2b3fae33 }
+.slip .go { width: 100%; justify-content: center; display: inline-flex; margin-top: 16px;
+  background: var(--lapis-deep); color: #fff; font: 600 12.5px var(--sans); padding: 8px 14px; border-radius: 2px }
+.slip .go:hover { background: #23348f }
+.slip .foot { margin-top: 14px; font-size: 11px; color: var(--paper-muted); line-height: 1.55 }
+.slip .foot kbd { font-size: 8.5px }
+
+/* frame 2: empty workspace */
+.ws { display: grid; grid-template-rows: minmax(0,1fr); min-height: 0 }
+.workspace { display: grid; grid-template-columns: 248px minmax(400px, 1fr) minmax(320px, 1fr); min-height: 0; background: var(--irule) }
+.col { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bitumen) }
+.nav-head { padding: 12px 8px 6px 14px }
+.nav-body { padding-bottom: 8px }
+.trow { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; padding: 3px 10px 3px 6px; color: var(--bone-muted); font: 12px/1.7 var(--sans) }
+.trow .tw { width: 13px; color: var(--bone-faint); font-size: 9px }
+.trow.folder { color: var(--bone-faint); font-weight: 500 }
+.trow .tag { margin-left: auto; font: 600 8.5px/1 var(--mono); letter-spacing: .1em; color: var(--lapis-bright); border: 1px solid var(--lapis); padding: 2px 4px }
+.ibtn { width: 20px; height: 20px; display: grid; place-items: center; color: var(--bone-faint) }
+.nav-empty { padding: 10px 14px 14px; color: var(--bone-faint); font-size: 11.5px; line-height: 1.6 }
+.nav-sep { border-top: 1px solid var(--irule) }
+.nav-foot { margin-top: auto; border-top: 1px solid var(--irule); padding: 9px 14px 11px; font: 10px/1.9 var(--mono); color: var(--bone-faint) }
+.nav-foot b { color: var(--bone-muted) }
+
+.doc { background: var(--paper); color: var(--carbon) }
+.doc-bar { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; background: var(--bitumen); border-bottom: 1px solid var(--irule-s); color: var(--bone-faint) }
+.doc-title { font: 600 16px/1 var(--display); color: var(--bone-faint) }
+.switch { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; border: 1px solid var(--irule); border-radius: 999px; padding: 3px 10px; color: var(--bone-faint); background: var(--bitumen-2) }
+.switch::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--irule-s) }
+.btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border: 1px solid var(--irule-s); background: var(--bitumen-2); color: var(--bone-muted); padding: 4px 10px; border-radius: 2px }
+.doc-bar-r { margin-left: auto; display: flex; align-items: center; gap: 8px }
+
+/* the empty state itself: display serif, one instruction, one key */
+.pane-empty { flex: 1; display: grid; place-content: center; text-align: center; padding: 30px; }
+.pane-empty .glyph { font: 400 34px/1 var(--display); color: var(--prule-s); margin-bottom: 18px }
+.pane-empty h2 { font: 600 21px/1.2 var(--display); color: var(--carbon); margin-bottom: 8px }
+.pane-empty p { font-size: 12px; color: var(--paper-muted); max-width: 36ch; line-height: 1.65; margin: 0 auto }
+.pane-empty kbd { color: var(--carbon-soft); border-color: var(--prule-s); background: var(--paper-2) }
+
+.prev { background: var(--shell) }
+.prev-bar { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px 0 10px; background: var(--bitumen); border-bottom: 1px solid var(--irule) }
+.vswitch { display: flex; border: 1px solid var(--irule); border-radius: 2px; overflow: hidden }
+.vswitch button { font: 10.5px var(--sans); color: var(--bone-faint); padding: 4px 9px; border-right: 1px solid var(--irule) }
+.blabel { font: 10px var(--mono); color: var(--bone-faint) }
+.pgpos { margin-left: auto; font: 10px var(--mono); color: var(--bone-faint) }
+.pdf { flex: 1; display: grid; place-content: center; text-align: center; gap: 8px; padding: 30px }
+.pdf .glyph { font: 400 34px/1 var(--display); color: var(--irule-s) }
+.pdf h2 { font: 600 19px/1.2 var(--display); color: var(--bone-muted) }
+.pdf p { font-size: 12px; color: var(--bone-faint); max-width: 32ch; line-height: 1.65; margin: 0 auto }
+</style>
+</head>
+<body>
+
+<div class="framelabel">Frame 1 — signed out</div>
+<section class="frame" aria-label="Signed out">
+  <header class="appbar">
+    <button class="brand"><span class="mark">N</span><span class="word">Nisaba</span></button>
+    <button class="btn-signin">Sign in</button>
+  </header>
+  <main class="signed-out">
+    <div class="slip" role="main">
+      <span class="eyebrow">Nisaba · collaborative writing, self-hosted</span>
+      <h1>Whose desk is this?</h1>
+      <p>Sign in with the username your host gave you. Prose drafts, track changes, and the rendered page all live behind this one door.</p>
+      <form onsubmit="return false">
+        <label for="u">Username</label>
+        <input id="u" type="text" autocomplete="username" placeholder="e.g. twinkleburst">
+        <button class="go" type="submit">Sign in</button>
+      </form>
+      <p class="foot">No account? This instance is private — ask its owner. <kbd>⌘K</kbd> works the moment you are in.</p>
+    </div>
+  </main>
+</section>
+
+<div class="framelabel" style="margin-top:8px">Frame 2 — project open, nothing open yet</div>
+<section class="frame" aria-label="Empty workspace">
+  <header class="appbar">
+    <button class="brand"><span class="mark">N</span><span class="word">Nisaba</span></button>
+    <nav style="display:flex; gap:2px; margin-left:8px">
+      <span style="font:11.5px var(--mono); color:var(--bone-muted); padding:4px 5px">Projects</span>
+      <span style="color:var(--irule-s)">›</span>
+      <span style="font:11.5px var(--mono); color:var(--bone); padding:4px 5px">Field lab</span>
+    </nav>
+    <div style="display:flex; gap:2px; margin-left:20px">
+      <button class="tbtn">References</button><button class="tbtn">Share</button><button class="tbtn">Export</button>
+    </div>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:12px">
+      <span style="font-size:11.5px; color:var(--bone-muted)">Ready</span>
+      <button class="tbtn">Settings</button>
+    </div>
+  </header>
+
+  <div class="ws">
+    <div class="workspace">
+      <aside class="col">
+        <div class="nav-head micro" style="display:flex; align-items:center; gap:6px">
+          <span>Files</span><span class="num" style="color:var(--irule-s)">3</span>
+          <span style="margin-left:auto; display:flex; gap:2px"><button class="ibtn" title="New file">＋</button></span>
+        </div>
+        <div class="nav-body">
+          <button class="trow folder"><span class="tw">▾</span><span>chapters/</span></button>
+          <button class="trow"><span class="tw" style="margin-left:11px"></span><span>intro.typ</span></button>
+          <button class="trow"><span class="tw"></span><span>main.typ</span><span class="tag">MAIN</span></button>
+        </div>
+        <div class="nav-sep"></div>
+        <div class="nav-head micro"><span>Outline</span></div>
+        <div class="nav-empty">The outline of the open document appears here — headings, live, as you type.</div>
+        <div class="nav-foot num">
+          <div>files <b>3</b></div>
+          <div>references <b>none yet</b></div>
+          <div>preview builds <b>main.typ</b></div>
+        </div>
+      </aside>
+
+      <section class="col doc" aria-label="Document">
+        <div class="doc-bar">
+          <strong class="doc-title">No document open</strong>
+          <div class="doc-bar-r">
+            <button class="switch">Track changes: off</button>
+          </div>
+        </div>
+        <div class="pane-empty">
+          <div class="glyph" aria-hidden="true">❦</div>
+          <h2>Pick up where you left off</h2>
+          <p>Choose a file on the left, or press <kbd>⌘K</kbd> and type its name. The last file you had open is usually first.</p>
+        </div>
+      </section>
+
+      <section class="col prev" aria-label="Page preview">
+        <div class="prev-bar">
+          <div class="vswitch">
+            <button>Final</button><button>Original</button><button>All markup</button><button>Public copy</button>
+          </div>
+          <span class="blabel">no preview yet</span>
+          <span class="pgpos num">p – / –</span>
+        </div>
+        <div class="pdf">
+          <div class="glyph" aria-hidden="true">❦</div>
+          <h2>The page appears here</h2>
+          <p>Open a document and choose <b>Update preview</b> to see the rendered pages.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

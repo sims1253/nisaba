@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal B · Ink Desk — history dock</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — the History dock: the version timeline in
+  ink, the diff as a paper inset (a version is a document too). Selecting a
+  second version diffs them. Self-contained; system font stacks only.
+-->
+<style>
+:root {
+  --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
+  --irule: #41453a; --irule-s: #575c4c;
+  --paper: #fbfaf5; --paper-2: #f2f0e6;
+  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #8a8776;
+  --prule: #e3e0d0; --prule-s: #c6c3ae;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
+  --insert: #2e7d4f; --insert-soft: #e2efe6; --insert-lume: #62c28d;
+  --comment-lume: #d3a83f;
+  --delete: #a63a2e; --delete-soft: #f7e6e1; --delete-lume: #e2705f;
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+html, body { height: 100% }
+body {
+  font: 13px/1.45 var(--sans); color: var(--bone); background: var(--bitumen);
+  overflow: hidden; display: grid; grid-template-rows: 52px minmax(0,1fr) 30px;
+}
+:focus-visible { outline: 2px solid var(--lapis-bright); outline-offset: 1px }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer }
+kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid var(--irule-s); border-radius: 2px; padding: 2px 4px; background: var(--bitumen-2) }
+.micro { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
+.num { font-variant-numeric: tabular-nums }
+
+.appbar { display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--irule-s) }
+.brand { display: flex; align-items: center; gap: 9px }
+.brand .mark { width: 22px; height: 22px; display: grid; place-items: center; background: var(--lapis); color: #fff; font: 700 12.5px/1 var(--mono) }
+.brand .word { font: 600 16px/1 var(--display) }
+.crumbs { display: flex; gap: 2px }
+.crumbs span { font: 11.5px/1 var(--mono); color: var(--bone-muted); padding: 4px 5px }
+.crumbs i { font-style: normal; color: var(--irule-s) }
+.crumbs .cur { color: var(--bone) }
+.tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px }
+.tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
+.tbtn.open { color: var(--lapis-bright); background: #2c3140 }
+.appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px }
+.avatar { width: 23px; height: 23px; border-radius: 2px; display: grid; place-items: center; font: 700 9px/1 var(--sans); border: 1.5px solid var(--bitumen);
+          color: hsl(var(--hue) 70% 88%); background: hsl(var(--hue) 45% 34%); box-shadow: inset 0 0 0 1px hsl(var(--hue) 60% 60% / .5) }
+.presence { display: flex }
+
+.workspace { display: grid; grid-template-columns: minmax(360px, 1fr) 380px; min-height: 0; background: var(--irule) }
+.col { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden }
+
+.doc { background: var(--paper); color: var(--carbon) }
+.doc-bar { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; background: var(--bitumen); border-bottom: 1px solid var(--irule-s); color: var(--bone) }
+.doc-title { font: 600 16px/1 var(--display) }
+.doc-rev { font: 10px var(--mono); color: var(--bone-faint) }
+.doc-bar-r { margin-left: auto; display: flex; align-items: center; gap: 8px }
+.switch { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; border: 1px solid var(--irule-s); border-radius: 999px; padding: 3px 10px; color: var(--bone-muted); background: var(--bitumen-2) }
+.switch::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--irule-s) }
+.btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border: 1px solid var(--irule-s); background: var(--bitumen-2); color: var(--bone); padding: 4px 10px; border-radius: 2px }
+.badge { min-width: 16px; padding: 0 4px; border-radius: 2px; text-align: center; background: var(--comment-lume); color: #262921; font: 700 10px/16px var(--mono) }
+.editor { flex: 1; overflow: auto; background: var(--paper); padding: 18px 0 20vh; display: flex; justify-content: center }
+.ed-col { max-width: 74ch; width: 100%; padding: 0 20px }
+.l { display: flex; gap: 14px; font: 14px/1.8 var(--mono); color: var(--carbon) }
+.l .n { flex: 0 0 auto; width: 3ch; text-align: right; color: var(--prule-s); font-size: 10.5px; line-height: 2.35 }
+.hd2 { font-weight: 700 }
+.cm { color: var(--paper-muted); margin-right: 6px }
+
+/* --- history dock --- */
+.dock { background: var(--bitumen); border-left: 1px solid var(--irule-s) }
+.dock-bar { display: flex; align-items: center; height: 34px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--irule) }
+.ibtn { width: 20px; height: 20px; display: grid; place-items: center; color: var(--bone-faint) }
+.dock-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 14px; display: flex; flex-direction: column }
+.hint { font-size: 11.5px; color: var(--bone-muted); line-height: 1.55; margin: 0 2px 10px }
+
+.timeline { list-style: none; border: 1px solid var(--irule); border-radius: 2px; overflow: hidden; background: var(--bitumen-2) }
+.tentry { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--irule); font-size: 11.5px; color: var(--bone-muted) }
+.tentry:last-child { border-bottom: 0 }
+.tentry:hover { background: #2c3140 }
+.tentry .rev { font: 600 11px var(--mono); color: var(--bone) }
+.tentry .rev .cid { color: var(--bone-faint); font-weight: 400; margin-left: 7px }
+.tentry .what { font-size: 10px; color: var(--bone-faint) }
+.tentry.sel { background: #2c3140; box-shadow: inset 3px 0 0 var(--lapis) }
+.tentry.sel .rev { color: var(--lapis-bright) }
+.tentry .pins { display: flex; gap: 5px; margin-top: 3px }
+.pin { font: 600 8.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 2px 5px; border-radius: 2px; border: 1px solid var(--irule-s); color: var(--bone-faint) }
+.pin.a { border-color: #4d4224; color: var(--comment-lume) }
+.pin.b { border-color: var(--lapis); color: var(--lapis-bright) }
+
+/* the diff: a paper inset in the dock */
+.diffwrap { margin-top: 10px; border: 1px solid var(--irule-s); border-radius: 2px; background: var(--paper); color: var(--carbon); flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden }
+.diffhead { display: flex; align-items: center; gap: 10px; padding: 7px 11px; border-bottom: 1px solid var(--prule); font: 10px var(--mono); color: var(--paper-muted) }
+.diffhead .pair { color: var(--lapis-deep); font-weight: 600 }
+.diffhead .btn { margin-left: auto; font-size: 10.5px; padding: 3px 8px; color: var(--carbon-soft); border-color: var(--prule-s); background: var(--paper-2) }
+.diff { flex: 1; overflow: auto; padding: 8px 0 }
+.dl { display: flex; gap: 10px; padding: 1px 12px; font: 11px/1.7 var(--mono); white-space: pre-wrap }
+.dl .n { flex: 0 0 auto; width: 3ch; text-align: right; color: var(--prule-s) }
+.dl.add { background: var(--insert-soft) }
+.dl.add .txt { color: #1d5c39 }
+.dl.rem { background: var(--delete-soft) }
+.dl.rem .txt { text-decoration: line-through; color: #8b2a1e }
+.dl.ctx .txt { color: var(--carbon-soft) }
+
+.statusbar { display: flex; align-items: stretch; background: var(--bitumen); border-top: 1px solid var(--irule-s); font: 11px var(--mono); color: var(--bone-muted) }
+.scell { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border-right: 1px solid var(--irule) }
+.dot { width: 8px; height: 10px; background: var(--insert-lume); clip-path: polygon(0 0, 100% 50%, 0 100%) }
+.spacer { flex: 1; border: 0 }
+.sright { display: flex; margin-left: auto }
+.sright .scell { border-right: 0; border-left: 1px solid var(--irule) }
+.warn { color: var(--comment-lume); font-weight: 700 }
+.compile { display: inline-flex; align-items: center; gap: 9px; padding: 0 16px; background: var(--lapis); color: #fff; font: 600 11.5px var(--sans) }
+.compile kbd { border-color: #ffffff66; background: transparent; color: #ffffffcc }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <button class="brand"><span class="mark">N</span><span class="word">Nisaba</span></button>
+  <nav class="crumbs">
+    <span>Projects</span><i>›</i><span>Field lab</span><i>›</i><span class="cur">main.typ</span>
+  </nav>
+  <div style="display:flex; gap:2px; margin-left:20px">
+    <button class="tbtn">References</button><button class="tbtn open">History</button><button class="tbtn">Share</button><button class="tbtn">Export</button>
+  </div>
+  <div class="appbar-right">
+    <div class="presence">
+      <span class="avatar" style="--hue:285">SP</span>
+    </div>
+    <span style="font-size:11.5px; color:var(--bone-muted)">Saved 12:04</span>
+    <button class="tbtn">Settings</button>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <section class="col doc" aria-label="Document">
+    <div class="doc-bar">
+      <strong class="doc-title">main.typ</strong>
+      <span class="doc-rev num">v128</span>
+      <div class="doc-bar-r">
+        <button class="switch">Track changes: off</button>
+        <button class="btn">Review <span class="badge num">3</span></button>
+      </div>
+    </div>
+    <div class="editor">
+      <div class="ed-col">
+        <div class="l hd2"><span class="n">78</span><code><span class="cm">==</span> Results</code></div>
+        <div class="l"><span class="n">79</span><code></code></div>
+        <div class="l"><span class="n">80</span><code>Honey badgers attended 74% of recorded rave events (n = 57).</code></div>
+        <div class="l"><span class="n">81</span><code>Vocalisations in the 40–60 Hz range were phase-locked to</code></div>
+        <div class="l"><span class="n">82</span><code>the fairy audio system, as summarised in @tbl-acoustic.</code></div>
+        <div class="l"><span class="n">83</span><code></code></div>
+        <div class="l"><span class="n">84</span><code>Attendance did not differ between sites (Welch's t = 1.2,</code></div>
+        <div class="l"><span class="n">85</span><code>p = .23), though crystal calibration quality did.</code></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="col dock" aria-label="History">
+    <div class="dock-bar">
+      <h2 class="micro" style="color:var(--bone-muted)">History</h2>
+      <button class="ibtn" style="margin-left:auto" title="Close (Esc)">×</button>
+    </div>
+    <div class="dock-body">
+      <p class="hint">Select one version to view it; select a second to diff them. Restoring never deletes anything.</p>
+
+      <ul class="timeline" aria-label="Versions">
+        <li><button class="tentry sel">
+          <span class="rev num">12:04 · you <span class="cid num">c128</span></span>
+          <span class="what num">current · 4,812 words · build #41</span>
+          <span class="pins"><span class="pin b">Viewing</span></span>
+        </button></li>
+        <li><button class="tentry">
+          <span class="rev num">11:47 · sparkletoes <span class="cid num">c127</span></span>
+          <span class="what num">suggested a change in §Results · diff target</span>
+          <span class="pins"><span class="pin a">Diff A</span></span>
+        </button></li>
+        <li><button class="tentry">
+          <span class="rev num">09:12 · clawson <span class="cid num">c126</span></span>
+          <span class="what num">comment on §Discussion</span>
+        </button></li>
+        <li><button class="tentry">
+          <span class="rev num">yesterday · you <span class="cid num">c125</span></span>
+          <span class="what num">renamed chapters/field-notes.typ</span>
+        </button></li>
+      </ul>
+
+      <div class="diffwrap" role="region" aria-label="Diff between versions">
+        <div class="diffhead">
+          <span class="pair num">c127 → c128</span>
+          <span class="num">main.typ · 2 hunks</span>
+          <button class="btn">Restore version from 11:47</button>
+        </div>
+        <div class="diff">
+          <div class="dl ctx"><span class="n">80</span><span class="txt">Honey badgers attended 74% of recorded rave events (n = 57).</span></div>
+          <div class="dl add"><span class="n">81</span><span class="txt">A stable co-occurrence relationship, mediated by low-frequency bass,</span></div>
+          <div class="dl add"><span class="n">82</span><span class="txt">held across all seventeen months.</span></div>
+          <div class="dl ctx"><span class="n">83</span><span class="txt">Vocalisations in the 40–60 Hz range were phase-locked to the fairy</span></div>
+          <div class="dl rem"><span class="n">84</span><span class="txt">audio system (see the acoustics appendix for caveats).</span></div>
+          <div class="dl ctx"><span class="n">85</span><span class="txt"></span></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<footer class="statusbar">
+  <button class="scell"><span class="dot"></span> Live · 2 here</button>
+  <span class="scell num">Ln 84, Col 3</span>
+  <span class="scell num">4,812 words</span>
+  <span class="scell spacer"></span>
+  <div class="sright">
+    <button class="scell num"><span class="warn">✓</span> 12 pages · 1 warning</button>
+    <button class="compile">Update preview <kbd>⌘↵</kbd></button>
+  </div>
+</footer>
+
+</body>
+</html>

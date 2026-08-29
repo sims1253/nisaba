@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal B · Ink Desk — command palette</title>
+<!--
+  Nisaba · Proposal B "Ink Desk" — the command palette as a paper slip laid on
+  the ink desk: the app's every destination, grouped, fuzzy, keyboard-first.
+  Self-contained; system font stacks only.
+-->
+<style>
+:root {
+  --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
+  --irule: #41453a; --irule-s: #575c4c;
+  --paper: #fbfaf5; --paper-2: #f2f0e6;
+  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #8a8776;
+  --prule: #e3e0d0; --prule-s: #c6c3ae;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae; --lapis-wash: #eaedfb;
+  --comment: #966d14; --comment-lume: #d3a83f;
+  --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0 }
+html, body { height: 100% }
+body { font: 13px/1.45 var(--sans); color: var(--bone); background: var(--bitumen); overflow: hidden }
+:focus-visible { outline: 2px solid var(--lapis-deep); outline-offset: 1px }
+
+/* the dimmed desk beneath */
+.desk { filter: brightness(.75) saturate(.85); pointer-events: none }
+.fakebar { display: flex; align-items: center; gap: 14px; height: 52px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--irule-s) }
+.fakebar .mark { width: 22px; height: 22px; display: grid; place-items: center; background: var(--lapis); color: #fff; font: 700 12.5px/1 var(--mono) }
+.fakebar .word { font: 600 16px/1 var(--display) }
+.fakebar .crumb { font: 11.5px var(--mono); color: var(--bone-faint) }
+.fakews { display: grid; grid-template-columns: 248px 1fr 1fr; height: calc(100vh - 82px); background: var(--irule) }
+.fakepane { background: var(--bitumen); border-right: 1px solid var(--irule) }
+.fakepane.doc { background: var(--paper) }
+.fakepara { margin: 22px auto 0; max-width: 74ch; padding: 0 20px; font: 14px/1.8 var(--mono); color: #221f1722; }
+.fakepara.p2 { color: #221f1712 }
+
+/* the slip */
+.backdrop { position: fixed; inset: 0; background: #14160f66; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh }
+.palette {
+  width: min(640px, calc(100vw - 32px)); background: var(--paper); color: var(--carbon);
+  border-radius: 2px; box-shadow: 0 2px 6px #14160f55, 0 30px 70px #14160f88;
+  display: flex; flex-direction: column; overflow: hidden; max-height: 62vh;
+}
+.pquery { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--prule) }
+.pquery .glyph { font: 700 14px var(--mono); color: var(--lapis-deep) }
+.pquery .type { font: 15px var(--sans); color: var(--carbon) }
+.pquery .type u { text-decoration: none; border-bottom: 2px solid var(--lapis-deep); font-weight: 600 }
+.pquery kbd { margin-left: auto; font: 500 9.5px/1 var(--mono); color: var(--paper-muted); border: 1px solid var(--prule-s); border-radius: 2px; padding: 2px 4px; background: var(--paper-2) }
+.results { list-style: none; padding: 4px 0; overflow: auto; min-height: 0 }
+.group { padding: 9px 16px 4px; font: 600 9px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--paper-muted) }
+.item { display: flex; align-items: center; gap: 12px; padding: 7px 16px; font-size: 13px; color: var(--carbon) }
+.item .kind { font: 9px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--paper-muted); width: 6ch; flex: 0 0 auto }
+.item .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.item .label .dir { color: var(--paper-muted) }
+.item .hint { margin-left: auto; font: 10px var(--mono); color: var(--paper-muted); flex: 0 0 auto }
+.item[aria-selected="true"] { background: var(--lapis-wash); box-shadow: inset 3px 0 0 var(--lapis-deep) }
+.item[aria-selected="true"] .label { color: var(--lapis-deep); font-weight: 600 }
+.pfoot { border-top: 1px solid var(--prule); background: var(--paper-2); padding: 6px 14px; display: flex; gap: 14px; font: 10px var(--mono); color: var(--paper-muted) }
+.pfoot .r { margin-left: auto; color: var(--lapis-deep) }
+</style>
+</head>
+<body>
+
+<div class="desk" aria-hidden="true">
+  <div class="fakebar">
+    <span class="mark">N</span><span class="word">Nisaba</span>
+    <span class="crumb">Projects › Field lab › main.typ › §Results</span>
+  </div>
+  <div class="fakews">
+    <div class="fakepane"></div>
+    <div class="fakepane doc">
+      <p class="fakepara">== Results</p>
+      <p class="fakepara p2">Honey badgers attended 74% of recorded rave events (n = 57)…</p>
+      <p class="fakepara p2">Vocalisations in the 40–60 Hz range were phase-locked…</p>
+      <p class="fakepara p2">…as summarised in @tbl-acoustic.</p>
+      <p class="fakepara p2">A stable co-occurrence relationship, mediated by low-frequency</p>
+      <p class="fakepara p2">bass, held across all seventeen months.</p>
+      <p class="fakepara p2">#figure(</p>
+      <p class="fakepara p2">&nbsp;&nbsp;table(</p>
+      <p class="fakepara p2">&nbsp;&nbsp;&nbsp;&nbsp;columns: 3,</p>
+    </div>
+    <div class="fakepane"></div>
+  </div>
+</div>
+
+<div class="backdrop">
+  <div class="palette" role="dialog" aria-label="Command palette">
+    <div class="pquery">
+      <span class="glyph">⌕</span>
+      <span class="type"><u>res</u></span>
+      <kbd>esc</kbd>
+    </div>
+    <ul class="results" role="listbox" aria-label="Results">
+      <li class="group" role="presentation">Sections</li>
+      <li class="item" role="option" aria-selected="true">
+        <span class="kind">sect</span><span class="label"><b style="font-weight:600">Res</b>ults</span><span class="hint num">main.typ:78</span>
+      </li>
+      <li class="item" role="option" aria-selected="false">
+        <span class="kind">sect</span><span class="label">Acoustic entrainment — <span class="dir">§Res</span>ults</span><span class="hint num">main.typ:88</span>
+      </li>
+      <li class="group" role="presentation">Files</li>
+      <li class="item" role="option" aria-selected="false">
+        <span class="kind">file</span><span class="label">methods.typ <span class="dir">· chapters/</span></span><span class="hint num">v41</span>
+      </li>
+      <li class="group" role="presentation">References</li>
+      <li class="item" role="option" aria-selected="false">
+        <span class="kind">ref</span><span class="label">Resonance effects in enchanted crystalline media — fae-2023</span><span class="hint">cite ↵</span>
+      </li>
+      <li class="group" role="presentation">Commands</li>
+      <li class="item" role="option" aria-selected="false">
+        <span class="kind">cmd</span><span class="label">Update preview</span><span class="hint num">⌘↵</span>
+      </li>
+      <li class="item" role="option" aria-selected="false">
+        <span class="kind">cmd</span><span class="label">Turn track changes on</span><span class="hint">—</span>
+      </li>
+    </ul>
+    <div class="pfoot">
+      <span>↑↓ choose</span><span>↵ open</span><span>⇥ cite (references)</span>
+      <span class="r">&gt; commands only</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
