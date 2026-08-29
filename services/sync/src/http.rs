@@ -115,10 +115,16 @@ mod reqwest_impl {
             Ok(Self { client })
         }
 
-        /// Build a client that permits plain `http://` (for local dev against an
-        /// in-cluster `http://app:8080` authz endpoint or a local Keycloak).
+        /// Build a client that permits plain `http://` URLs in addition to
+        /// `https://` (for local dev against an in-cluster `http://app:8080`
+        /// authz endpoint or a local Keycloak).
+        ///
+        /// This only clears reqwest's `https_only` scheme restriction; it does
+        /// **not** disable TLS certificate verification. HTTPS connections are
+        /// still verified against the bundled webpki (Mozilla) root set, and
+        /// plain-`http://` URLs carry no TLS to verify in the first place.
         #[must_use]
-        pub fn new_insecure_scheme(
+        pub fn new_allow_http(
             connect_timeout: std::time::Duration,
             request_timeout: std::time::Duration,
         ) -> Self {
