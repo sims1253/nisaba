@@ -101,6 +101,34 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
+  # wasm32 parity gate — rust.yml's `wasm` job, copied verbatim (pins, the
+  # rustup target step, both cargo steps): clippy + golden-parity
+  # wasm-bindgen-test of crates/nisaba-core-wasm.
+  rust-wasm:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
+      # The action normalizes any "1.x" input to a concrete "1.x.y" patch
+      # before installing, while rust-toolchain.toml keeps cargo on the "1.94"
+      # toolchain — two different rustup directories, so a target installed
+      # via the action's `targets:` input lands where cargo never looks
+      # (E0463: can't find crate for `core`). rustup target add honors the
+      # directory override, installing into the toolchain cargo actually uses.
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2.86.1
+        with:
+          tool: wasm-bindgen-cli@0.2.127
+      # Clippy on the wasm target covers the target-specific cfg code the
+      # native clippy job never compiles.
+      - run: cargo clippy -p nisaba-core-wasm --target wasm32-unknown-unknown --all-targets --locked
+      - run: cargo test -p nisaba-core-wasm --target wasm32-unknown-unknown --locked
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+
   # ---- Test gates: the exact commands and pins from tools.yml --------------
 
   tools-verify:
@@ -162,7 +190,7 @@ jobs:
   # The ONLY job with contents: write — creating the GitHub Release needs it;
   # everything above stays at the workflow's contents: read.
   release:
-    needs: [validate-tag, rust-fmt, rust-clippy, rust-test, rust-deny, tools-verify, web-verify]
+    needs: [validate-tag, rust-fmt, rust-clippy, rust-test, rust-deny, rust-wasm, tools-verify, web-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
