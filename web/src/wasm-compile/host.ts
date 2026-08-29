@@ -202,8 +202,15 @@ export class WasmCompileHost {
     if (message.type === "compiled") {
       try {
         entry.resolve(decodeResponse(message.response))
-      } catch {
-        entry.reject(new Error("the in-browser compiler returned an unexpected response"))
+      } catch (error) {
+        // The decode failure names the exact field that failed — the
+        // wasm/server contract-drift signal — so it belongs in the rejection
+        // the build log shows, not just "unexpected response".
+        entry.reject(
+          new Error(
+            `the in-browser compiler returned an unexpected response: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        )
       }
     } else {
       entry.reject(new Error(message.message))
