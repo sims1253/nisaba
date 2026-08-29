@@ -105,6 +105,14 @@ impl Authenticator {
         validation.set_audience(std::slice::from_ref(&self.audience));
         let token = decode::<Claims>(token, &key, &validation)
             .map_err(|_| AppError::Unauthorized("JWT validation failed".into()))?;
+        if token.claims.sub.is_empty() {
+            // `sub: ""` is non-conformant but deserializes fine; letting it
+            // through would recreate the shared empty-identity membership row
+            // the required-`sub` change closed. App already rejects empty
+            // subjects at its other boundaries (internal sync authorize,
+            // membership add), so the auth edge must too.
+            return Err(AppError::Unauthorized("token has an empty subject".into()));
+        }
         let mut roles = HashSet::new();
         for role in &token.claims.roles {
             if let Some(role) = Role::parse(role) {

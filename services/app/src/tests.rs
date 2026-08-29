@@ -164,6 +164,20 @@ async fn token_without_sub_is_unauthorized() {
 }
 
 #[tokio::test]
+async fn token_with_empty_sub_is_unauthorized() {
+    // A non-conformant issuer can mint `sub: ""`, which the required-`sub`
+    // deserialization accepts; the boundary check must reject it before it
+    // can become a membership/ACL key.
+    let error = auth()
+        .authenticate(&bearer_headers(&mint(
+            json!({"sub": "", "roles": ["author"]}),
+        )))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::Unauthorized(_)));
+}
+
+#[tokio::test]
 async fn token_with_sub_but_no_preferred_username_authenticates() {
     // `preferred_username` is only a membership-lookup alias, never a subject
     // fallback: a plain `sub` token authenticates with that subject.
