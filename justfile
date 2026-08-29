@@ -238,7 +238,7 @@ e2e-suite: e2e-up
     # justfile template parser rejects the quoting needed inline).
     for svc in app sync compile web; do
         echo "[e2e] waiting for ${svc}..."
-        ./scripts/wait-healthy.sh "$svc" || true
+        ./scripts/wait-healthy.sh "$svc"
     done
     just e2e-test
 

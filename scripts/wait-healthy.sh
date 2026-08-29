@@ -25,4 +25,7 @@ except Exception:
     sleep 3
 done
 echo "timed out waiting for ${container} to become healthy after ${i} attempts" >&2
+# Same diagnosability as the sibling waiters (deploy/e2e-app.sh, nightly e2e):
+# dump the container tail so a local e2e-suite failure is immediately readable.
+docker logs --tail 50 "${container}" >&2 || true
 exit 1
