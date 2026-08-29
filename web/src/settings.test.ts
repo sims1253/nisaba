@@ -50,6 +50,22 @@ describe("clampSettings", () => {
     expect(clampSettings({ fontSize: Number.NaN }).fontSize).toBe(DEFAULT_SETTINGS.fontSize)
     expect(clampSettings({ fontSize: Number.POSITIVE_INFINITY }).fontSize).toBe(DEFAULT_SETTINGS.fontSize)
   })
+
+  it("accepts every typeface preset id", () => {
+    for (const id of ["mono", "serif", "sans", "system-mono", "system-serif", "system-sans", "custom"]) {
+      expect(clampSettings({ typeface: id }).typeface).toBe(id)
+    }
+  })
+
+  it("sanitizes custom font stacks: plain names kept, escapes stripped, junk dropped", () => {
+    expect(clampSettings({ typeface: "custom", customFont: "\"Iosevka\", \"JetBrains Mono\", monospace" }).customFont)
+      .toBe("\"Iosevka\", \"JetBrains Mono\", monospace")
+    expect(clampSettings({ typeface: "custom", customFont: "Bad { } ; <script> url(javascript:x)" }).customFont)
+      .toBe("Bad script javascript:x")
+    expect(clampSettings({ typeface: "custom", customFont: "   " }).customFont).toBeUndefined()
+    expect(clampSettings({ typeface: "custom", customFont: 42 }).customFont).toBeUndefined()
+    expect(clampSettings({ typeface: "custom", customFont: "x".repeat(500) }).customFont?.length).toBeLessThanOrEqual(120)
+  })
 })
 
 describe("persistence", () => {
@@ -100,6 +116,13 @@ describe("applySettings", () => {
     expect(root.style.getPropertyValue("--ed-font")).toBe(TYPEFACE_STACKS.serif)
     expect(root.style.getPropertyValue("--ed-size")).toBe("17px")
     expect(root.style.getPropertyValue("--ed-line")).toBe("1.5")
+  })
+
+  it("resolves a custom stack, falling back to mono when it is empty", () => {
+    applySettings(clampSettings({ typeface: "custom", customFont: "\"Iosevka\", monospace" }))
+    expect(document.documentElement.style.getPropertyValue("--ed-font")).toBe("\"Iosevka\", monospace")
+    applySettings(clampSettings({ typeface: "custom" }))
+    expect(document.documentElement.style.getPropertyValue("--ed-font")).toBe(TYPEFACE_STACKS.mono)
   })
 })
 
