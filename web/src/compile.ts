@@ -22,6 +22,7 @@ import { resolveCursor } from "./cursor"
 import { decodeBase64Pdf } from "./effects"
 import type { VirtualPdfViewer } from "./pdf-viewer"
 import type { ReviewItem, ReviewState } from "./review"
+import { wasmCompile } from "./wasm-compile"
 
 // ---------------------------------------------------------------------------
 // Compile diagnostics (mirrors services/compile Diagnostic: severity/message/path/start/end)
@@ -81,6 +82,12 @@ export interface CompileWorkspace {
   view: CompileView
   review: ReviewState
   diagnostics: readonly CompileDiagnostic[]
+  /** The project's reference rows, as the library pane shows them. The
+   *  in-browser compile path builds its bibliography from these (the app
+   *  service reads them from the database on every server compile); the
+   *  server path never looks at them — marks and references travel in the
+   *  request it posts. */
+  references: readonly api.Reference[]
 }
 
 /** Everything the compile module needs but does not own. main.ts supplies these
@@ -110,6 +117,11 @@ let host: CompileHost | undefined
 /** The one-time handoff from main.ts. Must be called before any other export. */
 export function initCompile(handles: CompileHost): void {
   host = handles
+  // When the writer opted into in-browser compiles, start paying the wasm
+  // artifact download on idle instead of at their first build. A no-op for
+  // everyone else (the default path), and boot failures surface later as the
+  // fallback note below, not here.
+  wasmCompile.prefetch()
 }
 
 function requireHost(): CompileHost {
@@ -265,17 +277,49 @@ function collectOpenSuggestionMarks(): readonly MarkInput[] {
  * The compile request both paths send: the current document as a single
  * in-memory source, its open suggestion marks, and the active view. One
  * builder so the manual and background paths can never drift in what they
- * ask the server to build.
+ * ask the engine to build.
+ *
+ * Which engine serves it is the wasm-compile dispatcher's call (issue #20
+ * stage 2c): the server route by default, an in-browser Web Worker for users
+ * who opted in via the localStorage toggle — and, when the opted-in engine
+ * cannot serve (artifacts not built, worker failed), the server again, with
+ * one log line saying so. Both paths consume the identical request and
+ * produce the identical response contract, so nothing downstream can tell
+ * (or needs to tell) the difference except the log line.
  */
 function compileRequest(projectId: string, entry: string, marks: readonly MarkInput[]): Effect.Effect<api.CompileResponse, api.ApiError> {
   const { editor, state } = requireHost()
-  return api.compile({
-    projectId,
-    entry,
-    sources: { [entry]: editor.state.doc.toString() },
-    marks: { [entry]: marks },
-    view: state.view
-  })
+  const fallback = wasmCompile.fallbackReason()
+  if (fallback !== undefined) noteWasmCompileFallback(fallback)
+  return wasmCompile.compile(
+    {
+      projectId,
+      entry,
+      sources: { [entry]: editor.state.doc.toString() },
+      marks: { [entry]: marks },
+      view: state.view
+    },
+    state.references
+  )
+}
+
+/** Whether the fallback note has been logged this session. The note exists so
+ *  an opted-in writer learns why builds still hit the server (usually: the
+ *  artifacts are not built — `just wasm-web`); once is enough. */
+let notedWasmFallback = false
+
+function noteWasmCompileFallback(reason: string): void {
+  if (notedWasmFallback) return
+  notedWasmFallback = true
+  const { logBuild } = requireHost()
+  logBuild("info", `In-browser compile is enabled but unavailable: ${reason}. Building on the server.`)
+}
+
+/** The engine suffix for the build log line: which path served the compile
+ *  (issue #20 stage 2c). The log is the expert surface, so the writer's
+ *  status line and the build label stay engine-agnostic. */
+function engineLabel(): string {
+  return wasmCompile.lastServedBy() === "wasm" ? "in-browser" : "server"
 }
 
 /** Release after a manual compile settles: free the guard, re-enable the
@@ -377,7 +421,7 @@ export function compileCurrent(): void {
       renderBuildHealth()
       logBuild(
         errors > 0 ? "err" : warnings > 0 ? "warn" : "ok",
-        `build ${result.build_id} — ${VIEW_LABELS[state.view].toLowerCase()} · ${((Date.now() - startedAt) / 1000).toFixed(2)} s${errors > 0 ? ` · ${errors} problem${errors === 1 ? "" : "s"}` : warnings > 0 ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : ""}`
+        `build ${result.build_id} — ${VIEW_LABELS[state.view].toLowerCase()} · ${((Date.now() - startedAt) / 1000).toFixed(2)} s${errors > 0 ? ` · ${errors} problem${errors === 1 ? "" : "s"}` : warnings > 0 ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : ""} · ${engineLabel()}`
       )
       status(errors > 0
         ? `${errors} problem${errors === 1 ? "" : "s"} stopped the preview`
