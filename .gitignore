@@ -21,6 +21,11 @@ artifacts/
 *.tmp
 *.bak
 
+# Optional in-browser compile WASM artifacts, built on demand by `just
+# wasm-web` (issue #20 stage 2c) — never committed; the compile module alone
+# is tens of megabytes.
+web/src/wasm-generated/
+
 # Agent, editor, and OS state
 /.claude/
 /.prime/
