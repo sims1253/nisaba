@@ -56,9 +56,7 @@ const clampNumber = (value: unknown, min: number, max: number, fallback: number)
 
 /** Validates an unknown parsed record into safe settings, field by field. */
 export function clampSettings(raw: unknown): Settings {
-  const record = typeof raw === "object" && raw !== null && (raw as Record<string, unknown>) !== null
-    ? (raw as Record<string, unknown>)
-    : {}
+  const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {}
   const typeface = record["typeface"]
   return {
     typeface: typeface === "serif" || typeface === "sans" || typeface === "mono" ? typeface : DEFAULT_SETTINGS.typeface,

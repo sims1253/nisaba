@@ -2931,8 +2931,8 @@ function openSettings(): void {
     "settings",
     `<div class="settings-body">
       <div class="settings-row">
-        <label for="settings-typeface">Typeface</label>
-        <div class="segmented" role="group" aria-label="Editor typeface" id="settings-typeface">
+        <label id="settings-typeface-label">Typeface</label>
+        <div class="segmented" role="group" aria-labelledby="settings-typeface-label" id="settings-typeface">
           ${typefaces
             .map((id) => `<button class="seg" type="button" data-typeface="${id}" aria-pressed="${settings.typeface === id}">${TYPEFACE_LABELS[id]}</button>`)
             .join("")}
