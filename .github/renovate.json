@@ -1,13 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Keep digest-pinned Docker images and digest-pinned GitHub Actions up to date. PRs only — nothing is merged automatically.",
+  "description": "Keep digest-pinned Docker images, digest-pinned GitHub Actions, and the exact-pinned Effect fleet up to date. PRs only — nothing is merged automatically.",
   "extends": ["config:recommended"],
   "timezone": "Etc/UTC",
   "schedule": ["before 5am on the first day of the month"],
   "labels": ["dependencies"],
   "prHourlyLimit": 4,
   "commitMessagePrefix": "chore(deps): ",
-  "enabledManagers": ["dockerfile", "docker-compose", "github-actions"],
+  "enabledManagers": ["dockerfile", "docker-compose", "github-actions", "npm"],
   "packageRules": [
     {
       "description": "Docker images are digest-pinned in this repo; Renovate must keep updating tag+digest pairs, never float the tag alone.",
@@ -26,6 +26,15 @@
       "matchPackageNames": ["pullfrog/pullfrog"],
       "groupName": "pullfrog",
       "schedule": ["before 5am on monday"]
+    },
+    {
+      "description": "The Effect ecosystem must move in lockstep — a partial bump of effect without matching @effect/* packages (or vice versa) breaks — and with Bun there is no workspace catalog to enforce one version, so all Effect packages go into one grouped PR. The pins stay exact (rangeStrategy pin), majors are not split into separate PRs (separateMajorMinor false, so a 4-beta to stable or 5.x jump cannot fork the fleet), and releases younger than 3 days are skipped as a supply-chain cooldown, matching the digest-pinning posture (updates lag by that cooldown).",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["effect", "@effect/*"],
+      "groupName": "effect",
+      "rangeStrategy": "pin",
+      "separateMajorMinor": false,
+      "minimumReleaseAge": "3 days"
     }
   ]
 }
