@@ -1178,19 +1178,41 @@ function createProject(): void {
 /**
  * Persist/restore the last-open project + document (M5). Tab-away/return
  * previously dropped the user back on the project list with "No document
- * selected", losing their place. The ids survive in localStorage across tab
- * closes; the restore runs after the project list loads, reopening the project
- * and (if its outline still contains it) the document.
+ * selected", losing their place. Two storage tiers keep that convenience
+ * without collapsing multi-tab sessions into one project (live-session
+ * finding: two tabs on two projects both reloaded into whichever tab wrote
+ * last):
+ *
+ * - sessionStorage — THIS tab's restore target. Not shared between tabs, so
+ *   each tab reloads into the project it actually had open.
+ * - localStorage — the most recent project-bearing entry anywhere, used only
+ *   when a tab has no session record of its own (a brand-new tab), so it
+ *   still lands in the last project instead of the project list.
+ *
+ * The restore runs after the project list loads, reopening the project and
+ * (if its outline still contains it) the document.
  */
 const LAST_OPEN_KEY = "nisaba.lastOpen"
 interface LastOpen { readonly projectId?: string; readonly documentId?: string }
 
 function persistLastOpen(entry: LastOpen): void {
-  try { localStorage.setItem(LAST_OPEN_KEY, JSON.stringify(entry)) } catch { /* storage may be unavailable */ }
+  try {
+    const encoded = JSON.stringify(entry)
+    sessionStorage.setItem(LAST_OPEN_KEY, encoded)
+    // Only a project-bearing entry becomes the new-tab default; leaving or
+    // deleting a project (the {} entries) clears the global record too, so a
+    // fresh tab doesn't drop into a project this session deliberately left.
+    if (entry.projectId) localStorage.setItem(LAST_OPEN_KEY, encoded)
+    else localStorage.removeItem(LAST_OPEN_KEY)
+  } catch { /* storage may be unavailable */ }
 }
 
 function readLastOpen(): LastOpen {
-  try { return JSON.parse(localStorage.getItem(LAST_OPEN_KEY) ?? "{}") as LastOpen } catch { return {} }
+  try {
+    // This tab's own record first; a fresh tab falls back to the global one.
+    const stored = sessionStorage.getItem(LAST_OPEN_KEY) ?? localStorage.getItem(LAST_OPEN_KEY)
+    return JSON.parse(stored ?? "{}") as LastOpen
+  } catch { return {} }
 }
 
 /**
