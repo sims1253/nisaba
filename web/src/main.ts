@@ -31,6 +31,7 @@ import { createCursorAt } from "./cursor"
 import { SHELL_HTML } from "./shell"
 import { activeHeadingIndex, buildFileTree, documentHeadings, headingTrail, wordCount, type Heading, type TreeNode } from "./outline"
 import { initialsOf, peerLocation, type PresencePeer } from "./presence"
+import { remoteCursors, setRemoteCursors, type RemoteCursor } from "./remote-cursors"
 import { createPalette, type PaletteItem } from "./palette"
 import { fuzzyScore } from "./fuzzy"
 import {
@@ -911,8 +912,7 @@ function closeOpenDocument(): void {
   state.document = undefined
   reviewerSyncReady = false
   state.review = emptyReviewState
-  presencePeers = []
-  renderPresence()
+  applyPresenceRoster([])
   editor.dispatch({ effects: setReviewItems.of([]) })
   closeReviewPopover()
   if (editor.state.doc.length > 0) {
@@ -1644,8 +1644,7 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
         : "Project access revoked — this document is now read-only")
     },
     onPresence: (peers) => {
-      presencePeers = peers
-      renderPresence()
+      applyPresenceRoster(peers)
     }
   })
 }
@@ -1712,6 +1711,32 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
 
 let presencePeers: readonly PresencePeer[] = []
 
+/**
+ * Applies one roster frame everywhere it matters: the avatar row, the "N
+ * here" status suffix, and the remote-cursor decorations in the editor (a
+ * peer renders a caret only while they are in THIS document's room and their
+ * published path matches — a stale path from a just-switched peer is dropped
+ * rather than drawn in the wrong file).
+ */
+function applyPresenceRoster(peers: readonly PresencePeer[]): void {
+  presencePeers = peers
+  renderPresence()
+  const openPath = state.selected?.document.path
+  const cursors: RemoteCursor[] = []
+  for (const peer of peers) {
+    if (peer.line === undefined) continue
+    if (openPath !== undefined && peer.path !== undefined && peer.path !== openPath) continue
+    cursors.push({
+      peer: peer.peer,
+      name: peer.name,
+      line: peer.line,
+      column: peer.column ?? 1,
+      hue: authorHue(peer.name || String(peer.peer)),
+    })
+  }
+  editor.dispatch({ effects: setRemoteCursors.of(cursors) })
+}
+
 /** The status bar's sync cell reads "Live · 3 here" once other people are present. */
 function presenceSuffix(short: string): string {
   return presencePeers.length === 0 ? short : `${short} · ${presencePeers.length + 1} here`
@@ -1754,13 +1779,16 @@ function publishPresence(): void {
   const document_ = state.selected?.document
   if (!connection || !document_) return
   const head = editor.state.selection.main.head
-  const line = editor.state.doc.lineAt(Math.min(head, editor.state.doc.length)).number
+  const caretLine = editor.state.doc.lineAt(Math.min(head, editor.state.doc.length))
+  const line = caretLine.number
+  const column = Math.min(head, editor.state.doc.length) - caretLine.from + 1
   const trail = headingTrail(currentHeadings, head)
   connection.publishPresence({
     name: currentUserDisplayName(),
     path: document_.path,
     section: trail.at(-1)?.title,
-    line
+    line,
+    column
   })
 }
 
@@ -2178,6 +2206,10 @@ const editor = new EditorView({
     doc: "",
     extensions: [
       basicSetup,
+      // Remote peers' carets (Overleaf-style): colored caret + name flag per
+      // presence-roster entry, hue-matched to the avatar chips. The cursor set
+      // is driven by applyPresenceRoster; it is empty until a roster arrives.
+      ...remoteCursors,
       // Typst command + reference/citation completions. Placed after basicSetup
       // (which already pulls in default autocompletion) so these sources augment
       // the defaults rather than replacing them.
@@ -4558,8 +4590,7 @@ onAuthFailure(() => {
   state.selected = undefined
   state.document = undefined
   state.role = undefined
-  presencePeers = []
-  renderPresence()
+  applyPresenceRoster([])
   renderWorkspaceState()
   renderProjects()
 })

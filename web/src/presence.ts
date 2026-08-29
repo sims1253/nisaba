@@ -33,6 +33,8 @@ export interface PresenceState {
   readonly section?: string
   /** 1-based caret line. */
   readonly line?: number
+  /** 1-based caret column (UTF-16 offset within the line + 1). */
+  readonly column?: number
 }
 
 /** A roster entry: presence state plus the CRDT peer id that published it. */
@@ -51,6 +53,7 @@ export function encodePresenceState(state: PresenceState): Uint8Array {
   if (state.path !== undefined && state.path !== "") payload["p"] = clip(state.path)
   if (state.section !== undefined && state.section !== "") payload["s"] = clip(state.section)
   if (state.line !== undefined && Number.isFinite(state.line)) payload["l"] = Math.max(1, Math.trunc(state.line))
+  if (state.column !== undefined && Number.isFinite(state.column)) payload["c"] = Math.max(1, Math.trunc(state.column))
   return new TextEncoder().encode(JSON.stringify(payload))
 }
 
@@ -65,7 +68,8 @@ export function decodePresenceState(bytes: Uint8Array): PresenceState | undefine
     const path = typeof record["p"] === "string" ? record["p"] : undefined
     const section = typeof record["s"] === "string" ? record["s"] : undefined
     const line = typeof record["l"] === "number" && Number.isFinite(record["l"]) ? record["l"] : undefined
-    return { name, path, section, line }
+    const column = typeof record["c"] === "number" && Number.isFinite(record["c"]) ? record["c"] : undefined
+    return { name, path, section, line, column }
   } catch {
     return undefined
   }
@@ -96,7 +100,7 @@ export function decodeRoster(bytes: Uint8Array): readonly PresencePeer[] {
     if (offset + length > bytes.byteLength) break
     const state = decodePresenceState(bytes.subarray(offset, offset + length))
     offset += length
-    peers.push({ peer, name: state?.name ?? "", path: state?.path, section: state?.section, line: state?.line })
+    peers.push({ peer, name: state?.name ?? "", path: state?.path, section: state?.section, line: state?.line, column: state?.column })
   }
   return peers
 }
