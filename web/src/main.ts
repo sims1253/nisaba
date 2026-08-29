@@ -98,6 +98,10 @@ const state: Workspace = {
   diagnostics: []
 }
 
+// The rebindable app chords. Declared early — the editor's extension set
+// (below) consumes the compile chord at construction time.
+let bindings: Keybindings = loadBindings()
+
 /**
  * The active document's Loro replica.
  *
@@ -114,6 +118,20 @@ const state: Workspace = {
 const loroCompartment = new Compartment()
 /** Controls whether the editor accepts input (disabled for read-only roles). */
 const editableComp = new Compartment()
+/**
+ * Holds the editor-side half of the compile chord. CodeMirror's Enter
+ * binding inserts a newline BEFORE the global document handler can
+ * preventDefault, so Mod+Enter both compiled and broke the line. This
+ * keymap claims the chord inside the editor (run: () => true — handled,
+ * preventDefaulted, no newline); the event still bubbles, and the global
+ * handler performs the compile exactly once. Reconfigured when the chord
+ * is rebound.
+ */
+const compileChordCompartment = new Compartment()
+const compileChordKeymap = (chord: string) => keymap.of([{ key: chord.replace(/\+/g, "-"), run: () => true }])
+const syncCompileChord = (): void => {
+  editor.dispatch({ effects: compileChordCompartment.reconfigure(compileChordKeymap(bindings.compile)) })
+}
 /** A fresh replica with a UNIQUE CRDT peer id. */
 function newReplica(): LoroDoc {
   const doc = new LoroDoc()
@@ -2291,6 +2309,7 @@ const editor = new EditorView({
       // presence-roster entry, hue-matched to the avatar chips. The cursor set
       // is driven by applyPresenceRoster; it is empty until a roster arrives.
       ...remoteCursors,
+      compileChordCompartment.of(compileChordKeymap(bindings.compile)),
       // Typst command + reference/citation completions. Placed after basicSetup
       // (which already pulls in default autocompletion) so these sources augment
       // the defaults rather than replacing them.
@@ -2962,7 +2981,6 @@ const ROLE_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 let settings: Settings = loadSettings()
-let bindings: Keybindings = loadBindings()
 // The armed chord capture (Settings → Keyboard), if one is listening. Kept
 // module-level so arming a second capture disarms the first, and so any
 // capture whose button left the DOM (dock closed, settings re-rendered,
@@ -2981,7 +2999,7 @@ function refreshChordDisplays(): void {
 }
 
 function openSettings(): void {
-  const typefaces: readonly TypefaceId[] = ["mono", "serif", "sans"]
+  const typefaces = Object.keys(TYPEFACE_LABELS) as readonly TypefaceId[]
   const project = state.project
   const defaultFile = project ? loadDefaultFile(project.id) : undefined
   const defaultFileRow = project
@@ -3004,18 +3022,22 @@ function openSettings(): void {
         .map((action) => `<div class="settings-row"><label>${bindingLabel(action)}</label><button type="button" class="btn keybind-btn" data-rebind="${action}" style="margin-left:auto">${prettyChord(bindings[action])}</button></div>`)
         .join("")}
       <div class="settings-row"><label></label><button type="button" class="btn" id="keybinds-reset" style="margin-left:auto">Reset chords</button></div>`
-  showPanel(
-    "settings",
-    `<div class="settings-body">
+  const body = `<div class="settings-body">
       ${defaultFileRow}
       <div class="settings-row">
         <label id="settings-typeface-label">Typeface</label>
-        <div class="segmented" role="group" aria-labelledby="settings-typeface-label" id="settings-typeface">
+        <select id="settings-typeface" aria-labelledby="settings-typeface-label">
           ${typefaces
-            .map((id) => `<button class="seg" type="button" data-typeface="${id}" aria-pressed="${settings.typeface === id}">${TYPEFACE_LABELS[id]}</button>`)
+            .map((id) => `<option value="${id}" ${settings.typeface === id ? "selected" : ""}>${TYPEFACE_LABELS[id]}</option>`)
             .join("")}
-        </div>
+        </select>
       </div>
+      ${settings.typeface === "custom"
+        ? `<div class="settings-row">
+             <label id="settings-custom-font-label">Font stack</label>
+             <input id="settings-custom-font" type="text" placeholder="e.g. \"Iosevka\", \"JetBrains Mono\", monospace" value="${escapeHtml(settings.customFont ?? "")}" aria-labelledby="settings-custom-font-label" autocomplete="off" spellcheck="false">
+           </div>`
+        : ""}
       <div class="settings-row">
         <label for="settings-font-size">Font size</label>
         <input id="settings-font-size" type="range" min="12" max="24" step="1" value="${settings.fontSize}" aria-label="Editor font size">
@@ -3029,18 +3051,31 @@ function openSettings(): void {
       <p class="settings-note">Editor look only — your choices live in this browser and never affect collaborators or compiled output. <button type="button" class="btn" id="settings-reset">Reset to defaults</button></p>
       ${keyboardRows}
     </div>`
-  )
+  // On a project screen the settings live in the dock like every standing
+  // tool; on the landing page there is no workspace to host a dock, so the
+  // same body renders in the modal panel instead.
+  if (project) showPanel("settings", body)
+  else showModal("Settings", "Editor settings", body)
   const commit = (next: Settings): void => {
     settings = next
     saveSettings(settings)
     applySettings(settings)
   }
-  for (const button of document.querySelectorAll<HTMLButtonElement>("#settings-typeface [data-typeface]")) {
-    button.addEventListener("click", () => {
-      commit(clampSettings({ ...settings, typeface: button.dataset.typeface as TypefaceId }))
-      openSettings()
-    })
-  }
+  const typefaceSelect = el<HTMLSelectElement>("#settings-typeface")
+  typefaceSelect?.addEventListener("change", () => {
+    commit(clampSettings({ ...settings, typeface: typefaceSelect.value as TypefaceId }))
+    openSettings()
+  })
+  const customFontInput = el<HTMLInputElement>("#settings-custom-font")
+  customFontInput?.addEventListener("change", () => {
+    const cleaned = clampSettings({ ...settings, customFont: customFontInput.value }).customFont
+    if (cleaned === undefined && customFontInput.value.trim() !== "") {
+      status("That font stack cannot be used — plain font names, quotes and commas only")
+      return
+    }
+    commit({ ...settings, customFont: cleaned })
+    applySettings(settings)
+  })
   const fontSize = el<HTMLInputElement>("#settings-font-size")
   fontSize?.addEventListener("input", () => {
     const size = clampSettings({ ...settings, fontSize: Number(fontSize.value) }).fontSize
@@ -3101,6 +3136,7 @@ function openSettings(): void {
         if (refusal !== undefined) { status(`${prettyChord(chord)}: ${refusal}`); finish(); return }
         bindings = { ...bindings, [action]: chord }
         commitBindings(bindings)
+        syncCompileChord()
         refreshChordDisplays()
         status(`${bindingLabel(action)} is now ${prettyChord(chord)}`)
         finish()
@@ -3112,6 +3148,7 @@ function openSettings(): void {
   el("#keybinds-reset")?.addEventListener("click", () => {
     bindings = { ...DEFAULT_BINDINGS }
     commitBindings(bindings)
+    syncCompileChord()
     refreshChordDisplays()
     openSettings()
   })
@@ -4569,7 +4606,13 @@ el("#add-demo")?.addEventListener("click", addDemoFile)
 el("#references-button")?.addEventListener("click", () => toggleDock("references", openReferences))
 el("#history-button")?.addEventListener("click", () => toggleDock("history", openHistory))
 el("#share-button")?.addEventListener("click", () => toggleDock("share", openShare))
-el("#settings-button")?.addEventListener("click", () => toggleDock("settings", openSettings))
+el("#settings-button")?.addEventListener("click", () => {
+  // Inside a project the settings dock alongside the other standing tools;
+  // on the landing page there is no workspace to host a dock, so openSettings
+  // renders into the modal instead — bypass the dock machinery entirely.
+  if (state.project) toggleDock("settings", openSettings)
+  else openSettings()
+})
 
 // Projects screen: search-as-you-type and the Recent/Name sort toggle. The
 // sort choice persists; both re-render the list through the pure shaper.

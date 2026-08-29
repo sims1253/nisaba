@@ -317,8 +317,10 @@ record degrades to the defaults per field, never to a broken editor.
 
 Scopes, in delivery order:
 
-- **Editor typography** — typeface (mono/serif/sans, the stylesheet's font stacks), font
-  size (12–24 px), line spacing (1.2–2.2), applied live.
+- **Editor typography** — typeface presets (the bundled DM Mono / Source Serif 4 / DM Sans
+  plus system mono/serif/sans stacks, and Custom… with a sanitized font-family input),
+  font size (12–24 px), line spacing (1.2–2.2), applied live. Settings open from every
+  screen: the dock inside a project, the modal panel on the landing page.
 - **Opening file** (project open, per project) — which document opens when the project is
   entered *without* a more recent file in that tab (a reload restoring your last file
   still wins, and a manual pick during the open window overrides). This browser's
@@ -391,7 +393,7 @@ replacement, Esc cancels). The table shows the defaults.
 | `⌘⏎` | Update preview | Global |
 | `⌘S` | Save, then update preview | Global |
 | `⌘⇧F` | Focus mode | Global |
-| `⌘B` | Navigator | Global |
+| `⌘\` | Navigator | Global |
 | `⌘=` / `⌘−` | Zoom the preview | Pointer over the preview pane (not rebindable) |
 | `↑` `↓` `Enter` `A` `R` `C` `Esc` | Triage the review queue | Review dock only |
 | `Esc` | Close the palette, popover, or dock | Contextual |
@@ -399,7 +401,9 @@ replacement, Esc cancels). The table shows the defaults.
 Single-letter shortcuts bind **only** while focus is inside the review dock, so they can
 never fire into the text.
 
-**Browser defaults are not hijacked — and cannot be, by construction.** The chord model
+**Browser defaults are not hijacked — and cannot be, by construction.** The shipped
+defaults avoid browser-owned chords per platform too: the navigator toggle is `⌘\`,
+not the editor-reflexive `⌘B`, because Firefox owns Ctrl+B for its bookmarks sidebar. The chord model
 (`web/src/keybindings.ts`) refuses browser-essential chords for the shipped defaults AND
 for user rebinds alike: the reload family (`⌘R`, `⌘⇧R`, `F5`), devtools, history, and the
 browser-zoom chords; load-time validation drops any that slipped into storage, and the

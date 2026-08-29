@@ -156,7 +156,7 @@ read it; pick a second to see what changed between them.
 | `⌘⏎` / `Ctrl+Enter` | Update the preview |
 | `⌘S` / `Ctrl+S` | Save, then update the preview |
 | `⌘⇧F` / `Ctrl+Shift+F` | Focus mode — hide everything but the text |
-| `⌘B` / `Ctrl+B` | Show or hide the sidebar |
+| `⌘\` / `Ctrl+\` | Show or hide the sidebar (Firefox keeps Ctrl+B for its bookmarks sidebar) |
 | `⌘=` / `⌘−` | Zoom the preview in and out (while the pointer is over the preview) |
 | `↑` `↓` `Enter` `A` `R` `C` `Esc` | Work through the review queue (while it has focus) |
 

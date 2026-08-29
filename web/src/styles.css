@@ -318,6 +318,10 @@ body:not(.has-project) .appbar-tools { display: none }
   flex: 1; border: 1px solid var(--rule-strong); border-radius: var(--radius);
   padding: 6px 7px; font: 12px var(--sans); background: var(--overlay); color: var(--ink);
 }
+.settings-row input[type="text"] {
+  flex: 1; border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  padding: 6px 8px; font: 12px var(--mono); background: var(--overlay); color: var(--ink);
+}
 .keybind-btn { font: 12px var(--mono); min-width: 120px; text-align: center }
 .keybind-btn.capturing { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft) }
 .settings-note { color: var(--muted); font-size: 11px; margin: 12px 0 0 }
@@ -539,7 +543,11 @@ body:not(.has-project) .appbar-tools { display: none }
 .cm-scroller {
   font-family: var(--ed-font, var(--mono)) !important;
   font-size: var(--ed-size, 14px);
-  line-height: var(--ed-line, 1.75);
+  /* !important for the same reason as font-family: CodeMirror's injected
+     base theme sets lineHeight 1.4 on .cm-scroller AFTER this stylesheet —
+     equal specificity, later cascade wins, and the setting silently does
+     nothing without this. */
+  line-height: var(--ed-line, 1.75) !important;
   padding: 22px 0 45vh;              /* deep bottom padding: the last line can sit mid-screen */
 }
 /* The measure. Long monospace prose at full window width is unreadable, so the
