@@ -6,7 +6,9 @@
 #
 # Tolerant by design: if a dependency (a bucket, the DB, the compose stack) is
 # absent, that step is skipped with a clear message rather than aborting the
-# whole backup. Production notes in docs/operations.md.
+# whole backup. A dependency that is present but fails (pg_dump, a bucket
+# sync) aborts instead: an incomplete snapshot must not report success.
+# Production notes in docs/operations.md.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,7 +32,10 @@ if docker compose ps postgres 2>/dev/null | grep -q "postgres"; then
         pg_dump --no-owner --no-privileges --clean --if-exists \
         -U "${NISABA_DB_USER:-nisaba_app}" "${NISABA_DB_NAME:-nisaba}" \
         > "${DEST}/postgres/nisaba.sql" 2>"${DEST}/postgres/pg_dump.stderr" \
-        || { echo "[backup] WARN: pg_dump failed — see ${DEST}/postgres/pg_dump.stderr"; }
+        || {
+            echo "[backup] ERROR: pg_dump failed — see ${DEST}/postgres/pg_dump.stderr; snapshot is INCOMPLETE (no database dump)." >&2
+            exit 1
+        }
     gzip -f "${DEST}/postgres/nisaba.sql" 2>/dev/null || true
 else
     echo "[backup] postgres container not running; skipping database dump."
