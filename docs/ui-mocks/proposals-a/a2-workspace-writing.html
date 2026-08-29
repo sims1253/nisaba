@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal A — Workspace, writing · Nisaba</title>
+<!--
+  PROPOSAL A · the writing workspace (proposed state)
+
+  Baseline: web/src/shell.ts + styles.css, token for token. Proposed changes
+  shown here:
+    A1  serif wordmark
+    A2  roster chips: avatar + name + role, capped at 3 with "+N", divider
+        between the people group (roster + Share) and the doc utilities
+    A3  presence avatars 24px, "you" ring
+    D2  hairline separators in the doc bar's control group
+    G3  outline rows reuse the tree's dotted indent guides
+    N1  Files header keeps two actions (demo moved out)
+    N3  nav-foot as an aligned label/value fact grid
+    V1  build label gains the amber "edited since" staleness suffix
+    V2  (see a6 for the placeholder + chord)
+    T1  status bar shows selection word count: "37 of 4,812 words"
+-->
+<style>
+:root{
+  --paper:#fdfcf9; --chrome:#f2f3f0; --chrome-raised:#f8f8f6; --shell:#e9eae6; --overlay:#ffffff;
+  --ink:#1b1e1c; --ink-soft:#3d443e; --muted:#6a706a; --faint:#8d938c;
+  --rule:#e2e3dd; --rule-strong:#c8cac2;
+  --accent:#23508a; --accent-strong:#1b3f6e; --accent-soft:#e8eef6; --accent-line:#b9cbe1;
+  --insert:#2e7d4f; --insert-soft:#e4efe8; --comment:#9a6f18; --comment-soft:#f7edd4;
+  --delete:#a63a2e; --delete-soft:#f8e7e3;
+  --sans:"DM Sans",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+  --mono:"DM Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --serif:"Source Serif 4",Charter,Georgia,"Times New Roman",serif;
+  --appbar-h:46px; --statusbar-h:30px; --radius:3px;
+}
+*{box-sizing:border-box} html,body{height:100%}
+body{margin:0;font:13px/1.45 var(--sans);color:var(--ink);background:var(--chrome);overflow:hidden;min-width:1440px}
+button{font:inherit;color:inherit}
+kbd{font:500 9.5px/1 var(--mono);letter-spacing:.04em;border:1px solid var(--rule-strong);border-radius:2px;padding:2px 4px;color:var(--muted);background:var(--chrome-raised);white-space:nowrap}
+.num{font-variant-numeric:tabular-nums}
+[hidden]{display:none!important}
+
+#app{height:100vh;display:grid;grid-template-rows:var(--appbar-h) minmax(0,1fr) auto var(--statusbar-h)}
+
+/* ───────────────────────── app bar ───────────────────────── */
+.appbar{display:flex;align-items:center;gap:14px;padding:0 12px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule-strong);min-width:0}
+.brand{display:flex;align-items:center;gap:8px;border:0;background:transparent;cursor:pointer;padding:4px 6px;border-radius:var(--radius)}
+.brand .mark{width:21px;height:21px;display:grid;place-items:center;background:var(--accent);color:#fff;border-radius:2px;font:700 12px/1 var(--mono)}
+/* A1: the wordmark speaks the document voice (small-caps serif) */
+.brand .wordmark{font:600 14.5px/1 var(--serif);font-variant:small-caps;letter-spacing:.09em;color:var(--ink)}
+.crumbs{display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden}
+.crumbs button,.crumbs span{font:11.5px/1 var(--mono);color:var(--muted);background:none;border:0;padding:4px 5px;border-radius:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:24ch}
+.crumbs button{cursor:pointer}
+.crumbs button:hover{color:var(--accent);background:var(--accent-soft)}
+.crumbs .sep{color:var(--rule-strong);padding:0}
+.crumbs .current{color:var(--ink);font-weight:500}
+.palette-hint{margin:0 auto;display:flex;align-items:center;gap:8px;width:min(420px,30vw);border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--faint);font-size:12px;text-align:left;padding:5px 8px;border-radius:var(--radius);cursor:pointer}
+.palette-hint .lead{color:var(--accent);font-family:var(--mono);font-weight:700}
+.palette-hint kbd{margin-left:auto}
+.appbar-tools{display:flex;align-items:center;gap:2px;flex:0 0 auto}
+.appbar-tools .btn{font-size:12px;padding:5px 8px}
+/* A2: the divider states the grouping — people | document utilities */
+.appbar-tools .divider{width:1px;height:20px;background:var(--rule-strong);margin:0 8px 0 10px;flex:0 0 auto}
+.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--ink-soft);padding:5px 10px;border-radius:var(--radius);cursor:pointer;white-space:nowrap}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--muted)}
+.btn-quiet:hover{background:#0000000d;border-color:transparent;color:var(--ink)}
+
+/* A2: roster chips — avatar + name + role, one people-language (G2) */
+.people{display:flex;align-items:center;gap:5px;margin-right:6px;overflow:hidden}
+.person{display:inline-flex;align-items:center;gap:6px;max-width:150px;border:1px solid var(--rule);border-radius:var(--radius);padding:2px 7px 2px 3px;font-size:11px;color:var(--ink-soft);white-space:nowrap;background:var(--chrome-raised)}
+.person .pav{width:17px;height:17px;border-radius:50%;display:grid;place-items:center;font:600 8px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%);flex:0 0 auto}
+.person strong{font-weight:600;max-width:9ch;overflow:hidden;text-overflow:ellipsis}
+.role-tag{font:600 9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--rule-strong);color:var(--muted);padding:3px 5px;border-radius:2px;flex:0 0 auto}
+.person.more{border-style:dashed;color:var(--muted);cursor:pointer;background:transparent}
+
+.appbar-right{margin-left:auto;display:flex;align-items:center;gap:12px;flex:0 0 auto}
+.save-status{font-size:11.5px;color:var(--muted);white-space:nowrap}
+/* A3: presence avatars 24px; "you" carries an accent ring */
+.presence{display:flex;align-items:center}
+.avatar{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:600 9.5px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%);border:1.5px solid var(--chrome);margin-left:-7px;flex:0 0 auto}
+.presence .avatar:first-child{margin-left:0}
+.avatar.you{box-shadow:0 0 0 1.5px var(--chrome),0 0 0 3px var(--accent-line)}
+
+/* ───────────────────────── workspace grid ───────────────────────── */
+.workspace{display:grid;grid-template-columns:250px 4px minmax(320px,1fr) 4px minmax(340px,1fr);min-height:0;background:var(--rule)}
+.gutter{background:var(--rule-strong);cursor:col-resize;position:relative;z-index:2}
+.navigator,.doc-pane,.preview-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.navigator{background:var(--chrome);border-right:1px solid var(--rule-strong)}
+
+/* ── navigator ── */
+.nav-section{display:flex;flex-direction:column;min-height:0}
+.nav-section-files{flex:1 1 0}
+.nav-section-outline{flex:1 1 0;border-top:1px solid var(--rule)}
+.nav-head{flex:0 0 auto;display:flex;align-items:center;gap:6px;margin:0;padding:10px 6px 6px 12px;font:600 9.5px/1.4 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.nav-head .count{color:var(--rule-strong);font-weight:400}
+.nav-head-actions{margin-left:auto;display:flex;gap:2px}
+.btn-icon{border:0;background:transparent;color:var(--faint);width:20px;height:20px;display:grid;place-items:center;border-radius:var(--radius);cursor:pointer;font-size:13px;line-height:1;padding:0}
+.btn-icon:hover{background:#00000010;color:var(--ink)}
+.nav-body{overflow:auto;min-height:0;padding-bottom:8px}
+
+.tree-item{display:flex;align-items:stretch}
+.tree-item .indent{flex:0 0 auto;width:11px;border-right:1px dotted var(--rule-strong);margin-left:6px}
+.tree-row{width:100%;display:flex;align-items:center;gap:6px;border:0;background:none;cursor:pointer;text-align:left;padding:3px 8px 3px 0;color:var(--ink-soft);font:12px/1.6 var(--sans);border-left:2px solid transparent}
+.tree-row:hover{background:#00000008}
+.tree-row.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent-strong);font-weight:600}
+.tree-row .twist{flex:0 0 auto;width:13px;text-align:center;color:var(--faint);font-size:9px}
+.tree-row .label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-row .tag{margin-left:auto;flex:0 0 auto;font:600 8.5px/1 var(--mono);letter-spacing:.1em;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-line);padding:2px 4px;border-radius:2px}
+.tree-row.folder{color:var(--muted);font-weight:500}
+
+/* G3: outline rows borrow the tree's dotted indent guides */
+.outline-row{width:100%;display:flex;align-items:center;gap:8px;border:0;background:none;cursor:pointer;text-align:left;padding:3px 10px 3px 12px;color:var(--ink-soft);font-size:12px;border-left:2px solid transparent}
+.outline-row:hover{background:#00000008}
+.outline-row.active{color:var(--accent-strong);border-left-color:var(--accent);font-weight:600;background:var(--accent-soft)}
+.outline-row .guide{flex:0 0 auto;width:11px;border-right:1px dotted var(--rule-strong);margin-left:6px;align-self:stretch}
+.outline-row .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.outline-row .ln{margin-left:auto;font:9.5px var(--mono);color:var(--faint);flex:0 0 auto}
+.outline-row[data-level="1"]{font-weight:600;color:var(--ink)}
+
+/* N3: fact footer as an aligned label/value grid */
+.nav-foot{flex:0 0 auto;border-top:1px solid var(--rule);padding:10px 12px 12px;font:10px/1.9 var(--mono);color:var(--faint)}
+.nav-foot .fact{display:flex;justify-content:space-between;gap:10px}
+.nav-foot b{color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+
+/* ── document pane ── */
+.doc-pane{background:var(--paper)}
+.pane-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule)}
+.doc-id{display:flex;align-items:baseline;gap:8px;min-width:0}
+.doc-id strong{flex:0 1 auto;font-size:13px;font-weight:600;white-space:nowrap}
+.doc-id code{font:10px var(--mono);color:var(--faint)}
+.doc-bar-right{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
+/* D2: separators so the bar's controls read as three groups */
+.doc-bar-right .vsep{width:1px;height:16px;background:var(--rule-strong);margin:0 4px;flex:0 0 auto}
+.doc-rev{font:10px var(--mono);color:var(--faint);white-space:nowrap}
+.switch{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--muted);font-size:11.5px;padding:4px 9px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.switch::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--rule-strong)}
+.btn.count{position:relative}
+.count-badge{min-width:16px;padding:0 4px;border-radius:8px;background:var(--comment);color:#fff;font:600 10px/16px var(--mono);text-align:center;display:inline-block;margin-left:2px}
+
+.sticky-heading{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:5px 16px;border-bottom:1px solid var(--rule);background:#fbfaf5cc;font-size:11.5px;color:var(--muted);min-height:26px}
+.sticky-heading .crumb-sep{color:var(--rule-strong)}
+.sticky-heading .leaf{color:var(--ink);font-weight:600}
+
+/* fake CodeMirror, faithful to .cm-* rules */
+.editor-host{flex:1;min-height:0;overflow:hidden;background:var(--paper);display:flex}
+.cm-editor{flex:1;min-width:0;height:100%}
+.cm-scroller{height:100%;overflow:auto;display:flex;justify-content:center;padding:22px 0 45vh;font-family:var(--mono);font-size:14px;line-height:1.75}
+.cm-gutters{background:transparent;border:0;color:var(--rule-strong);font-size:10.5px;text-align:right;padding:0 4px 0 0;flex:0 0 auto;user-select:none}
+.cm-content{flex-grow:0;max-width:74ch;width:100%;padding:0 20px;caret-color:var(--accent)}
+.cl{min-height:1.75em;white-space:pre-wrap;color:var(--ink-soft);padding:0 6px}
+.cl.active{background:#00000005}
+.cl .mk{color:var(--faint)}
+.cl .hd{font-weight:700;color:var(--ink)}
+.cl.blank{min-height:1.75em}
+.sel{background:var(--accent-soft)}
+.ins{background:var(--insert-soft);border-bottom:1.5px solid var(--insert)}
+.del{background:var(--delete-soft);color:var(--delete);text-decoration:line-through;text-decoration-thickness:1.5px}
+.cmt{background:var(--comment-soft);border-bottom:1.5px solid var(--comment);cursor:pointer}
+.cite-chip{display:inline-flex;align-items:center;font-family:var(--sans);font-size:11.5px;font-weight:500;background:var(--accent-soft);color:var(--accent-strong);border:1px solid var(--accent-line);border-radius:8px;padding:0 7px;line-height:1.5;white-space:nowrap;vertical-align:baseline}
+/* remote caret: peer name rides the bar (kept from current design) */
+.rcaret{position:relative;display:inline-block;width:0;border-left:2px solid hsl(280 62% 45%);margin-left:-1px;pointer-events:none}
+.rcaret i{position:absolute;bottom:calc(100% + 1px);left:-2px;font:600 9px/1 var(--sans);font-style:normal;letter-spacing:.02em;color:#fff;background:hsl(280 62% 45%);padding:2px 4px;border-radius:2px 2px 2px 0;white-space:nowrap;user-select:none}
+
+/* ── preview pane ── */
+.preview-pane{background:var(--shell)}
+.preview-pane .pane-bar{gap:10px}
+.view-switch{display:flex;border:1px solid var(--rule-strong);border-radius:var(--radius);overflow:hidden;flex:0 0 auto}
+.view-switch button{border:0;border-right:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--muted);font:10.5px var(--sans);padding:4px 9px;cursor:pointer;white-space:nowrap}
+.view-switch button:last-child{border-right:0}
+.view-switch button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+.build-label,.page-position{font:10px var(--mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* V1: staleness, said in plain words, in the colour that means "attention" */
+.build-label .stale{color:var(--comment);font-weight:600}
+.zoom-controls{display:flex;align-items:center;gap:2px;margin-left:auto;flex:0 0 auto}
+.zoom-button{border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--muted);border-radius:2px;width:22px;height:22px;display:grid;place-items:center;cursor:pointer;font-size:13px;line-height:1;padding:0}
+.zoom-level{font:10.5px var(--mono);min-width:40px;text-align:center;color:var(--muted)}
+.pdf-viewer{flex:1;min-height:0;overflow:auto;padding:16px 16px 28px;background:var(--shell)}
+.pdf-page{width:520px;max-width:100%;min-height:660px;margin:0 auto 16px;background:#fff;box-shadow:0 1px 2px #0000001f,0 8px 22px #0000001a;position:relative;color:#22261f;font-family:var(--serif);padding:44px 50px 54px}
+.pdf-page .run{display:flex;justify-content:space-between;font-family:var(--mono);font-size:7.5px;letter-spacing:.14em;color:#9a9584;border-bottom:1px solid #e4e0d2;padding-bottom:7px}
+.pdf-page h1{font-size:20px;font-weight:400;line-height:1.25;margin:26px 0 8px}
+.pdf-page .auth{font-size:10px;color:#7c7767;margin-bottom:14px;font-style:italic}
+.pdf-page h2{font-size:13.5px;font-weight:700;margin:18px 0 6px}
+.pdf-page p{font-size:9.8px;line-height:1.62;text-align:justify;margin:0 0 7px}
+.pdf-page table{border-collapse:collapse;width:100%;font-size:8.6px;margin:10px 0}
+.pdf-page th{border-top:1.2px solid #4a463a;border-bottom:1px solid #8a8574;text-align:left;padding:4px 6px;font-weight:700}
+.pdf-page td{border-bottom:1px solid #ddd8c6;padding:3.5px 6px}
+.pdf-page .folio{position:absolute;bottom:20px;left:50px;right:50px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:7.5px;color:#9a9584;border-top:1px solid #e4e0d2;padding-top:6px}
+
+/* ───────────────────────── status bar ───────────────────────── */
+.statusbar{display:flex;align-items:stretch;height:var(--statusbar-h);background:var(--chrome);border-top:1px solid var(--rule-strong);font:11px var(--mono);color:var(--muted);overflow:hidden}
+.status-cell{display:flex;align-items:center;gap:7px;padding:0 11px;border:0;border-right:1px solid var(--rule);background:transparent;color:inherit;font:inherit;white-space:nowrap;min-width:0}
+button.status-cell{cursor:pointer}
+button.status-cell:hover{background:#00000008;color:var(--ink)}
+.status-spacer{flex:1;border-right:0}
+.statusbar .right{display:flex;align-items:stretch;margin-left:auto}
+.statusbar .right .status-cell{border-right:0;border-left:1px solid var(--rule)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--insert);flex:0 0 auto}
+.status-ok{color:var(--insert);font-weight:700}
+#compile-button{border:0;padding:0 16px;gap:9px;font:600 11.5px var(--sans);letter-spacing:.01em;display:inline-flex;align-items:center;background:var(--accent);color:#fff;cursor:pointer}
+#compile-button kbd{border-color:#ffffff59;background:transparent;color:#ffffffb3}
+
+/* floating badge, ui-mocks convention */
+.tag{position:fixed;right:14px;bottom:44px;z-index:99;font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:var(--overlay);border:1px solid var(--rule-strong);padding:6px 9px;box-shadow:0 4px 14px #1b1e1c1a}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ═══════════ app bar: place · search · people · tools · state ═══════════ -->
+  <header class="appbar">
+    <button class="brand" type="button" title="All projects">
+      <span class="mark" aria-hidden="true">N</span><span class="wordmark">Nisaba</span>
+    </button>
+    <nav class="crumbs" aria-label="Location">
+      <button type="button" title="Back to all projects">Projects</button><span class="sep">›</span>
+      <button type="button" title="Back to all projects">Field lab</button><span class="sep">›</span>
+      <button type="button" class="current" title="Reveal in the sidebar">main.typ</button><span class="sep">›</span>
+      <button type="button" title="Scroll to this section">§Abstract</button>
+    </nav>
+
+    <button class="palette-hint" type="button" aria-label="Search files, sections and commands">
+      <span class="lead" aria-hidden="true">⌕</span>
+      <span class="text">Search files, sections, commands…</span>
+      <kbd>⌘K</kbd>
+    </button>
+
+    <div class="appbar-tools">
+      <!-- the people group: roster + Share are one concern (A2) -->
+      <div class="people" aria-label="People with access">
+        <span class="person" style="--hue:280" title="sparkletoes · Author"><span class="pav">SP</span><strong>sparkletoes</strong><span class="role-tag">Author</span></span>
+        <span class="person" style="--hue:145" title="clawson · Reviewer"><span class="pav">CL</span><strong>clawson</strong><span class="role-tag">Reviewer</span></span>
+        <span class="person more num" title="moonmoss · Read-only — see all 4 in Share">+1</span>
+      </div>
+      <button id="share-button" class="btn btn-quiet" type="button" title="People with access">Share</button>
+      <span class="divider" aria-hidden="true"></span>
+      <button id="references-button" class="btn btn-quiet" type="button" title="The project's reference library">References</button>
+      <button id="history-button" class="btn btn-quiet" type="button" title="Earlier versions of this file">History</button>
+      <button id="export-button" class="btn btn-quiet" type="button" title="Download the finished document">Export</button>
+    </div>
+
+    <div class="appbar-right">
+      <div class="presence" aria-label="People in this document">
+        <span class="avatar" style="--hue:280" title="sparkletoes — main.typ · §Abstract · line 13">SP</span>
+        <span class="avatar" style="--hue:145" title="clawson — main.typ · §Background · line 18">CL</span>
+        <span class="avatar you" style="--hue:45" title="twinkleburst (you) — main.typ · §Results · line 12">TW</span>
+      </div>
+      <span class="save-status">Saved 12:04</span>
+      <button id="settings-button" class="btn btn-quiet" type="button" title="Editor settings: typeface, size, spacing">Settings</button>
+      <button id="sign-in" class="btn btn-quiet" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <!-- ═══════════ workspace ═══════════ -->
+  <div class="workspace">
+
+    <!-- navigator -->
+    <aside class="navigator" aria-label="Files and sections">
+      <div class="nav-section nav-section-files">
+        <h2 class="nav-head">
+          <span>Files</span><span class="count num">6</span>
+          <!-- N1: two actions now — new file, hide. The demo moved to the
+               first-run empty state and the palette. -->
+          <span class="nav-head-actions">
+            <button class="btn-icon" type="button" title="New file" aria-label="New file">＋</button>
+            <button class="btn-icon" type="button" title="Hide the sidebar (⌘B)" aria-label="Hide the sidebar">‹</button>
+          </span>
+        </h2>
+        <div class="nav-body">
+          <div class="tree-item"><button class="tree-row folder" type="button"><span class="twist">▾</span><span class="label">chapters</span></button></div>
+          <div class="tree-item"><span class="indent"></span><button class="tree-row" type="button"><span class="twist"></span><span class="label">intro.typ</span></button></div>
+          <div class="tree-item"><span class="indent"></span><button class="tree-row" type="button"><span class="twist"></span><span class="label">methods.typ</span></button></div>
+          <div class="tree-item"><span class="indent"></span><button class="tree-row" type="button"><span class="twist"></span><span class="label">results.typ</span></button></div>
+          <div class="tree-item"><button class="tree-row folder" type="button"><span class="twist">▸</span><span class="label">figures</span></button></div>
+          <div class="tree-item"><button class="tree-row active" type="button"><span class="twist"></span><span class="label">main.typ</span><span class="tag">MAIN</span></button></div>
+          <div class="tree-item"><button class="tree-row" type="button"><span class="twist"></span><span class="label">refs.bib</span></button></div>
+        </div>
+      </div>
+      <div class="nav-section nav-section-outline">
+        <h2 class="nav-head"><span>Outline</span></h2>
+        <div class="nav-body">
+          <button class="outline-row" data-level="1" type="button"><span class="title">Honey Badgers at Fairy Raves</span><span class="ln num">1</span></button>
+          <button class="outline-row active" data-level="2" type="button"><span class="guide"></span><span class="title">Abstract</span><span class="ln num">5</span></button>
+          <button class="outline-row" data-level="2" type="button"><span class="guide"></span><span class="title">Background</span><span class="ln num">15</span></button>
+          <button class="outline-row" data-level="2" type="button"><span class="guide"></span><span class="title">Results</span><span class="ln num">23</span></button>
+          <button class="outline-row" data-level="3" type="button"><span class="guide"></span><span class="guide"></span><span class="title">Attendance patterns</span><span class="ln num">25</span></button>
+          <button class="outline-row" data-level="2" type="button"><span class="guide"></span><span class="title">Discussion</span><span class="ln num">34</span></button>
+        </div>
+      </div>
+      <!-- N3: the project's standing facts, aligned -->
+      <div class="nav-foot">
+        <div class="fact"><span>files</span><b>6</b></div>
+        <div class="fact"><span>references</span><b>3 of 12 with a PDF</b></div>
+        <div class="fact"><span>preview builds</span><b>main.typ</b></div>
+      </div>
+    </aside>
+
+    <div class="gutter" title="Drag to resize · double-click to hide"></div>
+
+    <!-- document -->
+    <section class="doc-pane" aria-label="Document">
+      <div class="pane-bar doc-bar">
+        <div class="doc-id">
+          <strong>Honey Badgers at Fairy Raves</strong>
+          <code>main.typ</code>
+        </div>
+        <div class="doc-bar-right">
+          <span class="doc-rev num">v128</span>
+          <span class="vsep" aria-hidden="true"></span>
+          <button class="switch" type="button" role="switch" aria-checked="false" title="Record your edits as suggestions instead of changing the text">Track changes: off</button>
+          <span class="vsep" aria-hidden="true"></span>
+          <button class="btn" type="button" aria-expanded="false" title="3 open items">Review<span class="count-badge num">3</span></button>
+        </div>
+      </div>
+      <div class="sticky-heading">
+        <span>Honey Badgers at Fairy Raves</span><span class="crumb-sep">›</span><span class="leaf">Abstract</span>
+      </div>
+      <div class="editor-host">
+        <div class="cm-editor"><div class="cm-scroller">
+          <div class="cm-gutters"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div><div>10</div><div>11</div><div>12</div><div>13</div><div>14</div><div>15</div><div>16</div><div>17</div><div>18</div><div>19</div><div>20</div><div>21</div><div>22</div><div>23</div><div>24</div></div>
+          <div class="cm-content">
+            <div class="cl"><span class="mk">=</span> <span class="hd">Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</span></div>
+            <div class="cl blank"></div>
+            <div class="cl">twinkleburst, sparkletoes, clawson</div>
+            <div class="cl blank"></div>
+            <div class="cl"><span class="mk">==</span> <span class="hd">Abstract</span></div>
+            <div class="cl blank"></div>
+            <div class="cl">We document seventeen months of field observations of honey badgers</div>
+            <div class="cl">(_Mellivora capensis_) attending subterranean fairy raves in the</div>
+            <div class="cl">Welsh countryside. Using enchanted monitoring crystals and</div>
+            <div class="cl"><span class="cmt">glitter-spectroscopy</span>, we characterize attendance patterns,</div>
+            <div class="cl">acoustic entrainment, <span class="sel">and interspecies social dynamics.</span></div>
+            <div class="cl active"><span class="ins">Our findings suggest a stable co-occurrence relationship mediated</span><span class="rcaret"><i>sparkletoes</i></span></div>
+            <div class="cl"><span class="ins">low-frequency bass.</span></div>
+            <div class="cl blank"></div>
+            <div class="cl"><span class="mk">==</span> <span class="hd">Background</span></div>
+            <div class="cl blank"></div>
+            <div class="cl">The honey badger has long been regarded as a solitary species.</div>
+            <div class="cl">Recent anecdotal reports, however, describe badgers congregating</div>
+            <div class="cl">at fairy social gatherings <span class="cite-chip">#cite(&lt;twinkleburst-2024&gt;)</span>,</div>
+            <div class="cl">raising questions about the ecological drivers of this behaviour.</div>
+            <div class="cl"><span class="del">Some researchers dispute this entirely.</span></div>
+            <div class="cl blank"></div>
+            <div class="cl"><span class="mk">==</span> <span class="hd">Results</span></div>
+            <div class="cl blank"></div>
+          </div>
+        </div></div>
+      </div>
+    </section>
+
+    <div class="gutter" title="Drag to resize · double-click to hide"></div>
+
+    <!-- preview -->
+    <section class="preview-pane" aria-label="Page preview">
+      <div class="pane-bar preview-chrome">
+        <div class="view-switch" role="group" aria-label="Which version to render">
+          <button type="button" aria-pressed="true" title="Every suggested change applied — what the document becomes">Final</button>
+          <button type="button" aria-pressed="false" title="No suggested changes applied — the last agreed text">Original</button>
+          <button type="button" aria-pressed="false" title="The text with insertions and deletions marked">All markup</button>
+          <button type="button" aria-pressed="false" title="Final, with redacted passages removed">Public copy</button>
+        </div>
+        <span class="build-label num" title="Build #41 · 1.24 s">Final · built 2 min ago <span class="stale">· edited since</span></span>
+        <span class="page-position num">page 1 of 12</span>
+        <div class="zoom-controls">
+          <button class="zoom-button" type="button" title="Zoom out (⌘−)">−</button>
+          <span class="zoom-level num">125%</span>
+          <button class="zoom-button" type="button" title="Zoom in (⌘+)">+</button>
+          <button class="zoom-button" type="button" title="Fit the page">⟲</button>
+        </div>
+        <button class="btn-icon" type="button" title="Hide the preview" aria-label="Hide the preview">›</button>
+      </div>
+      <div class="pdf-viewer">
+        <div class="pdf-page">
+          <div class="run"><span>TWINKLEBURST ET AL.</span><span>FIELD LAB · INTERSPECIES ACOUSTICS</span></div>
+          <h1>Honey Badgers at Fairy Raves: An Interspecies Acoustic Analysis</h1>
+          <div class="auth">twinkleburst · sparkletoes · clawson — field season 2025</div>
+          <h2>Abstract</h2>
+          <p>We document seventeen months of field observations of honey badgers (<i>Mellivora capensis</i>) attending subterranean fairy raves in the Welsh countryside. Using enchanted monitoring crystals and glitter-spectroscopy, we characterize attendance patterns, acoustic entrainment, and interspecies social dynamics. Our findings suggest a stable co-occurrence relationship mediated by low-frequency bass.</p>
+          <h2>Results</h2>
+          <p>Honey badgers attended 74% of recorded rave events. Vocalizations in the 40–60 Hz range were phase-locked to the fairy audio system (see Table 1).</p>
+          <table>
+            <tr><th>Site</th><th>Events</th><th>Peak Hz</th><th>Entrained</th><th>r</th></tr>
+            <tr><td>Site 1 (Cwm Derwen)</td><td>142</td><td>48 Hz</td><td>Yes</td><td>0.91</td></tr>
+            <tr><td>Site 2 (Tywyn Hollow)</td><td>138</td><td>45 Hz</td><td>Yes</td><td>0.88</td></tr>
+            <tr><td>Site 4 (Ystrad Tunnel)</td><td>150</td><td>52 Hz</td><td>Yes</td><td>0.95</td></tr>
+          </table>
+          <div class="folio"><span>HONEY BADGERS AT FAIRY RAVES</span><span>1</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div></div><!-- drawer row, collapsed -->
+
+  <!-- ═══════════ status bar: every glanceable fact + the primary action ═══════════ -->
+  <footer class="statusbar">
+    <button class="status-cell" type="button" title="Connected: other people see your edits as you type">
+      <span class="status-dot"></span><span>Live · 3 here</span>
+    </button>
+    <span class="status-cell num">Ln 12, Col 47</span>
+    <!-- T1: a selection is active, so the cell counts it -->
+    <span class="status-cell num">4 of 4,812 words</span>
+    <span class="status-cell status-spacer"></span>
+    <div class="right">
+      <button class="status-cell" type="button" title="Problems and build log"><span class="status-ok">✓ 12 pages</span> · 1 warning</button>
+      <button id="compile-button" type="button" title="Compile the document and refresh the preview">Update preview <kbd>⌘↵</kbd></button>
+    </div>
+  </footer>
+</div>
+
+<span class="tag">PROPOSAL A · WORKSPACE — WRITING</span>
+</body>
+</html>

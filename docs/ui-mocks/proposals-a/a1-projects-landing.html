@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal A — Projects landing · Nisaba</title>
+<!--
+  PROPOSAL A · the projects screen (proposed state).
+
+  The screen keeps the shipped structure — rows not cards, search + Recent/Name
+  sort, result counting — and opens with the signature element:
+    P1  Continue-writing hero: the most recently touched project as one large
+        door — serif title (the document voice), last-opened file + section,
+        live presence, one click back into the work. The rows below remain the
+        complete index; the hero is a shortcut, not a second list.
+    P2  Role tag on every row (the decision record specifies it; the
+        implementation dropped it). Roles govern what you came to do.
+    A1  Serif wordmark.
+  Signed-out and first-run variants: a6-states.html.
+-->
+<style>
+:root{
+  --paper:#fdfcf9; --chrome:#f2f3f0; --chrome-raised:#f8f8f6; --shell:#e9eae6; --overlay:#ffffff;
+  --ink:#1b1e1c; --ink-soft:#3d443e; --muted:#6a706a; --faint:#8d938c;
+  --rule:#e2e3dd; --rule-strong:#c8cac2;
+  --accent:#23508a; --accent-strong:#1b3f6e; --accent-soft:#e8eef6; --accent-line:#b9cbe1;
+  --sans:"DM Sans",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+  --mono:"DM Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --serif:"Source Serif 4",Charter,Georgia,"Times New Roman",serif;
+  --appbar-h:46px; --radius:3px;
+}
+*{box-sizing:border-box} html,body{height:100%}
+body{margin:0;font:13px/1.45 var(--sans);color:var(--ink);background:var(--chrome);overflow:hidden;min-width:1440px}
+button{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums}
+
+#app{height:100vh;display:grid;grid-template-rows:var(--appbar-h) minmax(0,1fr)}
+
+/* app bar, no project open: identity · search · account */
+.appbar{display:flex;align-items:center;gap:14px;padding:0 12px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule-strong)}
+.brand{display:flex;align-items:center;gap:8px;border:0;background:transparent;cursor:pointer;padding:4px 6px}
+.brand .mark{width:21px;height:21px;display:grid;place-items:center;background:var(--accent);color:#fff;border-radius:2px;font:700 12px/1 var(--mono)}
+/* A1: the document voice */
+.brand .wordmark{font:600 14.5px/1 var(--serif);font-variant:small-caps;letter-spacing:.09em}
+.palette-hint{margin:0 auto;display:flex;align-items:center;gap:8px;width:min(420px,34vw);border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--faint);font-size:12px;padding:5px 8px;border-radius:var(--radius);cursor:pointer}
+.palette-hint .lead{color:var(--accent);font-family:var(--mono);font-weight:700}
+.palette-hint kbd{margin-left:auto;font:500 9.5px/1 var(--mono);border:1px solid var(--rule-strong);border-radius:2px;padding:2px 4px;color:var(--muted);background:var(--chrome-raised)}
+kbd{font:500 9.5px/1 var(--mono);border:1px solid var(--rule-strong);border-radius:2px;padding:2px 4px;color:var(--muted);background:var(--chrome-raised)}
+.appbar-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--ink-soft);padding:5px 10px;border-radius:var(--radius);cursor:pointer;white-space:nowrap}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--muted)}
+.btn-quiet:hover{background:#0000000d;border-color:transparent;color:var(--ink)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-primary:hover{background:var(--accent-strong);border-color:var(--accent-strong)}
+
+/* the screen */
+.screen{overflow:auto;background:var(--chrome);padding:36px 24px 60px}
+.screen-inner{max-width:780px;margin:0 auto}
+.screen-head{display:flex;align-items:baseline;gap:16px;margin-bottom:6px}
+.screen-head h2{margin:0;font-size:21px;font-weight:600;letter-spacing:-.01em}
+.screen-head .btn{margin-left:auto}
+.screen-lede{color:var(--muted);font-size:12.5px;margin:0 0 22px}
+
+/* ── P1: the hero. The most characteristic thing in a writer's world is the
+   manuscript they were last inside; the screen opens there. ── */
+.screen-hero{display:flex;align-items:center;gap:20px;background:var(--paper);border:1px solid var(--rule-strong);border-radius:var(--radius);padding:18px 22px;margin-bottom:28px;cursor:pointer;transition:border-color .12s ease}
+.screen-hero:hover{border-color:var(--accent-line)}
+.hero-open{flex:1;min-width:0;text-align:left;border:0;background:none;padding:0;cursor:pointer}
+.hero-eyebrow{display:block;font:600 9.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-bottom:9px}
+.hero-name{display:block;font:600 23px/1.15 var(--serif);color:var(--ink);margin-bottom:7px}
+.hero-meta{display:block;font:10.5px var(--mono);color:var(--muted)}
+.hero-meta b{color:var(--ink-soft);font-weight:600}
+.hero-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px;flex:0 0 auto}
+.hero-presence{display:flex;align-items:center;gap:0}
+.avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font:600 10px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%);border:1.5px solid var(--paper);margin-left:-8px}
+.hero-presence .avatar:first-child{margin-left:0}
+.hero-here{font:10px var(--mono);color:var(--muted);margin-left:10px}
+
+/* tools + rows (shipped design, with P2's role tags restored) */
+.project-tools{display:flex;align-items:center;gap:10px;margin:-6px 0 14px}
+.project-tools input[type="search"]{border:1px solid var(--rule-strong);border-radius:var(--radius);padding:6px 9px;font:12.5px var(--sans);background:var(--overlay);color:var(--ink);min-width:220px}
+.segmented{display:inline-flex;border:1px solid var(--rule-strong);border-radius:var(--radius);overflow:hidden}
+.seg{font:600 10.5px/1 var(--sans);letter-spacing:.04em;text-transform:uppercase;padding:7px 10px;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.seg + .seg{border-left:1px solid var(--rule-strong)}
+.seg[aria-pressed="true"]{background:var(--rule);color:var(--ink)}
+.list-head{display:flex;align-items:baseline;gap:8px;margin:18px 0 0}
+.list-head .micro{font:600 9.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.list-head .count{font:10px var(--mono);color:var(--rule-strong)}
+.project-rows{border-top:1px solid var(--rule);margin-top:8px}
+.project-row{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--rule)}
+.project-row:hover{background:var(--chrome-raised)}
+.project-open{flex:1;min-width:0;display:flex;align-items:baseline;gap:10px;border:0;background:none;cursor:pointer;text-align:left;padding:13px 8px 13px 4px;color:var(--ink)}
+.project-open .name{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-open .role-tag{font:600 9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--rule-strong);color:var(--muted);padding:3px 5px;border-radius:2px;flex:0 0 auto}
+.project-open .meta{font:10px var(--mono);color:var(--faint);margin-left:auto;white-space:nowrap}
+.btn-icon{border:0;background:transparent;color:var(--faint);width:24px;height:24px;display:grid;place-items:center;border-radius:var(--radius);cursor:pointer;font-size:15px;line-height:1;padding:0;opacity:0}
+.project-row:hover .btn-icon,.project-row:focus-within .btn-icon{opacity:1}
+.btn-icon:hover{background:#00000010;color:var(--delete)}
+
+.tag{position:fixed;right:14px;top:60px;z-index:99;font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:var(--overlay);border:1px solid var(--rule-strong);padding:6px 9px;box-shadow:0 4px 14px #1b1e1c1a}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header class="appbar">
+    <button class="brand" type="button" title="All projects">
+      <span class="mark" aria-hidden="true">N</span><span class="wordmark">Nisaba</span>
+    </button>
+    <button class="palette-hint" type="button" aria-label="Search files, sections and commands">
+      <span class="lead" aria-hidden="true">⌕</span>
+      <span class="text">Search files, sections, commands…</span>
+      <kbd>⌘K</kbd>
+    </button>
+    <div class="appbar-right">
+      <button class="btn btn-quiet" type="button" title="Editor settings: typeface, size, spacing">Settings</button>
+      <button class="btn btn-quiet" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main class="screen">
+    <div class="screen-inner">
+      <div class="screen-head">
+        <h2>Projects</h2>
+        <button class="btn btn-primary" type="button">New project</button>
+      </div>
+      <p class="screen-lede">A project holds the files, references, and history of one document.</p>
+
+      <!-- ═══ P1: continue writing — one click back into the work ═══ -->
+      <div class="screen-hero" role="group" aria-label="Continue writing">
+        <button class="hero-open" type="button" title="Open Field lab at main.typ · §Results">
+          <span class="hero-eyebrow">Continue writing</span>
+          <span class="hero-name">Field lab</span>
+          <span class="hero-meta"><b>main.typ</b> · §Results — edited 2 h ago</span>
+        </button>
+        <div class="hero-right">
+          <div class="hero-presence" aria-label="In this project now">
+            <span class="avatar" style="--hue:280" title="sparkletoes — main.typ · §Results">SP</span>
+            <span class="avatar" style="--hue:145" title="clawson — main.typ · §Background">CL</span>
+            <span class="hero-here">2 here now</span>
+          </div>
+          <button class="btn btn-primary" type="button">Open</button>
+        </div>
+      </div>
+
+      <div class="project-tools">
+        <input type="search" placeholder="Search projects…" aria-label="Search projects" autocomplete="off">
+        <div class="segmented" role="group" aria-label="Sort projects">
+          <button class="seg" type="button" aria-pressed="true" title="Most recently edited first">Recent</button>
+          <button class="seg" type="button" aria-pressed="false" title="Alphabetical">Name</button>
+        </div>
+      </div>
+
+      <div class="list-head">
+        <span class="micro">All projects</span><span class="count num">5</span>
+      </div>
+      <div class="project-rows">
+        <!-- P2: the role tag rides every row — it says what you came to do -->
+        <div class="project-row">
+          <button class="project-open" type="button">
+            <span class="name">Field lab</span>
+            <span class="role-tag">Owner</span>
+            <span class="meta">edited 2 h ago</span>
+          </button>
+          <button class="btn-icon" type="button" title="Delete this project" aria-label="Delete Field lab">×</button>
+        </div>
+        <div class="project-row">
+          <button class="project-open" type="button">
+            <span class="name">Quarterly review — draft</span>
+            <span class="role-tag">Author</span>
+            <span class="meta">edited yesterday</span>
+          </button>
+          <button class="btn-icon" type="button" title="Delete this project" aria-label="Delete Quarterly review — draft">×</button>
+        </div>
+        <div class="project-row">
+          <button class="project-open" type="button">
+            <span class="name">Bee survey protocol</span>
+            <span class="role-tag">Reviewer</span>
+            <span class="meta">edited 3 d ago</span>
+          </button>
+          <button class="btn-icon" type="button" title="Delete this project" aria-label="Delete Bee survey protocol">×</button>
+        </div>
+        <div class="project-row">
+          <button class="project-open" type="button">
+            <span class="name">Interim guidance v3</span>
+            <span class="role-tag">Author</span>
+            <span class="meta">edited 5 d ago</span>
+          </button>
+          <button class="btn-icon" type="button" title="Delete this project" aria-label="Delete Interim guidance v3">×</button>
+        </div>
+        <div class="project-row">
+          <button class="project-open" type="button">
+            <span class="name">Archive 2025</span>
+            <span class="role-tag">Read-only</span>
+            <span class="meta">edited 2 weeks ago</span>
+          </button>
+          <button class="btn-icon" type="button" title="Delete this project" aria-label="Delete Archive 2025">×</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<span class="tag">PROPOSAL A · PROJECTS LANDING</span>
+</body>
+</html>
