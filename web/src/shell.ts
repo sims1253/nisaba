@@ -22,7 +22,7 @@ export const SHELL_HTML = `
   <button class="palette-hint" id="open-palette" type="button" aria-label="Search files, sections and commands">
     <span class="lead" aria-hidden="true">⌕</span>
     <span class="text">Search files, sections, commands…</span>
-    <kbd>⌘K</kbd>
+    <kbd id="palette-hint-chord">⌘K</kbd>
   </button>
 
   <div class="appbar-tools" id="appbar-tools">
@@ -67,7 +67,7 @@ export const SHELL_HTML = `
         <span class="nav-head-actions">
           <button id="add-document" class="btn-icon" type="button" title="New file" aria-label="New file">＋</button>
           <button id="add-demo" class="btn-icon" type="button" title="Add the demo document" aria-label="Add the demo document">✧</button>
-          <button id="hide-navigator" class="btn-icon" type="button" title="Hide the sidebar (⌘B)" aria-label="Hide the sidebar">‹</button>
+          <button id="hide-navigator" class="btn-icon" type="button" title="Hide the sidebar" data-chord-title="navigator" aria-label="Hide the sidebar">‹</button>
         </span>
       </h2>
       <div class="nav-body" id="file-tree"></div>
@@ -100,7 +100,7 @@ export const SHELL_HTML = `
     <div id="editor" class="editor-host doc-chrome"></div>
     <div class="pane-empty" id="editor-placeholder">
       <h2>No document open</h2>
-      <p>Pick a file on the left, or press ⌘K to search for one.</p>
+      <p>Pick a file on the left, or press <kbd data-chord="palette">⌘K</kbd> to search for one.</p>
     </div>
   </section>
 
@@ -161,7 +161,7 @@ export const SHELL_HTML = `
   <div class="right">
     <button class="status-cell" id="build-health" type="button" title="Problems and build log">No preview yet</button>
     <button id="compile-button" class="btn btn-primary" type="button" title="Compile the document and refresh the preview">
-      Update preview <kbd>⌘↵</kbd>
+      Update preview <kbd data-chord="compile">⌘↵</kbd>
     </button>
   </div>
 </footer>

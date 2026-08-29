@@ -22,6 +22,11 @@ import { downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { filterAndSortProjects, type ProjectSort } from "./projects-list"
 import {
+  BINDING_ACTIONS, DEFAULT_BINDINGS, bindingLabel, bindingRefusal, chordFromEvent, commitBindings,
+  isChord, loadBindings, prettyChord,
+  type BindingAction, type Keybindings,
+} from "./keybindings"
+import {
   DEFAULT_SETTINGS, TYPEFACE_LABELS, applySettings, clampSettings, loadDefaultFile,
   loadSettings, saveDefaultFile, saveSettings,
   type Settings, type TypefaceId,
@@ -497,7 +502,7 @@ let focusMode = false
 function toggleFocusMode(): void {
   focusMode = !focusMode
   document.body.classList.toggle("focus-mode", focusMode)
-  status(focusMode ? "Focus mode — press ⌘⇧F to bring the panels back" : "Ready")
+  status(focusMode ? `Focus mode — press ${prettyChord(bindings.focus)} to bring the panels back` : "Ready")
   editor.focus()
 }
 
@@ -2957,6 +2962,23 @@ const ROLE_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 let settings: Settings = loadSettings()
+let bindings: Keybindings = loadBindings()
+// The armed chord capture (Settings → Keyboard), if one is listening. Kept
+// module-level so arming a second capture disarms the first, and so any
+// capture whose button left the DOM (dock closed, settings re-rendered,
+// click-away navigation) disarms itself on its next event.
+let armedCapture: ((event: KeyboardEvent) => void) | undefined
+
+/** Refreshes every chord display: kbds, hints, and titled buttons. */
+function refreshChordDisplays(): void {
+  setText("#palette-hint-chord", prettyChord(bindings.palette))
+  for (const node of document.querySelectorAll<HTMLElement>("[data-chord]")) {
+    const action = node.dataset.chord as BindingAction
+    node.textContent = prettyChord(bindings[action])
+  }
+  const navigatorButton = el<HTMLElement>("[data-chord-title='navigator']")
+  if (navigatorButton) navigatorButton.title = `Hide the sidebar (${prettyChord(bindings.navigator)})`
+}
 
 function openSettings(): void {
   const typefaces: readonly TypefaceId[] = ["mono", "serif", "sans"]
@@ -2977,6 +2999,11 @@ function openSettings(): void {
       </div>
       <p class="settings-note">“Opening file” applies when this project is entered without a more recent file in this tab. It is this browser's choice, not the project's.</p>`
     : ""
+  const keyboardRows = `<p class="settings-note">Keyboard — click a chord, then press its replacement. Esc cancels; browser-owned chords are refused.</p>
+      ${BINDING_ACTIONS
+        .map((action) => `<div class="settings-row"><label>${bindingLabel(action)}</label><button type="button" class="btn keybind-btn" data-rebind="${action}" style="margin-left:auto">${prettyChord(bindings[action])}</button></div>`)
+        .join("")}
+      <div class="settings-row"><label></label><button type="button" class="btn" id="keybinds-reset" style="margin-left:auto">Reset chords</button></div>`
   showPanel(
     "settings",
     `<div class="settings-body">
@@ -3000,6 +3027,7 @@ function openSettings(): void {
         <output id="settings-line-height-out" for="settings-line-height">${settings.lineHeight.toFixed(2)}</output>
       </div>
       <p class="settings-note">Editor look only — your choices live in this browser and never affect collaborators or compiled output. <button type="button" class="btn" id="settings-reset">Reset to defaults</button></p>
+      ${keyboardRows}
     </div>`
   )
   const commit = (next: Settings): void => {
@@ -3035,6 +3063,57 @@ function openSettings(): void {
     const path = defaultFileSelect.value === "" ? undefined : defaultFileSelect.value
     saveDefaultFile(project.id, path)
     status(path === undefined ? "Opening file cleared — this project opens where you left it" : `“${path}” opens when this project is entered`)
+  })
+  // Chord rebinding: the armed button consumes the next chord via a
+  // capture-phase listener, so the global handler never sees it. Esc
+  // cancels, modifier-only presses keep waiting, and refused chords
+  // (browser-owned, modifierless, duplicate, malformed) explain themselves.
+  // Arming disarms any previous capture; a capture whose button has left
+  // the DOM (re-render, dock closed, navigation) disarms itself.
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-rebind]")) {
+    button.addEventListener("click", () => {
+      const action = button.dataset.rebind as BindingAction
+      if (armedCapture !== undefined) {
+        document.removeEventListener("keydown", armedCapture, true)
+        armedCapture = undefined
+      }
+      button.textContent = "Press keys…"
+      button.classList.add("capturing")
+      const finish = (): void => {
+        document.removeEventListener("keydown", capture, true)
+        if (armedCapture === capture) armedCapture = undefined
+        if (document.contains(button)) openSettings()
+      }
+      const capture = (event: KeyboardEvent): void => {
+        // Disarm when the capture's UI is gone — the button is removed by
+        // any settings re-render or dock close, so this covers click-away.
+        if (!document.contains(button)) {
+          document.removeEventListener("keydown", capture, true)
+          if (armedCapture === capture) armedCapture = undefined
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.key === "Escape") { status(`${bindingLabel(action)}: unchanged`); finish(); return }
+        const chord = chordFromEvent(event)
+        if (chord === undefined) return
+        const refusal = isChord(chord) ? bindingRefusal(bindings, action, chord) : "That key combination cannot be a binding"
+        if (refusal !== undefined) { status(`${prettyChord(chord)}: ${refusal}`); finish(); return }
+        bindings = { ...bindings, [action]: chord }
+        commitBindings(bindings)
+        refreshChordDisplays()
+        status(`${bindingLabel(action)} is now ${prettyChord(chord)}`)
+        finish()
+      }
+      armedCapture = capture
+      document.addEventListener("keydown", capture, true)
+    })
+  }
+  el("#keybinds-reset")?.addEventListener("click", () => {
+    bindings = { ...DEFAULT_BINDINGS }
+    commitBindings(bindings)
+    refreshChordDisplays()
+    openSettings()
   })
 }
 
@@ -4514,6 +4593,8 @@ el("#sort-name")?.addEventListener("click", () => {
 syncProjectToolState()
 // Editor typography from saved settings before the first paint of text.
 applySettings(settings)
+// Chord hints (palette button) show the user's actual bindings.
+refreshChordDisplays()
 el("#export-button")?.addEventListener("click", () => toggleDock("export", openExport))
 el("#review-button")?.addEventListener("click", toggleReviewSidebar)
 el("#dock-close")?.addEventListener("click", closeDock)
@@ -4583,12 +4664,12 @@ const palette = createPalette((): readonly PaletteItem[] => {
   const command = (id: string, label: string, hint: string, runCommand: () => void): PaletteItem =>
     ({ id: `cmd:${id}`, group: "Commands", kind: "run", label, hint, run: runCommand })
   items.push(
-    command("compile", "Update preview", "⌘↵", compileCurrent),
+    command("compile", "Update preview", prettyChord(bindings.compile), compileCurrent),
     command("review", "Review: comments and suggested changes", "", toggleReviewSidebar),
     command("track", `Track changes: turn ${state.review.suggesting ? "off" : "on"}`, "", toggleSuggesting),
     command("comment", "Add a comment here", "", () => addCommentAtSelection()),
-    command("focus", focusMode ? "Leave focus mode" : "Focus mode: hide everything but the text", "⌘⇧F", toggleFocusMode),
-    command("sidebar", hiddenPanes.navigator ? "Show the sidebar" : "Hide the sidebar", "⌘B", () => togglePane("navigator")),
+    command("focus", focusMode ? "Leave focus mode" : "Focus mode: hide everything but the text", prettyChord(bindings.focus), toggleFocusMode),
+    command("sidebar", hiddenPanes.navigator ? "Show the sidebar" : "Hide the sidebar", prettyChord(bindings.navigator), () => togglePane("navigator")),
     command("preview", hiddenPanes.preview ? "Show the preview" : "Hide the preview", "", () => togglePane("preview")),
     command("problems", "Problems and build log", "", () => setDrawerOpen(!drawerOpen, state.diagnostics.length > 0 ? "problems" : "log")),
     command("references", "References library", "", () => toggleDock("references", openReferences)),
@@ -4625,33 +4706,36 @@ el<HTMLElement>(".preview-pane")?.addEventListener("pointerenter", () => { point
 el<HTMLElement>(".preview-pane")?.addEventListener("pointerleave", () => { pointerOverPreview = false })
 
 document.addEventListener("keydown", (event) => {
-  const modifier = event.metaKey || event.ctrlKey
-  // Policy: never intercept browser-essential chords — the reload family
-  // (⌘R, ⌘⇧R, F5), devtools, history. ⌘⇧R used to open the Review dock and
-  // silently swallowed hard reload; the Review dock is a button and a palette
-  // command instead. ⌘S/⌘K/⌘B/⌘⇧F are editor-standard overrides (the
-  // browser action under them — save page — is meaningless here); zoom is
-  // scoped to the preview pane below.
-  // ⌘K reaches everything, including from inside a dialog-free overlay, so it is
-  // handled before the modal guard below.
-  if (modifier && event.key.toLowerCase() === "k") { event.preventDefault(); palette.open(); return }
+  // Chords come from the rebindable bindings (Settings dock → Keyboard);
+  // keybindings.ts refuses browser-essential chords (reload family, devtools,
+  // history, zoom) for defaults and rebinds alike, so nothing here can ever
+  // swallow hard reload. The Review dock deliberately has no chord. While a
+  // rebinding capture is armed, its capture-phase listener consumes events
+  // before this handler, so no action fires mid-capture.
+  const chord = chordFromEvent(event)
+  // The palette reaches everything, including from inside a dialog-free
+  // overlay, so it is handled before the modal guard below.
+  if (chord === bindings.palette) { event.preventDefault(); palette.open(); return }
   // Skip the remaining global shortcuts while a <dialog> is modal: keyboard events
-  // still bubble to document inside showModal()'s top layer, so ⌘↵ would compile
-  // (or ⌘S save) while the user is typing into a prompt.
+  // still bubble to document inside showModal()'s top layer, so the compile
+  // chord would fire (or save) while the user is typing into a prompt.
   if (el<HTMLDialogElement>("#workspace-panel")?.open) return
-  if (modifier && event.key === "Enter") { event.preventDefault(); compileCurrent() }
-  // ⌘S saves and then updates the preview: a writer pressing save expects both.
-  if (modifier && !event.shiftKey && event.key.toLowerCase() === "s") { event.preventDefault(); saveNow(); compileCurrent() }
-  if (modifier && event.shiftKey && event.key.toLowerCase() === "f") { event.preventDefault(); toggleFocusMode() }
-  if (modifier && !event.shiftKey && event.key.toLowerCase() === "b") { event.preventDefault(); togglePane("navigator") }
-  // ⌘= / ⌘− zoom the preview — but only while the pointer is over the preview
-  // pane, so the same chords still zoom the page everywhere else (they are
-  // browser zoom defaults; a global intercept stole them).
-  if (pointerOverPreview && modifier && (event.key === "=" || event.key === "+")) { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
-  if (pointerOverPreview && modifier && event.key === "-") { event.preventDefault(); pdfViewer.zoomOut(); updateZoomLabel() }
+  // Save also updates the preview: a writer pressing save expects both.
+  if (chord === bindings.save) { event.preventDefault(); saveNow(); compileCurrent(); return }
+  if (chord === bindings.compile) { event.preventDefault(); compileCurrent(); return }
+  if (chord === bindings.focus) { event.preventDefault(); toggleFocusMode(); return }
+  if (chord === bindings.navigator) { event.preventDefault(); togglePane("navigator"); return }
+  // Zoom chords act on the preview — but only while the pointer is over the
+  // preview pane, so the same chords still zoom the page everywhere else
+  // (they are browser zoom defaults; a global intercept stole them). The
+  // shifted plus is "=" with Shift, which the chord encoding cannot
+  // represent, so it is matched explicitly like the pre-chord handler did.
+  const zoomModifier = event.metaKey || event.ctrlKey
+  if (pointerOverPreview && (chord === "Mod+=" || (zoomModifier && event.key === "+"))) { event.preventDefault(); pdfViewer.zoomIn(); updateZoomLabel() }
+  if (pointerOverPreview && chord === "Mod+-") { event.preventDefault(); pdfViewer.zoomOut(); updateZoomLabel() }
   // Esc backs out of the current surface, innermost first. The review popover
   // handles its own Esc (capture phase), so by the time we get here it is closed.
-  if (event.key === "Escape" && !modifier) {
+  if (event.key === "Escape" && !event.metaKey && !event.ctrlKey) {
     if (focusMode) { toggleFocusMode(); return }
     if (dockTool !== undefined && document.activeElement?.closest("#dock")) { closeDock(); editor.focus() }
   }

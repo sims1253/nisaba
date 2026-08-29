@@ -323,7 +323,10 @@ Scopes, in delivery order:
   entered *without* a more recent file in that tab (a reload restoring your last file
   still wins, and a manual pick during the open window overrides). This browser's
   choice, not the project's — a shared "main document" would be API data.
-- Coming: rebindable app chords (which will refuse browser-essential chords per §6).
+- **Keyboard** — the five app-level chords (palette, update preview, save, focus mode,
+  navigator), rebound by clicking a chord and pressing its replacement; browser-owned and
+  duplicate chords are refused with a reason (§6), and every chord display (palette hint,
+  palette commands) follows the user's bindings.
 
 ---
 
@@ -379,27 +382,32 @@ only carrier of meaning — insertions are underlined, deletions struck, comment
 
 ## 6. Keyboard model
 
-| Key | Action | Scope |
+The five app-level chords are **rebindable** (Settings → Keyboard; click a chord, press its
+replacement, Esc cancels). The table shows the defaults.
+
+| Key (default) | Action | Scope |
 |---|---|---|
 | `⌘K` / `Ctrl K` | Command palette | Global |
 | `⌘⏎` | Update preview | Global |
 | `⌘S` | Save, then update preview | Global |
 | `⌘⇧F` | Focus mode | Global |
 | `⌘B` | Navigator | Global |
-| `⌘=` / `⌘−` | Zoom the preview | Pointer over the preview pane |
+| `⌘=` / `⌘−` | Zoom the preview | Pointer over the preview pane (not rebindable) |
 | `↑` `↓` `Enter` `A` `R` `C` `Esc` | Triage the review queue | Review dock only |
 | `Esc` | Close the palette, popover, or dock | Contextual |
 
 Single-letter shortcuts bind **only** while focus is inside the review dock, so they can
 never fire into the text.
 
-**Browser defaults are not hijacked.** No chord the browser needs is intercepted:
-the reload family (`⌘R`, `⌘⇧R`, `F5`), devtools, and history all reach the browser
-untouched — the Review dock deliberately has no global chord (button and palette
-command instead), and the zoom chords act on the preview only while the pointer is
-over the preview pane, leaving page zoom working everywhere else. The editor-standard
-overrides the app does keep (`⌘S`, `⌘K`, `⌘B`, `⌘⇧F`) replace browser actions that are
-meaningless in the app.
+**Browser defaults are not hijacked — and cannot be, by construction.** The chord model
+(`web/src/keybindings.ts`) refuses browser-essential chords for the shipped defaults AND
+for user rebinds alike: the reload family (`⌘R`, `⌘⇧R`, `F5`), devtools, history, and the
+browser-zoom chords; load-time validation drops any that slipped into storage, and the
+capture UI explains its refusals (browser-owned, already taken by another action,
+malformed). The Review dock deliberately has no chord at all (button and palette command
+instead), and the zoom chords act on the preview only while the pointer is over the
+preview pane, leaving page zoom working everywhere else. The default overrides the app
+ships (`⌘S`, `⌘K`, `⌘B`, `⌘⇧F`) replace browser actions that are meaningless in the app.
 
 ---
 
