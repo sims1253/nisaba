@@ -839,9 +839,12 @@ function renderProjects(): void {
           const reconcileDeletedProject = (): void => {
             status("Project deleted")
             state.projects = state.projects.filter((item) => item.id !== project.id)
-            // If the deleted project was the last-open one, clear it so a future
-            // tab-return doesn't try to reopen a project that no longer exists.
+            // If the deleted project was this tab's restore target, clear it
+            // so a future tab-return doesn't try to reopen a project that no
+            // longer exists; the global new-tab default drops it too, but
+            // only when the global record actually points there.
             if (readLastOpen().projectId === project.id) persistLastOpen({})
+            clearGlobalLastOpen(project.id)
             renderProjects()
           }
           run(api.deleteProject(project.id), reconcileDeletedProject, (error) => {
@@ -885,10 +888,14 @@ function leaveProject(): void {
     return
   }
   closeOpenDocument()
+  const departing = state.project?.id
   state.project = undefined
   state.role = undefined
   currentHeadings = []
   persistLastOpen({})
+  // The global new-tab default keeps another tab's more recent project; only
+  // a default pointing at the departed project is dropped.
+  if (departing !== undefined) clearGlobalLastOpen(departing)
   renderWorkspaceState()
   renderProjects()
   applyRoleGates()
@@ -1198,12 +1205,20 @@ interface LastOpen { readonly projectId?: string; readonly documentId?: string }
 function persistLastOpen(entry: LastOpen): void {
   try {
     const encoded = JSON.stringify(entry)
+    // This tab's record always reflects the write; the global record only
+    // gains project-bearing entries — clearing it is a separate, guarded
+    // operation (clearGlobalLastOpen) so one tab leaving a project cannot
+    // wipe another tab's more recent project.
     sessionStorage.setItem(LAST_OPEN_KEY, encoded)
-    // Only a project-bearing entry becomes the new-tab default; leaving or
-    // deleting a project (the {} entries) clears the global record too, so a
-    // fresh tab doesn't drop into a project this session deliberately left.
     if (entry.projectId) localStorage.setItem(LAST_OPEN_KEY, encoded)
-    else localStorage.removeItem(LAST_OPEN_KEY)
+  } catch { /* storage may be unavailable */ }
+}
+
+/** Drops the global new-tab default only when it points at `projectId`. */
+function clearGlobalLastOpen(projectId: string): void {
+  try {
+    const global = JSON.parse(localStorage.getItem(LAST_OPEN_KEY) ?? "{}") as LastOpen
+    if (global.projectId === projectId) localStorage.removeItem(LAST_OPEN_KEY)
   } catch { /* storage may be unavailable */ }
 }
 
