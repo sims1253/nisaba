@@ -310,7 +310,7 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
         }
         if (frame.type === "heartbeat") return
         if (frame.type === "error") {
-          if (frame.code === 4003 && /access (?:was revoked|changed)/i.test(frame.message)) {
+          if (frame.code === 4003 && /access (?:was revoked|changed|could not be verified)/i.test(frame.message)) {
             options.onAccessRevoked?.(frame.message)
           }
           throw new Error(`Sync server error ${frame.code}: ${frame.message}`)

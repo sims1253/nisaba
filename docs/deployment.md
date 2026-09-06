@@ -107,7 +107,7 @@ The bundled realm is a **dev fixture** (public PKCE client with demo users,
   top-level `roles` claim and the audience mapper (`aud` containing
   `nisaba-web` and/or `nisaba` — see
   [`deploy/keycloak/README.md`](../deploy/keycloak/README.md)).
-- Set `NISABA_OIDC_ISSUER` (and `NISABA_OIDC_DISCOVERY_URL`) to the external
+- Set `NISABA_OIDC_ISSUER` to the external
   `https://…/realms/<realm>` URL. Behind one TLS hostname the local-dev
   browser/container issuer split collapses to this single value
   ([`operations.md`](operations.md) §5).
@@ -250,7 +250,7 @@ docker compose --env-file /etc/nisaba/env logs -f app
 ## 9. Rollback procedure
 
 ```bash
-# 1. Stop the app tier (volumes are preserved by `down`)
+# 1. Stop the stack (volumes are preserved by `down`)
 docker compose --env-file /etc/nisaba/env --profile app down
 
 # 2. Return to the previous release

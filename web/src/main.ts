@@ -80,15 +80,11 @@ if (!root) throw new Error("Application root missing")
 // State
 // ---------------------------------------------------------------------------
 
-interface OutlineEntry {
-  readonly document: NisabaDocument
-}
-
 interface Workspace {
   projects: readonly Project[]
   project?: Project
-  outline: readonly OutlineEntry[]
-  selected?: OutlineEntry
+  outline: readonly NisabaDocument[]
+  selected?: NisabaDocument
   document?: NisabaDocument
   references: readonly Reference[]
   fulltexts: ReadonlyMap<string, Fulltext>
@@ -618,7 +614,7 @@ function renderCrumbs(): void {
   const file = document.createElement("button")
   file.type = "button"
   file.className = "current"
-  file.textContent = selected.document.path
+  file.textContent = selected.path
   file.title = "Reveal in the sidebar"
   file.addEventListener("click", () => {
     hiddenPanes.navigator = false
@@ -934,7 +930,7 @@ function projectTimestamp(project: Project): string {
 
 /** Leaves the open project and returns to the projects screen. */
 function leaveProject(): void {
-  if (failedSave?.projectId === state.project?.id && failedSave?.context.documentId === state.selected?.document.id) {
+  if (failedSave?.projectId === state.project?.id && failedSave?.context.documentId === state.selected?.id) {
     status("Unsaved offline changes — reconnect before leaving this project")
     return
   }
@@ -1009,7 +1005,7 @@ function renderFileTree(): void {
     applyRoleGates()
     return
   }
-  const tree = buildFileTree(state.outline.map((entry) => ({ path: entry.document.path, item: entry })))
+  const tree = buildFileTree(state.outline.map((entry) => ({ path: entry.path, item: entry })))
   host.replaceChildren(...renderTreeNodes(tree, 0))
   applyRoleGates()
 }
@@ -1017,7 +1013,7 @@ function renderFileTree(): void {
 /** Folders the user has collapsed; everything is expanded until they say otherwise. */
 const collapsedFolders = new Set<string>()
 
-function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number): HTMLElement[] {
+function renderTreeNodes(nodes: readonly TreeNode<NisabaDocument>[], depth: number): HTMLElement[] {
   const out: HTMLElement[] = []
   for (const node of nodes) {
     const item = document.createElement("div")
@@ -1052,13 +1048,13 @@ function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number
     const row = document.createElement("button")
     row.type = "button"
     row.className = "tree-row"
-    if (state.selected?.document.id === entry.document.id) row.classList.add("active")
-    row.dataset.document = entry.document.id
-    row.title = `${entry.document.path} — double-click to rename`
+    if (state.selected?.id === entry.id) row.classList.add("active")
+    row.dataset.document = entry.id
+    row.title = `${entry.path} — double-click to rename`
     row.innerHTML = `<span class="twist" aria-hidden="true"></span><span class="label"></span>`
     const label = row.querySelector<HTMLElement>(".label")
     if (label) label.textContent = node.name
-    if (isEntrypoint(entry.document.path)) {
+    if (isEntrypoint(entry.path)) {
       const tag = document.createElement("span")
       tag.className = "tag"
       tag.textContent = "MAIN"
@@ -1070,9 +1066,9 @@ function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number
     const remove = document.createElement("button")
     remove.type = "button"
     remove.className = "btn-icon btn-danger"
-    remove.dataset.deleteDocument = entry.document.id
+    remove.dataset.deleteDocument = entry.id
     remove.title = "Delete this file"
-    remove.setAttribute("aria-label", `Delete ${entry.document.path}`)
+    remove.setAttribute("aria-label", `Delete ${entry.path}`)
     remove.textContent = "×"
     remove.addEventListener("click", (event) => { event.stopPropagation(); deleteDocument(entry) })
     wrap.append(row, remove)
@@ -1089,7 +1085,7 @@ function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number
  * the tag and the build can never disagree.
  */
 function entrypointPath(): string | undefined {
-  const paths = state.outline.map((entry) => entry.document.path)
+  const paths = state.outline.map((entry) => entry.path)
   return paths.find((path) => path === "main.typ") ?? paths[0]
 }
 
@@ -1097,31 +1093,31 @@ function isEntrypoint(path: string): boolean {
   return entrypointPath() === path
 }
 
-function renameDocument(entry: OutlineEntry): void {
+function renameDocument(entry: NisabaDocument): void {
   const project = state.project
   if (!project) return
   promptInPanel("File", "Rename file", "New name", (title) => {
-    run(api.updateDocument(project.id, entry.document.id, { title }), () => {
+    run(api.updateDocument(project.id, entry.id, { title }), () => {
       status("File renamed")
       loadOutline()
     })
-  }, { placeholder: entry.document.title })
+  }, { placeholder: entry.title })
 }
 
-function deleteDocument(entry: OutlineEntry): void {
+function deleteDocument(entry: NisabaDocument): void {
   const project = state.project
   if (!project) return
-  promptInPanel("File", "Delete file", `This cannot be undone. Type "${entry.document.title}" to confirm.`, (confirmText) => {
-    if (confirmText.trim() !== entry.document.title.trim()) {
+  promptInPanel("File", "Delete file", `This cannot be undone. Type "${entry.title}" to confirm.`, (confirmText) => {
+    if (confirmText.trim() !== entry.title.trim()) {
       status("That did not match the file name — nothing was deleted")
       return
     }
     const reconcileDeletedDocument = (): void => {
       status("File deleted")
-      if (state.selected?.document.id === entry.document.id) closeOpenDocument()
+      if (state.selected?.id === entry.id) closeOpenDocument()
       loadOutline()
     }
-    run(api.deleteDocument(project.id, entry.document.id), reconcileDeletedDocument, (error) => {
+    run(api.deleteDocument(project.id, entry.id), reconcileDeletedDocument, (error) => {
       // Deletes are idempotent from the editor's point of view. Another tab or
       // collaborator may win the race; a 404 then confirms the desired final
       // state and must close the stale document/relay instead of leaving a
@@ -1132,7 +1128,7 @@ function deleteDocument(entry: OutlineEntry): void {
       }
       status(error instanceof Error ? error.message : "The API request failed")
     })
-  }, { placeholder: entry.document.title })
+  }, { placeholder: entry.title })
 }
 
 /** Kept for callers that still speak in terms of "the outline of the project". */
@@ -1305,7 +1301,7 @@ function restoreLastOpen(): void {
     // but a switch away must stop the polling.)
     if (state.project?.id !== last.projectId) return
     if (state.selected) return
-    const entry = state.outline.find((e) => e.document.id === last.documentId)
+    const entry = state.outline.find((e) => e.id === last.documentId)
     if (entry) { openDocument(entry); return }
     if (attempts > 0) setTimeout(() => tryOpen(attempts - 1), 200)
   }
@@ -1343,7 +1339,7 @@ function openProject(project: Project, options: { readonly fromLastOpen?: boolea
         // Match by path AND owning project: the outline is per-project by
         // construction, but this guard keeps the poller correct even if the
         // outline is ever populated cross-project again.
-        const entry = state.outline.find((e) => e.document.project_id === project.id && e.document.path === defaultPath)
+        const entry = state.outline.find((e) => e.project_id === project.id && e.path === defaultPath)
         if (entry) { openDocument(entry); return }
         if (attempts > 0) setTimeout(() => tryDefault(attempts - 1), 200)
       }
@@ -1416,7 +1412,6 @@ function loadOutline(): void {
     if (state.project?.id !== projectId) return
     state.outline = [...documents]
       .sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }))
-      .map((document) => ({ document }))
     renderOutline()
     renderProjectFacts()
   })
@@ -1515,10 +1510,10 @@ let documentAccessRevoked = false
 // until the initial welcome succeeds (and after a fatal protocol/auth failure).
 let reviewerSyncReady = false
 
-function openDocument(entry: OutlineEntry): void {
+function openDocument(entry: NisabaDocument): void {
   const project = state.project
   if (!project) return
-  if (entry.document.id !== state.selected?.document.id && failedSave?.projectId === project.id && failedSave.context.documentId === state.selected?.document.id) {
+  if (entry.id !== state.selected?.id && failedSave?.projectId === project.id && failedSave.context.documentId === state.selected?.id) {
     status("Unsaved offline changes — reconnect before switching files")
     return
   }
@@ -1527,7 +1522,7 @@ function openDocument(entry: OutlineEntry): void {
   // selected. Rapid document switching can deliver responses out of order; without
   // this guard a late response for a previously-clicked document would load the
   // wrong document into the editor and corrupt the open document's state.
-  const documentId = entry.document.id
+  const documentId = entry.id
   // Flush a pending autosave for the document we are LEAVING instead of discarding
   // it. The SaveContext already captured the correct document/revision/body,
   // so firing it now persists the just-typed text to the right place. Previously
@@ -1545,7 +1540,7 @@ function openDocument(entry: OutlineEntry): void {
   editor.dispatch({ effects: loroCompartment.reconfigure([]) })
   // MEDIUM #8: Capture the document currently in the editor BEFORE reassigning
   // state.selected, so we can tell whether this open is a real switch.
-  const previousDocumentId = state.selected?.document.id
+  const previousDocumentId = state.selected?.id
   state.selected = entry
   // Clear the stale document reference BEFORE the editor-clear dispatch below.
   // The clear is a docChanged transaction; without this guard the update listener
@@ -1568,10 +1563,10 @@ function openDocument(entry: OutlineEntry): void {
   }
   // M5: remember the open document so tab-away/return restores it. Persist after
   // state.selected is set so the restore path can find the matching entry.
-  persistLastOpen({ projectId: project.id, documentId: entry.document.id })
+  persistLastOpen({ projectId: project.id, documentId: entry.id })
   renderOutline()
-  setText("#document-name", entry.document.title)
-  setText("#document-path", entry.document.path)
+  setText("#document-name", entry.title)
+  setText("#document-path", entry.path)
   status("Opening…")
   run(
     api.getDocument(project.id, documentId),
@@ -1579,7 +1574,7 @@ function openDocument(entry: OutlineEntry): void {
       // CRITICAL #1: Bail out if the user has switched to a different document
       // while this document was loading — a stale response must not overwrite the
       // now-current editor content.
-      if (state.selected?.document.id !== documentId) return
+      if (state.selected?.id !== documentId) return
       state.review = emptyReviewState
       editor.dispatch({ effects: setReviewItems.of([]) })
       closeReviewPopover()
@@ -1634,13 +1629,13 @@ function openDocument(entry: OutlineEntry): void {
       setTimeout(() => {
         void Effect.runPromise(api.getDocument(project.id, documentId)).then((latest) => {
           const current = state.document
-          if (state.selected?.document.id !== documentId || !current) return
+          if (state.selected?.id !== documentId || !current) return
           if (latest.revision <= current.revision) return
           if (pendingSave || saveTimer !== undefined || saveInFlight) return
           if (editor.state.doc.toString() !== current.body) return
           state.document = latest
-          state.selected = { document: latest }
-          state.outline = state.outline.map((item) => item.document.id === documentId ? { document: latest } : item)
+          state.selected = latest
+          state.outline = state.outline.map((item) => item.id === documentId ? latest : item)
           loadIntoEditor(latest.body)
           setText("#revision-label", `v${latest.revision}`)
           refreshDocumentStructure()
@@ -1841,7 +1836,7 @@ let presencePeers: readonly PresencePeer[] = []
 function applyPresenceRoster(peers: readonly PresencePeer[]): void {
   presencePeers = peers
   renderPresence()
-  const openPath = state.selected?.document.path
+  const openPath = state.selected?.path
   const cursors: RemoteCursor[] = []
   for (const peer of peers) {
     if (peer.line === undefined) continue
@@ -1896,7 +1891,7 @@ function renderPresence(): void {
  */
 function publishPresence(): void {
   const connection = syncConnection
-  const document_ = state.selected?.document
+  const document_ = state.selected
   if (!connection || !document_) return
   const head = editor.state.selection.main.head
   const caretLine = editor.state.doc.lineAt(Math.min(head, editor.state.doc.length))
@@ -1944,7 +1939,7 @@ function captureSaveContext(): SaveContext | undefined {
   const { selected, document } = state
   if (!selected || !document) return undefined
   return {
-    documentId: selected.document.id,
+    documentId: selected.id,
     revision: document.revision,
     body: editor.state.doc.toString()
   }
@@ -1978,7 +1973,7 @@ function saveNow(): void {
   if (!context) return
   // Selection-drift guard: a timer captured for another document or a stale
   // document reference must not write to the document now open.
-  if (context.documentId !== selected.document.id) return
+  if (context.documentId !== selected.id) return
   runSave(project.id, context)
 }
 
@@ -2012,7 +2007,7 @@ function runSave(projectId: string, context: SaveContext): void {
     }
     return
   }
-  if (context.body === state.document?.body && state.selected?.document.id === context.documentId) { status("Saved"); return }
+  if (context.body === state.document?.body && state.selected?.id === context.documentId) { status("Saved"); return }
   status("Saving…")
   // Mark the request as in-flight so the beforeunload guard can warn about an
   // unsaved PATCH — saveTimer/pendingSave are already cleared by this point.
@@ -2037,7 +2032,7 @@ function runSave(projectId: string, context: SaveContext): void {
       const persisted = { ...saved, body: context.body }
       // Only update the open document if we are still editing the document this
       // save was for.
-      if (state.selected?.document.id === context.documentId) {
+      if (state.selected?.id === context.documentId) {
         state.document = persisted
         setText("#revision-label", `v${persisted.revision}`)
       }
@@ -2049,7 +2044,7 @@ function runSave(projectId: string, context: SaveContext): void {
       // non-empty editor, which may already include legitimate peer edits.
       if (recoveringFailedSave && persisted.body.length > 0) {
         setTimeout(() => {
-          if (state.selected?.document.id !== context.documentId || editor.state.doc.length !== 0) return
+          if (state.selected?.id !== context.documentId || editor.state.doc.length !== 0) return
           loadIntoEditor(persisted.body)
           refreshDocumentStructure()
           status("Saved")
@@ -2065,7 +2060,7 @@ function runSave(projectId: string, context: SaveContext): void {
       // replica has usually already merged the other author's edits, so the retry
       // then lands.
       if (error instanceof api.ApiError && error.status === 409) {
-        if (state.selected?.document.id !== context.documentId) {
+        if (state.selected?.id !== context.documentId) {
           status("Save conflicted; the document changed")
           completeSave()
           return
@@ -2074,7 +2069,7 @@ function runSave(projectId: string, context: SaveContext): void {
           api.getDocument(projectId, context.documentId)
         ).then(
           (latest) => {
-            if (state.selected?.document.id !== context.documentId) { status("Saved elsewhere"); completeSave(); return }
+            if (state.selected?.id !== context.documentId) { status("Saved elsewhere"); completeSave(); return }
             state.document = latest
             setText("#revision-label", `v${latest.revision}`)
             const localBody = editor.state.doc.toString()
@@ -2134,7 +2129,7 @@ async function saveBeforeServerSnapshot(): Promise<void> {
     const saved = await Effect.runPromise(
       api.saveDocument(project.id, context.documentId, context.body, context.revision)
     )
-    if (state.selected?.document.id === context.documentId) {
+    if (state.selected?.id === context.documentId) {
       state.document = saved
       setText("#revision-label", `v${saved.revision}`)
     }
@@ -3029,9 +3024,9 @@ function openSettings(): void {
         <select id="settings-default-file" aria-labelledby="settings-default-file-label">
           <option value="" ${defaultFile === undefined ? "selected" : ""}>Last file you had open</option>
           ${state.outline
-            .map((entry) => `<option value="${escapeHtml(entry.document.path)}" ${entry.document.path === defaultFile ? "selected" : ""}>${escapeHtml(entry.document.path)}</option>`)
+            .map((entry) => `<option value="${escapeHtml(entry.path)}" ${entry.path === defaultFile ? "selected" : ""}>${escapeHtml(entry.path)}</option>`)
             .join("")}
-          ${defaultFile !== undefined && !state.outline.some((e) => e.document.path === defaultFile)
+          ${defaultFile !== undefined && !state.outline.some((e) => e.path === defaultFile)
             ? `<option value="${escapeHtml(defaultFile)}" selected disabled>${escapeHtml(defaultFile)} — not in this project</option>`
             : ""}
         </select>
@@ -3383,15 +3378,15 @@ function lineDiff(oldText: string, newText: string): { type: "added" | "removed"
 function openHistory(): void {
   const { project, selected } = state
   if (!project || !selected) { showPanel("history", `<p class="empty-note">Open a document first.</p>`); return }
-  const documentId = selected.document.id
+  const documentId = selected.id
   showPanel("history", `<p class="dock-note">Loading earlier versions…</p>`)
   run(
-    api.listDocumentHistory(project.id, selected.document.id),
+    api.listDocumentHistory(project.id, selected.id),
     (revisions) => {
       // A history response belongs to the document that requested it. Switching
       // files while the request is in flight must not populate the dock with a
       // stale timeline under the newly-selected document.
-      if (state.selected?.document.id !== documentId || dockTool !== "history") return
+      if (state.selected?.id !== documentId || dockTool !== "history") return
       const host = el<HTMLElement>("#dock-content")
       if (!host) return
       if (revisions.length === 0) {
@@ -3456,7 +3451,7 @@ function openHistory(): void {
       })
     },
     (error: unknown) => {
-      if (state.selected?.document.id !== documentId || dockTool !== "history") return
+      if (state.selected?.id !== documentId || dockTool !== "history") return
       const host = el<HTMLElement>("#dock-content")
       if (host) host.innerHTML = `<p class="empty-note">Couldn't load history: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
     }
@@ -3466,7 +3461,7 @@ function openHistory(): void {
 function openExport(): void {
   const project = state.project
   if (!project) { showPanel("export", `<p class="empty-note">Open a project first.</p>`); return }
-  const entries = state.outline.map(({ document }) => `<option value="${escapeHtml(document.path)}">${escapeHtml(document.title)} — ${escapeHtml(document.path)}</option>`).join("")
+  const entries = state.outline.map((document) => `<option value="${escapeHtml(document.path)}">${escapeHtml(document.title)} — ${escapeHtml(document.path)}</option>`).join("")
   showPanel("export", `
     <label class="field">Which document<select id="export-entry">${entries}</select></label>
     <p class="dock-note">Exports the <b>${escapeHtml(VIEW_LABELS[state.view])}</b> version — the one the preview is showing — as a PDF, together with the reference files it cites.</p>
@@ -3502,6 +3497,11 @@ function openExport(): void {
       }
       }, (error) => {
         if (exportButton) exportButton.disabled = false
+        if (state.project?.id !== project.id) return
+        if (error instanceof api.ApiError && error.diagnostics?.length) {
+          renderDiagnostics(error.diagnostics)
+          setDrawerOpen(true, "problems")
+        }
         const host = el<HTMLElement>("#export-result")
         if (host) host.innerHTML = `<p class="state-warn">Export failed: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
       })
@@ -4117,7 +4117,7 @@ function actionButton(label: string, className: string, onClick: () => void): HT
 
 /** `main.typ · line 12` — where the item is, in the writer's terms. */
 function reviewLocation(item: ReviewItem): string {
-  const path = state.selected?.document.path ?? ""
+  const path = state.selected?.path ?? ""
   const line = editor.state.doc.lineAt(Math.min(item.from, editor.state.doc.length)).number
   return path === "" ? `line ${line}` : `${path} · line ${line}`
 }
@@ -4475,7 +4475,7 @@ function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
     if (drawerOpen && drawerTab === "problems") setDrawerOpen(false)
     return
   }
-  const entry = state.selected ? state.selected.document.path : ""
+  const entry = state.selected?.path ?? ""
   host.replaceChildren(...diagnostics.map((item, index) => {
     const severity = item.severity === "warning" ? "warning" : "error"
     const row = document.createElement("button")
@@ -4694,12 +4694,12 @@ const palette = createPalette((): readonly PaletteItem[] => {
   const items: PaletteItem[] = []
   for (const entry of state.outline) {
     items.push({
-      id: `file:${entry.document.id}`,
+      id: `file:${entry.id}`,
       group: "Files",
       kind: "file",
-      label: entry.document.title,
-      hint: entry.document.path,
-      search: entry.document.path,
+      label: entry.title,
+      hint: entry.path,
+      search: entry.path,
       run: () => openDocument(entry)
     })
   }

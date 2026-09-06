@@ -28,7 +28,7 @@ cd "$TOOLS"
 
 if [[ "$NO_INSTALL" -eq 0 && ! -d node_modules ]]; then
   echo ":: installing dependencies (bun)"
-  bun install --frozen-lockfile 2>/dev/null || bun install
+  bun install --frozen-lockfile
 fi
 
 echo ":: lint"
@@ -46,20 +46,16 @@ trap 'rm -rf "$VERIFY_TMP"' EXIT
 "$TOOLS/bin/nisaba-tools.ts" docx-introspect \
   --input "$ROOT/fixtures/templates/sample-document.docx" \
   --output "$VERIFY_TMP/manifest.fresh.json" >/dev/null
-# Compare canonical hashes (order-independent) instead of raw bytes, so a
-# key-reordering change is caught logically rather than lexically.
+# Compare parsed values; object key order does not change the manifest.
 bun -e '
 const fs = require("node:fs");
-const crypto = require("node:crypto");
-const h = (o) => crypto.createHash("sha256").update(JSON.stringify(o)).digest("hex");
-const fresh = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const golden = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const a = h(fresh), b = h(golden);
-if (a !== b) {
-  console.error("golden manifest drift:\n  fresh =" + a + "\n  golden=" + b);
+const { isDeepStrictEqual } = require("node:util");
+const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+if (!isDeepStrictEqual(read(process.argv[1]), read(process.argv[2]))) {
+  console.error("golden manifest drift");
   process.exit(1);
 }
-console.log("golden manifest stable: " + a.slice(0, 16));
+console.log("golden manifest stable");
 ' "$VERIFY_TMP/manifest.fresh.json" "$ROOT/fixtures/templates/golden/sample-document.manifest.json"
 
 echo ":: golden skeleton stable (typst-skeleton == committed golden)"
@@ -75,10 +71,8 @@ echo "golden skeleton stable"
 
 if command -v typst >/dev/null 2>&1; then
   echo ":: skeleton compiles (typst)"
-  tmp="$(mktemp -d)"
-  typst compile "$ROOT/fixtures/templates/golden/sample-document.skeleton.typ" "$tmp/out.pdf"
-  echo "compiled ok: $(stat -c%s "$tmp/out.pdf" 2>/dev/null || stat -f%z "$tmp/out.pdf") bytes"
-  rm -rf "$tmp"
+  typst compile "$ROOT/fixtures/templates/golden/sample-document.skeleton.typ" "$VERIFY_TMP/out.pdf"
+  echo "compiled ok: $(stat -c%s "$VERIFY_TMP/out.pdf" 2>/dev/null || stat -f%z "$VERIFY_TMP/out.pdf") bytes"
 else
   echo ":: skeleton compiles — skipped (typst not on PATH)"
 fi
@@ -94,5 +88,4 @@ for (const [t, k] of need) {
 }
 '
 
-rm -rf "$VERIFY_TMP"
 echo ":: verify.sh OK"

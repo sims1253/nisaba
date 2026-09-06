@@ -24,12 +24,6 @@ export class ToolFailedError extends Data.TaggedError("ToolFailedError")<{
   readonly args: readonly string[];
 }> {}
 
-/** The user gave us a path that is not safe to use (escapes a sandbox root, etc.). */
-export class UnsafePathError extends Data.TaggedError("UnsafePathError")<{
-  readonly path: string;
-  readonly reason: string;
-}> {}
-
 /** A file the user pointed us at does not exist or is not the expected kind. */
 export class InvalidInputError extends Data.TaggedError("InvalidInputError")<{
   readonly path: string;
@@ -48,9 +42,4 @@ export class MalformedDocxError extends Data.TaggedError("MalformedDocxError")<{
   readonly path: string;
   readonly missingPart?: string;
   readonly reason: string;
-}> {}
-
-/** Generic, non-tagged fallback for programmer errors. Never escapes to JSON. */
-export class InternalError extends Data.TaggedError("InternalError")<{
-  readonly message: string;
 }> {}

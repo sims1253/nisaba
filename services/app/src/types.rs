@@ -314,6 +314,8 @@ pub enum AppError {
     NotFound,
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("compile produced no PDF")]
+    CompileFailed(Vec<Value>),
     #[error("dependency unavailable: {0}")]
     Dependency(String),
     #[error("internal error")]
@@ -345,6 +347,7 @@ impl IntoResponse for AppError {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, "bad_request", message.clone()),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", self.to_string()),
             Self::Conflict(message) => (StatusCode::CONFLICT, "conflict", message.clone()),
+            Self::CompileFailed(_) => (StatusCode::CONFLICT, "conflict", self.to_string()),
             Self::Dependency(message) => (
                 StatusCode::BAD_GATEWAY,
                 "dependency_unavailable",
@@ -356,10 +359,10 @@ impl IntoResponse for AppError {
                 self.to_string(),
             ),
         };
-        (
-            status,
-            Json(json!({"error": {"code": code, "message": message}})),
-        )
-            .into_response()
+        let mut error = json!({"code": code, "message": message});
+        if let Self::CompileFailed(diagnostics) = self {
+            error["diagnostics"] = json!(diagnostics);
+        }
+        (status, Json(json!({"error": error}))).into_response()
     }
 }

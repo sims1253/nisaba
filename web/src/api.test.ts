@@ -133,6 +133,17 @@ describe("app service contract", () => {
     expect(failure.message).toBe("revision conflict")
   })
 
+  it("preserves diagnostics when an export is blocked", async () => {
+    const diagnostics = [{ severity: "error", message: "unknown variable: missing", path: "main.typ", start: 1, end: 8 }]
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ error: { code: "conflict", message: "Export blocked", diagnostics } }), { status: 409 }
+    )))
+    const failure = await Effect.runPromise(Effect.flip(api.exportProject("p1", "main.typ", "proposed")))
+    expect(failure.status).toBe(409)
+    expect(failure.message).toBe("Export blocked")
+    expect(failure.diagnostics).toEqual(diagnostics)
+  })
+
   it("surfaces an AbortError as an ApiError", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { const error = new Error("aborted"); error.name = "AbortError"; throw error }))
     const failure = await Effect.runPromise(Effect.flip(api.listProjects()))

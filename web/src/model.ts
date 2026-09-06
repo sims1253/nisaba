@@ -7,8 +7,8 @@
  * implementation of those rules. A second, simpler copy in the browser would
  * drift from it and quietly disagree about what a reviewer sees.
  */
-export type ConstructKind = "strong" | "emphasis" | "heading" | "list" | "math" | "link" | "citation" | "figure" | "table" | "template" | "raw"
-export interface Construct { readonly from: number; readonly to: number; readonly kind: ConstructKind; readonly label?: string; readonly name?: string }
+export type ConstructKind = "strong" | "emphasis" | "heading" | "list" | "math" | "link" | "citation" | "figure" | "table"
+export interface Construct { readonly from: number; readonly to: number; readonly kind: ConstructKind; readonly label?: string }
 
 const syntaxPatterns: readonly [ConstructKind, RegExp][] = [
   // `*…*` is strong only at a word boundary: the opening `*` must be preceded
@@ -88,7 +88,7 @@ function findFunctionConstructs(source: string): Construct[] {
     if (end === -1) continue // unbalanced; ignore rather than guess
     const from = match.index ?? 0
     // Store the full source text so the rich widget can parse it for display.
-    constructs.push({ from, to: end, kind, name: kind, label: source.slice(from, end) })
+    constructs.push({ from, to: end, kind, label: source.slice(from, end) })
   }
   return constructs
 }

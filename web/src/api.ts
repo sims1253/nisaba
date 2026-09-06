@@ -15,7 +15,19 @@
 import { Data, Effect, Schema } from "effect"
 import { handleAuthFailure, readStoredAccessToken } from "./auth"
 
-export class ApiError extends Data.TaggedError("ApiError")<{ readonly message: string; readonly status?: number }> {}
+const Diagnostic = Schema.Struct({
+  severity: Schema.String,
+  message: Schema.String,
+  path: Schema.optional(Schema.NullOr(Schema.String)),
+  start: Schema.optional(Schema.NullOr(Schema.Number)),
+  end: Schema.optional(Schema.NullOr(Schema.Number))
+})
+
+export class ApiError extends Data.TaggedError("ApiError")<{
+  readonly message: string
+  readonly status?: number
+  readonly diagnostics?: readonly (typeof Diagnostic.Type)[]
+}> {}
 
 // ---------------------------------------------------------------------------
 // Wire schemas (snake_case, mirroring the Rust serde representation)
@@ -160,7 +172,7 @@ function request<T>(url: string, decode: Decode<T> | undefined, init: RequestIni
         const response = await fetch(url, { ...init, headers, signal: controller.signal })
         if (response.status === 401) handleAuthFailure()
         if (!response.ok) {
-          throw new ApiError({ message: await errorMessage(response), status: response.status })
+          throw await responseError(response)
         }
         if (decode === undefined || response.status === 204) return undefined as T
         return decode(await response.json())
@@ -185,10 +197,14 @@ function request<T>(url: string, decode: Decode<T> | undefined, init: RequestIni
  *
  * The app answers `{"error": {"code", "message"}}` for every failure.
  */
-const ErrorBody = Schema.Struct({ error: Schema.Struct({ code: Schema.String, message: Schema.String }) })
+const ErrorBody = Schema.Struct({ error: Schema.Struct({
+  code: Schema.String,
+  message: Schema.String,
+  diagnostics: Schema.optional(Schema.Array(Diagnostic))
+}) })
 
-async function errorMessage(response: Response): Promise<string> {
-  const fallback = `The API returned HTTP ${response.status}`
+async function responseError(response: Response): Promise<ApiError> {
+  const fallback = new ApiError({ message: `The API returned HTTP ${response.status}`, status: response.status })
   try {
     const body = await response.text()
     if (!body) return fallback
@@ -197,9 +213,9 @@ async function errorMessage(response: Response): Promise<string> {
     // permission to do that"; the client appends a hint so the status bar is
     // actionable (a role change is the usual fix).
     if (response.status === 403 && decoded.error.code === "forbidden") {
-      return "You don't have permission to do that (your role may not allow it)"
+      return new ApiError({ message: "You don't have permission to do that (your role may not allow it)", status: response.status })
     }
-    return decoded.error.message
+    return new ApiError({ message: decoded.error.message, status: response.status, diagnostics: decoded.error.diagnostics })
   } catch {
     return fallback
   }

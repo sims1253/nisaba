@@ -1,10 +1,7 @@
 //! Per-connection WebSocket session.
 //!
 //! One async task per connected peer. It runs a `select!` loop that concurrently
-//! reads inbound [`Frame`]s from the socket and drains the outbound channel the
-//! [`crate::room::DocRoom`] fans frames onto. axum 0.8's `WebSocket` has no
-//! `split()`, so a single task multiplexes both directions — there is no `.await`
-//! held across a room mutation (those are synchronous), so this never stalls.
+//! reads inbound [`Frame`]s and drains the room's outbound channel.
 //!
 //! The session enforces the protocol contract:
 //!
@@ -480,8 +477,13 @@ async fn refresh_access(
             .await;
             None
         }
-        Err(_) => {
-            let _ = send_error(socket, codes::FORBIDDEN, "project access was revoked").await;
+        Err(error) => {
+            let _ = send_error(
+                socket,
+                codes::FORBIDDEN,
+                &format!("project access could not be verified: {error}"),
+            )
+            .await;
             None
         }
     }
