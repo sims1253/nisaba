@@ -120,19 +120,7 @@ const compileChordKeymap = (chord: string) => Prec.highest(keymap.of([{ key: cho
 const syncCompileChord = (): void => {
   editor.dispatch({ effects: compileChordCompartment.reconfigure(compileChordKeymap(bindings.compile)) })
 }
-/** A fresh replica with a UNIQUE CRDT peer id. */
-function newReplica(): LoroDoc {
-  const doc = new LoroDoc()
-  // Distinct peer IDs prevent operations from different clients from colliding.
-  const buf = new Uint32Array(2)
-  crypto.getRandomValues(buf)
-  const hi = buf[0] ?? 0
-  const lo = buf[1] ?? 0
-  doc.setPeerId((BigInt(hi) << 32n) | BigInt(lo))
-  return doc
-}
-
-let activeLoro = newReplica()
+let activeLoro = new LoroDoc()
 
 // Use the same "text" container as the sync authority. The loro-codemirror
 // default is "codemirror", which would leave seeded and remote text invisible.
@@ -1355,7 +1343,7 @@ function openDocument(entry: NisabaDocument): void {
       renderWorkspaceState()
       // Show the saved body immediately. The replica stays empty until the relay
       // welcome imports existing state or establishes the first seed.
-      const replica = newReplica()
+      const replica = new LoroDoc()
       activeLoro = replica
       // Subscribe before connecting so the welcome snapshot also restores review items.
       subscribeReviewSync(replica)
