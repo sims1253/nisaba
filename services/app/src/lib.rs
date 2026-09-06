@@ -1805,11 +1805,6 @@ async fn export_project(
     let principal = p.0;
     permitted(&principal, Permission::Document)?;
     let project = project_for(&s, &pid).await?;
-    // The export archive is a full project snapshot: the generated master
-    // includes every document, so `entry` only selects which document the
-    // request was made from. Silently ignoring a bogus entry (previously any
-    // value returned 200) made the field a lie — reject unknown entries so
-    // clients get a 400 instead of a wrong-but-successful export.
     let document_paths: Vec<String> = s
         .repo
         .list_documents(project.id)
@@ -1858,23 +1853,9 @@ async fn export_project(
         sources.insert(doc.path.clone(), projected);
         doc_yaml.insert(doc.path.clone(), doc.yaml.clone());
     }
-    // The generated master lives at the project root and includes each
-    // document by its full project-relative path, so documents in nested
-    // directories resolve correctly (a bare basename like "ch2.typ" would only
-    // work for docs at the root). The user's own main.typ, if any, is skipped
-    // from the includes to avoid self-inclusion (its body is replaced by the
-    // generated master, which is the existing export contract).
-    let master_path = "main.typ".to_owned();
-    let master_source = docs
-        .iter()
-        .filter(|doc| doc.path != master_path)
-        .map(|doc| format!("#include \"{}\"", doc.path))
-        .collect::<Vec<_>>()
-        .join("\n");
-    sources.insert(master_path.clone(), master_source);
     let mut compile_request = CompileRequest {
         project_id: project.id,
-        entry: master_path,
+        entry: r.entry,
         sources,
         marks,
         view: r.view,

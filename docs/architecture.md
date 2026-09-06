@@ -225,14 +225,14 @@ while the stored body lags the CRDT (a document mid-edit — the web client's
 body save is debounced) instead of projecting marks over text they were never
 resolved against.
 
-Export layout: the archive contains the compiled PDF, the projected document
-sources (paths flattened with `/` → `_`), and per-document RIS bibliographies +
-full-text PDFs under `references-<n>/`. The generated master `main.typ`
-includes every document by its full project-relative path, so documents in
-subdirectories export and compile correctly. Exports require every cited
+Export compiles the selected entrypoint with the requested review projection.
+The entrypoint controls which other files contribute to the PDF through Typst
+imports and includes. The ZIP contains that PDF, all saved document sources
+under `documents/`, and per-document RIS bibliographies with full-text PDFs
+under `references-<n>/`. Saved sources keep their directory structure with sanitized filenames and
+are not replaced by the projected compile inputs. Exports require every cited
 reference to have an uploaded full-text PDF (409 otherwise). Owners, authors,
-and reviewers may export (reviewers need it to export review copies;
-read-only members may compile but not export).
+and reviewers may export; read-only members may compile but not export.
 
 ### 4.4 Health — `GET /healthz` (all HTTP services)
 

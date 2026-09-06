@@ -109,9 +109,9 @@ References added here can also fail to resolve when your source already has a
 hand-written bibliography ([#57](https://github.com/sims1253/nisaba/issues/57)).
 
 Open **Export**, choose a document, and click **Prepare download**. The archive
-contains a PDF, document sources, and RIS bibliographies with attachments.
-Check the downloaded PDF: export can replace `main.typ` content and include
-helper files as body text ([#64](https://github.com/sims1253/nisaba/issues/64)).
+contains a PDF built from the selected document, all project sources, and RIS
+bibliographies with attachments. Files appear in the PDF only when the selected
+document includes or imports them.
 
 ## History and settings
 

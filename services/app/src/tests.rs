@@ -618,8 +618,78 @@ async fn export_project_with(
 }
 
 #[tokio::test]
+async fn export_preserves_the_selected_entrypoint_and_sources() {
+    for documents in [
+        vec![("main.typ", "= The actual document")],
+        vec![("report.typ", "= A differently named document")],
+        vec![
+            (
+                "chapters/report.typ",
+                "#import \"../helper.typ\": title\n= #title",
+            ),
+            ("helper.typ", "#let title = \"Imported title\""),
+            ("main.typ", "= Another document"),
+            (
+                "unused.typ",
+                "This file must not be included automatically.",
+            ),
+        ],
+    ] {
+        let recorder = Arc::new(RecordingCompile(std::sync::Mutex::new(None)));
+        let app = router(
+            state()
+                .with_sync_state_client(Arc::new(StubSyncState {
+                    states: HashMap::new(),
+                }))
+                .with_exporters(recorder.clone(), Arc::new(NisabaReferencesExporter)),
+        );
+        let response = request(
+            app.clone(),
+            "POST",
+            "/projects",
+            "alice",
+            "author",
+            Some(json!({"name": "Export source graph"})),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let project: Project = response_body(response).await;
+        for (path, body) in &documents {
+            let response = request(
+                app.clone(),
+                "POST",
+                &format!("/projects/{}/documents", project.id),
+                "alice",
+                "author",
+                Some(json!({"path": path, "title": path, "body": body})),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+        let entry = documents[0].0;
+        let response = request(
+            app,
+            "POST",
+            &format!("/projects/{}/exports", project.id),
+            "alice",
+            "author",
+            Some(json!({"entry": entry, "view": "proposed"})),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+        assert_eq!(forwarded.entry, entry);
+        let expected = documents
+            .into_iter()
+            .map(|(path, body)| (path.to_owned(), body.to_owned()))
+            .collect();
+        assert_eq!(forwarded.sources, expected);
+    }
+}
+
+#[tokio::test]
 async fn export_projects_synced_review_marks() {
-    // main.typ has synced review state: an open insert suggestion over
+    // intro.typ has synced review state: an open insert suggestion over
     // "Hello" (0..5). notes.typ has none (never collaborated) — an empty
     // mark list is normal, its body projects unchanged.
     let (app, project, _main, _notes, recorder) = export_project_with(|main_id| {
@@ -645,15 +715,11 @@ async fn export_projects_synced_review_marks() {
     assert!(value["zip_base64"].as_str().is_some_and(|z| !z.is_empty()));
 
     // The compile request the export built: the insert-marked span is absent
-    // from the baseline view of main.typ, while the marks-less document is
+    // from the baseline view of intro.typ, while the marks-less document is
     // projected verbatim.
     let forwarded = recorder.0.lock().unwrap().clone().unwrap();
-    // The generated master replaces main.typ (the existing export contract);
-    // the real documents are the projected ones.
-    assert_eq!(
-        forwarded.sources["main.typ"],
-        "#include \"intro.typ\"\n#include \"notes.typ\""
-    );
+    assert_eq!(forwarded.entry, "intro.typ");
+    assert!(!forwarded.sources.contains_key("main.typ"));
     assert_eq!(forwarded.sources["intro.typ"], " world");
     assert_eq!(forwarded.sources["notes.typ"], "plain");
     // The decoded mark itself rode along on the request (path-keyed), with
