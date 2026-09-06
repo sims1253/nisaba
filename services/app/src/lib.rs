@@ -1473,38 +1473,50 @@ fn inject_redline_review(request: &mut CompileRequest) {
     if !matches!(request.view, CompileView::Redline) {
         return;
     }
-    // Check ALL sources for review markers, not just the entry. In a multi-file
-    // project the marks may live on an included file (e.g. chapters/intro.typ)
-    // while the entry only #includes it. The marker strings come from the
-    // redline style's defaults so they cannot drift from what projection emits.
-    let has_markers = request.sources.values().any(|src| {
-        [
-            RedlineStyle::DEFAULT_INSERT_OPEN,
-            RedlineStyle::DEFAULT_DELETE_OPEN,
-            RedlineStyle::DEFAULT_REPLACED_OPEN,
-            RedlineStyle::DEFAULT_REPLACED_CLOSE,
-        ]
-        .iter()
-        .any(|marker| src.contains(marker))
-    });
-    if !has_markers {
-        return;
-    }
-    let entry_dir = request.entry.rsplit_once('/').map_or("", |(dir, _)| dir);
-    let module_path = if entry_dir.is_empty() {
-        REVIEW_SUPPORT_PATH.to_owned()
-    } else {
-        format!("{entry_dir}/{REVIEW_SUPPORT_PATH}")
-    };
-    request
+    // Typst imports are file-local: every projected source needs its own import.
+    let marked_sources: Vec<_> = request
         .sources
-        .entry(module_path)
-        .or_insert_with(|| REVIEW_SUPPORT_SOURCE.to_owned());
-    if let Some(entry_source) = request.sources.get_mut(&request.entry)
-        && !entry_source.contains("#import \"review.typ\"")
-        && !entry_source.contains("#import 'review.typ'")
-    {
-        entry_source.insert_str(0, "#import \"review.typ\" as review\n\n");
+        .iter()
+        .filter(|(path, _)| {
+            *path == &request.entry
+                || path.ends_with(".typ")
+                || request
+                    .marks
+                    .get(*path)
+                    .is_some_and(|marks| !marks.is_empty())
+        })
+        .filter(|(_, source)| {
+            [
+                RedlineStyle::DEFAULT_INSERT_OPEN,
+                RedlineStyle::DEFAULT_DELETE_OPEN,
+                RedlineStyle::DEFAULT_REPLACED_OPEN,
+                RedlineStyle::DEFAULT_REPLACED_CLOSE,
+            ]
+            .iter()
+            .any(|marker| source.contains(marker))
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in marked_sources {
+        let directory = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let module_path = if directory.is_empty() {
+            REVIEW_SUPPORT_PATH.to_owned()
+        } else {
+            format!("{directory}/{REVIEW_SUPPORT_PATH}")
+        };
+        if path == module_path {
+            continue;
+        }
+        request
+            .sources
+            .entry(module_path)
+            .or_insert_with(|| REVIEW_SUPPORT_SOURCE.to_owned());
+        if let Some(source) = request.sources.get_mut(&path)
+            && !source.contains("#import \"review.typ\"")
+            && !source.contains("#import 'review.typ'")
+        {
+            source.insert_str(0, "#import \"review.typ\" as review\n\n");
+        }
     }
 }
 
@@ -1537,10 +1549,10 @@ async fn api_compile(
             Ok((path, markdown_headings_to_typst(&projected)))
         })
         .collect::<Result<_, AppError>>()?;
-    request.marks.clear();
     let yaml = references_bibliography_yaml(&state.repo.list_references(request.project_id).await?);
     inject_bibliography(&mut request, yaml);
     inject_redline_review(&mut request);
+    request.marks.clear();
     let project_id = request.project_id;
     let response = state.compile.compile(request).await?;
     audit(
@@ -1861,6 +1873,7 @@ async fn export_project(
         view: r.view,
     };
     inject_per_document_bibliography(&mut compile_request, &doc_yaml);
+    inject_redline_review(&mut compile_request);
     let compile = s.compile.compile(compile_request).await?;
     let pdf = decode_compile_pdf(&compile)?;
     let archive_documents = docs

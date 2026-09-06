@@ -149,27 +149,22 @@ function injectBibliography(request: { entry: string; sources: Record<string, st
   }
 }
 
-/** Port of the app's `inject_redline_review`: for the redline view only, when
- *  any source carries the projection's markers, adds the `review.typ` support
- *  module beside the entry and imports it from the entry. Markers are checked
- *  in ALL sources, not just the entry — in a multi-file project the marks may
- *  live on an included file while the entry only `#include`s it. */
-function injectRedlineReview(request: { entry: string; view: string; sources: Record<string, string> }): void {
+/** Import review support in each marked source; Typst imports are file-local. */
+function injectRedlineReview(
+  request: { entry: string; view: string; sources: Record<string, string> },
+  marks: WasmCompileJob["marks"]
+): void {
   if (request.view !== "redline") return
-  const hasMarkers = Object.values(request.sources).some((source) =>
-    REDLINE_MARKERS.some((marker) => source.includes(marker)))
-  if (!hasMarkers) return
-  const entryDir = directoryOf(request.entry)
-  const modulePath = entryDir === "" ? REVIEW_SUPPORT_PATH : `${entryDir}/${REVIEW_SUPPORT_PATH}`
-  if (request.sources[modulePath] !== undefined) return
-  request.sources[modulePath] = REVIEW_SUPPORT_SOURCE
-  const entrySource = request.sources[request.entry]
-  if (
-    entrySource !== undefined &&
-    !entrySource.includes('#import "review.typ"') &&
-    !entrySource.includes("#import 'review.typ'")
-  ) {
-    request.sources[request.entry] = `#import "review.typ" as review\n\n${entrySource}`
+  for (const [path, source] of Object.entries(request.sources)) {
+    if (path !== request.entry && !path.endsWith(".typ") && !marks[path]?.length) continue
+    if (!REDLINE_MARKERS.some((marker) => source.includes(marker))) continue
+    const directory = directoryOf(path)
+    const modulePath = directory === "" ? REVIEW_SUPPORT_PATH : `${directory}/${REVIEW_SUPPORT_PATH}`
+    if (path === modulePath) continue
+    request.sources[modulePath] ??= REVIEW_SUPPORT_SOURCE
+    if (!source.includes('#import "review.typ"') && !source.includes("#import 'review.typ'")) {
+      request.sources[path] = `#import "review.typ" as review\n\n${source}`
+    }
   }
 }
 
@@ -197,7 +192,7 @@ export function buildWasmBoundaryRequest(job: WasmCompileJob, deps: PipelineDeps
     request.sources[path] = markdownHeadingsToTypst(projected)
   }
   injectBibliography(request, deps.bibliographyYaml(JSON.stringify(job.references)))
-  injectRedlineReview(request)
+  injectRedlineReview(request, job.marks)
   return request
 }
 
