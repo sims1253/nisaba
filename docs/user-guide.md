@@ -129,7 +129,7 @@ local preference for a project; a more recent file in the current tab takes prec
 | Disconnected, save conflict, or sign-in failure | Keep the tab open and copy unsaved text before reloading or signing in again. Compare it with the saved version before reapplying edits. |
 | Permission denied or sync error 4003 | Ask the owner to check membership and your administrator to check sign-in access. Token expiry can also cause 4003 ([#61](https://github.com/sims1253/nisaba/issues/61)). |
 | Preview or export fails to compile | Read the Problems panel. Check the named file manually: clicking an error can use the wrong file ([#65](https://github.com/sims1253/nisaba/issues/65)). |
-| Export reports unsaved collaborative changes | Preserve your text and ask an administrator to investigate [#59](https://github.com/sims1253/nisaba/issues/59). This can happen even after opening a file without editing it. |
+| Export reports unsaved collaborative changes | Wait for saving to finish, then retry. If it persists, preserve your text and ask an administrator to investigate. |
 
 For a bug report, include the error message and the steps that led to it.
 The [issue tracker](https://github.com/sims1253/nisaba/issues) lists known problems.

@@ -146,26 +146,12 @@ impl DocRegistry {
             .map(|entry| Arc::clone(entry.value()))
     }
 
-    /// The document's whole current state as an opaque Loro snapshot, for the
-    /// internal read API (`GET /internal/docs/{doc_id}/state`).
-    ///
-    /// Resolution order:
-    ///
-    /// 1. a **live room** — its authority holds every applied update, including
-    ///    any not yet snapshotted to the store;
-    /// 2. otherwise the **persisted stores** (latest snapshot + op-log replay),
-    ///    hydrated into a throwaway authority *without registering a room*, so
-    ///    an internal read never pins an op-log handle or grows the room map;
-    /// 3. `Ok(None)` when the document has no state anywhere (no live room, no
-    ///    snapshot, empty op log) — the HTTP layer answers 204, keeping 404
-    ///    reserved for a routing miss so the caller can tell the two apart.
-    ///
-    /// The bytes are exported without interpretation: this is the same opaque
-    /// whole-state export a joining peer receives, surfaced on an authenticated
-    /// service-to-service path instead of the public WebSocket relay.
+    /// Read current state from a live room, or hydrate the persisted state
+    /// without registering a room. Returns `None` if no edits have arrived,
+    /// including when an unseeded room or empty snapshot exists.
     pub async fn export_state(&self, doc_id: &DocId) -> SyncResult<Option<Vec<u8>>> {
         if let Some(room) = self.room(doc_id) {
-            return room.export_state().map(Some);
+            return room.export_state();
         }
         // No live room: hydrate from the persisted stores. A snapshot is the
         // cheap path; a document that only ever received updates below the
@@ -176,7 +162,7 @@ impl DocRegistry {
             None => AuthorityDoc::new(),
         };
         replay_op_log(&*self.op_log, doc_id, &authority).await?;
-        authority.export_snapshot().map(Some)
+        authority.export_state()
     }
 
     /// Evict every room that is currently empty (no live sessions) and idle

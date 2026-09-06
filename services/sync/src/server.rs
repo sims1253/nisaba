@@ -534,6 +534,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn internal_state_distinguishes_unseeded_rooms_from_empty_documents() {
+        let op_log = Arc::new(MemoryOpLogStore::default());
+        let snapshots = Arc::new(MemorySnapshotStore::default());
+        let make_registry = || {
+            DocRegistry::new(
+                Arc::clone(&op_log) as Arc<dyn OpLogStore>,
+                Arc::clone(&snapshots) as Arc<dyn SnapshotStore>,
+                Arc::new(Config::default()),
+                Arc::new(SystemClock),
+                Arc::new(StaticAccessResolver::new()),
+            )
+        };
+        let registry = make_registry();
+        for name in ["unseeded", "deleted", "review_only"] {
+            let room = registry
+                .get_or_open(&DocId::new(name).unwrap())
+                .await
+                .unwrap();
+            let peer = loro::LoroDoc::new();
+            peer.set_peer_id(7).unwrap();
+            if name == "deleted" {
+                peer.get_text("text").insert(0, "removed").unwrap();
+                peer.commit();
+                peer.get_text("text").delete(0, 7).unwrap();
+            } else if name == "review_only" {
+                peer.get_map("review").insert("comment", "keep me").unwrap();
+            }
+            peer.commit();
+            room.handle_update(
+                crate::config::PeerId(7),
+                Role::Author,
+                &peer.export(loro::ExportMode::Snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+            room.snapshot_now().await.unwrap();
+        }
+
+        // Read each state both from a live room and after rehydrating its stores.
+        for registry in [registry, make_registry()] {
+            let router = build_with_readiness(
+                registry,
+                Arc::new(Config::default()),
+                Readiness::default(),
+                InternalAuth::from_token("machine-secret"),
+            );
+            for name in ["unseeded", "deleted", "review_only"] {
+                let response = get(
+                    &router,
+                    &format!("/internal/docs/{name}/state"),
+                    Some("machine-secret"),
+                )
+                .await;
+                if name == "unseeded" {
+                    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+                } else {
+                    assert_eq!(response.status(), StatusCode::OK);
+                    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                        .await
+                        .unwrap();
+                    let doc = loro::LoroDoc::new();
+                    doc.import(&bytes).unwrap();
+                    assert_eq!(doc.get_text("text").to_string(), "");
+                    assert!(!doc.oplog_vv().is_empty());
+                    if name == "review_only" {
+                        assert!(doc.get_map("review").get("comment").is_some());
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn internal_state_is_deny_all_without_a_configured_token() {
         let router = build_with_readiness(
             memory_registry(),
