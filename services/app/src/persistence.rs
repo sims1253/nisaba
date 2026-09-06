@@ -897,10 +897,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires PostgreSQL and TEST_DATABASE_URL"]
     async fn postgres_round_trip_when_database_is_configured() {
-        let Some(url) = std::env::var_os("TEST_DATABASE_URL") else {
-            return;
-        };
+        let url = std::env::var_os("TEST_DATABASE_URL").expect("set TEST_DATABASE_URL");
         let repo = PostgresRepository::connect(&url.to_string_lossy())
             .await
             .expect("TEST_DATABASE_URL must point at a migrated PostgreSQL database");
