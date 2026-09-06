@@ -1,36 +1,18 @@
 # `nisaba-sync`
 
-The sync service for Nisaba: a Loro 1.13.x CRDT **authority and relay** keyed by
-document id, with presence/awareness, an append-only op log, periodic snapshots,
-and a pluggable snapshot store. It implements the collaborative-editing core of
-the product.
+Loro CRDT authority and WebSocket relay, with ephemeral presence and durable
+update logs and snapshots. Rooms are keyed by document ID.
 
-## Capabilities
-
-- **WebSocket authority/relay** keyed by document id (`GET /sync/{doc_id}`).
-- **Binary CRDT import/export** — opaque Loro update bytes; the relay never
-  inspects or re-serialises CRDT state.
-- **Internal whole-state read** (`GET /internal/docs/{doc_id}/state`,
-  service-token only): a document's current state as an opaque snapshot, for
-  the app service's export path. Serving whole-state bytes is *not* the relay
-  path — see [Design invariants](#design-invariants) for where the opacity
-  line now sits.
-- **Reconnect catch-up** via version vectors (`ExportMode::Updates { from }`),
-  with a full-snapshot fallback for fresh peers or unrecoverable gaps.
-- **Presence/awareness** with heartbeat expiry (injectable clock; TTL sweeper).
-- **Role-aware access seam** — `author` / `reviewer` / `read-only`, resolved
-  through a pluggable `AccessResolver`. Read-only peers cannot push updates.
-- **Append-only op log** (`OpLogStore`) and **pluggable snapshot store**
-  (`SnapshotStore`), each with filesystem, S3, and in-memory implementations.
-  A room hydrates from the latest snapshot + op-log replay. The S3 stores are
-  the production durability plane (see
-  [Durable stores](#durable-stores-s3-key-layout)).
-- **Periodic snapshots** — event-driven (every N updates) plus a time-based
-  maintenance floor.
-- **Health endpoints** — `GET /health`, `GET /healthz` (k8s liveness alias),
-  `GET /health/ready`.
-- **Limits/security** — document-id validation (path-traversal-safe for the FS
-  stores), update-size cap, per-document peer cap, presence-size cap.
+- `GET /sync/{doc_id}` connects a peer using the
+  [binary protocol](../../fixtures/sync/PROTOCOL.md). Reconnecting peers catch
+  up by version vector, with a full-snapshot fallback.
+- `GET /internal/docs/{doc_id}/state` supplies a snapshot for app exports and
+  requires the shared service token.
+- Filesystem and S3 backends persist updates and periodic snapshots. In-memory
+  stores support tests.
+- The service checks roles, reviewer updates, document IDs, payload sizes,
+  peer counts, and frame rates.
+- Health endpoints are `/health`, `/healthz`, and `/health/ready`.
 
 ## Layout
 
@@ -97,41 +79,26 @@ listed in [Authentication & authorization](#authentication--authorization).
 
 ## Authentication & authorization
 
-Every WebSocket `HELLO` carries a document id and a bearer token. Sync resolves
-the peer's role through a single `AccessResolver`, but the production resolver
-(`OidcAccessResolver`) applies **two independent checks** so that a globally
-valid token can never open an arbitrary document:
+Each `HELLO` contains a document ID and bearer token. The production
+`OidcAccessResolver` validates the JWT, then asks the app service to authorize
+the subject for that document. Mutating frames recheck access.
 
-1. **JWT validation** (`JwtValidator`). Header `kid` → JWKS key lookup → the
-   token algorithm must be in the allow-list **and** equal the matched JWK's
-   configured algorithm (defeats RS↔HMAC confusion) → `iss`, `aud`, `exp` are
-   verified → the `sub` claim must be present **and non-empty** (it keys the
-   per-document authorization below; an empty subject is rejected as
-   unauthenticated). Only the explicit roles claim is read (default
-   `realm_access.roles`, the Keycloak mapping); **scopes are never interpreted
-   as roles**.
-2. **Document authorization** (`DocumentAuthorizer`). Even after a valid JWT,
-   the `(subject, document)` pair must be affirmatively allowed. The HTTP
-   verifier (`HttpDocumentAuthorizer`) asks the `app` service; if no verifier is
-   wired, `DenyAllAuthorizer` denies every document.
+JWT validation checks the signing key, allowed algorithm, issuer, audience,
+expiry, and non-empty subject. The algorithm must match the key. Roles come
+from the configured roles claim, never from scopes. Missing or stale keys,
+invalid claims, and authorization errors deny access. A failed JWKS refresh
+retains previous keys until their maximum age.
 
-### Fail-closed guarantees
+### Startup modes
 
-- Missing/empty/stale JWKS → deny (never an empty allow; no "try all keys").
-- Any signature / claim / transport / timeout error → deny.
-- No document authorizer wired → deny every document.
-- JWKS refresh failure retains the previous keys (rotation overlap) but the
-  `max_age` guard eventually fails closed once they go stale.
-- Partial OIDC configuration (some-but-not-all of the three required vars) is a
-  **fatal** startup error, not a silent deny-all.
-
-### Modes (selected at startup, see `main.rs`)
-
-| Mode | Trigger | Behaviour |
+| Mode | Trigger | Behavior |
 |------|---------|----------|
-| **Deny-all** (default) | nothing configured | every token denied |
-| **Dev allow-all** | `NISABA_SYNC_DEV_ALLOW_ALL` set | any non-empty token → `author`. **Never in production.** |
-| **OIDC production** | `ISSUER`+`AUDIENCE`+`JWKS_URL` all set | JWT/JWKS validation + per-document verifier |
+| Deny-all | No authentication configuration | Denies every token |
+| Development | `NISABA_SYNC_DEV_ALLOW_ALL` set | Grants author to any non-empty token; local development only |
+| OIDC | Issuer, audience, and JWKS URL all set | Validates JWT and document access |
+
+Partial OIDC configuration is a startup error. Without a document authorizer,
+OIDC mode denies access to every document.
 
 ### Configuration
 
@@ -155,9 +122,8 @@ valid token can never open an arbitrary document:
 
 ### Document-authorization wire contract (the `app` side)
 
-`HttpDocumentAuthorizer` issues exactly one request per authorized `HELLO`; the
-`app` service must implement the server side. **Any** non-2xx status,
-unparseable body, unknown role, transport error, or timeout is a **denial**.
+`HttpDocumentAuthorizer` calls the app service during authorization. A non-2xx
+status, invalid body, unknown role, transport error, or timeout denies access.
 
 ```text
 POST <NISABA_SYNC_AUTHZ_URL>
@@ -171,7 +137,7 @@ Content-Type: application/json
 
 The role strings mirror the `app` service mapping. The service token
 is a machine credential injected into the `sync` and `app` containers only; it
-is **not** the end-user's access token (sync validates that separately in stage 1).
+is separate from the end-user access token that sync validates.
 
 ### Internal state read API (the `app` → `sync` direction)
 
@@ -190,26 +156,16 @@ Authorization: Bearer <NISABA_SYNC_AUTHZ_TOKEN>
 → 500                            // store or export failure
 ```
 
-The no-state answer is **204, not 404**: an unmatched route (version skew
-against an older sync without `/internal/docs`, a misconfigured base URL in
-the app) also answers 404, and the caller must distinguish "genuinely no
-state — empty marks" from "wrong door — fail loudly".
+A 204 means the document has no synced state. A 404 is an error: it may mean
+the caller reached an incorrect route or an incompatible service version.
 
-- The credential is the SAME shared token as the authz hop above
-  (`NISABA_SYNC_AUTHZ_TOKEN`); it is stored as a SHA-256 digest and compared in
-  constant time, mirroring how the app checks it on its own `/internal/*`
-  endpoints. Unset/empty → **deny-all** (fail-closed; the app's export then
-  fails with a dependency error rather than reading unauthenticated state).
-- The bytes are served **without interpretation**: no container is read, no
-  entry decoded, nothing re-serialised — the authority is exported exactly as a
-  joining peer would receive it.
-- A live room answers from its in-memory authority (including unsnapshotted
-  updates); with no live room the state is hydrated from the latest snapshot +
-  op-log replay into a throwaway authority, without registering a room.
-- The path is **never proxied by the web nginx** (only `/api/` and `/sync/`
-  are forwarded), so it is reachable only inside the service network.
-- The caller interprets the bytes (the app service decodes the `review`
-  container for export marks); this service does not.
+The endpoint compares a SHA-256 digest of the shared token in constant time;
+an unset or empty token denies access. Live rooms export their current state.
+Otherwise, the service reconstructs state from snapshots and the update log
+without registering a room. The app interprets review records from the snapshot.
+
+The web nginx does not proxy `/internal/`. The sync service also has a
+loopback-only published port in the development Compose stack.
 
 ## Durable stores (S3 key layout)
 
@@ -246,29 +202,15 @@ order equals numeric order and readers replay by listing alone. Document ids
 are validated to `[A-Za-z0-9._-]` (no `/`), so one document's prefix can never
 collide with another's namespace.
 
-### Append protocol (no read-modify-write, no gaps)
+### Append protocol
 
-S3 objects are immutable; the store never mutates or rewrites an existing
-part. Every append allocates the **next** part number and `PutObject`s a fresh
-key exactly once:
+Each append uses the next numbered object key. A per-document mutex covers
+allocation, PUT, and counter advancement; it survives room eviction. The
+counter starts at `max(existing) + 1` and advances only after PUT succeeds.
+Readers replay a contiguous prefix and warn and stop if they find a gap.
 
-1. the per-document counter is seeded from a listing (`max(existing) + 1`),
-   so it survives restarts;
-2. allocate → PUT → increment happens while holding a per-document async
-   mutex, so two appends can never be handed the same part number (the lock
-   identity survives room eviction/`close`: a room can be evicted while an
-   append is still in flight, and a fresh mutex would let the next append
-   reuse the in-flight part number);
-3. the counter increments **only after** the PUT succeeds — a failed or
-   crashed PUT never created its object, and the next append reuses the same
-   part number.
-
-Because PUTs are atomic and part numbers are consumed only on success, the
-parts present for a document are always the contiguous prefix `0..=n`;
-readers verify contiguity and replay **only the contiguous prefix**, warning
-and truncating if a gap ever appears (bucket tampering, or the unsupported
-split-brain case of two sync processes sharing one bucket — the store assumes
-a single writer, as does the filesystem store across hosts).
+The store assumes a single writer. Do not run two sync processes against the
+same bucket or filesystem directory.
 
 ### Snapshot latest resolution
 
@@ -290,17 +232,13 @@ one round-trip) instead of the filesystem backend's data-dir-writable check,
 so orchestration never routes traffic to a sync that cannot persist. See
 `StorageProbe` in `src/server.rs`.
 
-## Design invariants
+## Update and retention rules
 
-- **Opacity is about the relay path** — the WebSocket relay transports opaque
-  bytes: sync never inspects, filters, or re-serialises Loro state on behalf of
-  a *peer*. In particular, review-layer soft deletes (marks over CRDT
-  positions, review semantics) pass through untouched: **no physical deletion
-  assumptions**. The internal read API serves whole-state snapshots **without
-  interpretation** (no container is read, nothing re-encoded) — bytes in,
-  the same state out — and interpretation is left to the authenticated caller.
-- **Presence is ephemeral** — never written to the op log or snapshots; it
-  expires without a heartbeat.
-- **Append-only** — the op log exposes no mutation other than `append`.
-- **No eviction engineered yet** — the op log is not compacted after
-  a snapshot; replay re-imports already-applied ops, which is a no-op in Loro.
+Accepted updates are relayed as their original bytes. The authority imports
+updates and inspects reviewer changes before accepting them; see the
+[protocol](../../fixtures/sync/PROTOCOL.md#update-handling) and
+[security model](../../docs/security.md).
+
+Presence expires without a heartbeat and is never persisted. The update log is
+append-only and is not compacted after snapshots. Replaying already-applied
+updates is a no-op in Loro.

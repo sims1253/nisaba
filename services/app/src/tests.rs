@@ -1124,3 +1124,50 @@ fn openapi_describes_all_public_routes() {
         assert!(text.contains(path), "openapi must document {path}");
     }
 }
+
+#[test]
+fn redline_imports_existing_review_module() {
+    for directory in ["", "chapters/"] {
+        let entry = format!("{directory}main.typ");
+        let module = format!("{directory}review.typ");
+        let custom_module = "#let add(body) = text(fill: green, body)";
+        let mut request = CompileRequest {
+            project_id: Uuid::new_v4(),
+            entry: entry.clone(),
+            sources: BTreeMap::from([
+                (entry.clone(), "#review.add[Hello]".into()),
+                (module.clone(), custom_module.into()),
+            ]),
+            marks: BTreeMap::new(),
+            view: CompileView::Redline,
+        };
+        inject_redline_review(&mut request);
+        assert!(request.sources[&entry].starts_with("#import \"review.typ\" as review\n"));
+        assert_eq!(request.sources[&module], custom_module);
+        let sources = request.sources.clone();
+        inject_redline_review(&mut request);
+        assert_eq!(request.sources, sources);
+    }
+}
+
+#[tokio::test]
+async fn export_compile_failure_retains_diagnostics() {
+    let diagnostics = vec![json!({
+        "message": "label missing does not exist",
+        "path": "/main.typ",
+        "severity": "error"
+    })];
+    let compile = CompileResponse {
+        pdf_base64: None,
+        span_map: vec![],
+        diagnostics: diagnostics.clone(),
+        outline: vec![],
+        build_id: "failed-build".into(),
+    };
+    let response = decode_compile_pdf(&compile).unwrap_err().into_response();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: Value = response_body(response).await;
+    assert_eq!(body["error"]["code"], "conflict");
+    assert_eq!(body["error"]["message"], "compile produced no PDF");
+    assert_eq!(body["error"]["diagnostics"], json!(diagnostics));
+}

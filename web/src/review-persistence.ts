@@ -83,20 +83,17 @@ function readPerItemEntries(map: LoroMap): ReviewItem[] {
 }
 
 /**
- * Writes review items into a replica's review map: one map key per item id
- * (JSON payload). The write MERGES with what is already persisted (union by
- * id, local wins) — see the module comment for why items are never dropped
- * here.
+ * Writes the supplied items by id. Other map entries are left untouched, so
+ * a session can save its items before receiving a peer's items.
  *
  * map.set() is a no-op when the value is unchanged (Loro dedups them), so
  * calling this after every review mutation is cheap. Returns true when
  * anything was written; the caller decides whether to commit.
  */
 export function writeReviewItemsToMap(doc: LoroDoc, items: readonly ReviewItem[]): boolean {
-  const merged = mergeReviewItems(readReviewItemsFromMap(doc), items)
   let changed = false
   const map = doc.getMap(REVIEW_CONTAINER)
-  for (const item of merged) {
+  for (const item of items) {
     const json = JSON.stringify(item)
     if (map.get(item.id) !== json) {
       map.set(item.id, json)

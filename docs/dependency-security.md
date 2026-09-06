@@ -1,4 +1,4 @@
-# Dependency Security Exceptions
+# Dependency security exceptions
 
 `cargo audit` and `cargo deny` are blocking checks, but the locked graph currently contains
 advisories that cannot be upgraded independently of the Typst/Tinymist, Hayagriva, or AWS SDK
@@ -17,3 +17,12 @@ is upgraded, and at least before each release.
 
 Exceptions do not make the current compiler suitable for hostile multi-tenant use. Supervised
 worker-process isolation and hard resource limits remain release blockers.
+
+## Dependency updates
+
+The project uses Effect 4, including its beta releases. Keep `effect` and
+`@effect/*` versions in sync across both TypeScript workspaces.
+[Renovate](../.github/renovate.json) groups those updates and retains exact pins.
+
+Check editor collaboration when upgrading `loro-crdt` or `loro-codemirror`;
+the web client depends on their shared CRDT behavior.

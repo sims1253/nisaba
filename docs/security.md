@@ -254,15 +254,8 @@ as a hardening task; not MVP-blocking.
 
 ---
 
-## 8. CI gating (what blocks a merge)
+## 8. CI checks
 
-See `.github/workflows/`. The intended gates:
-
-- `rust`: `cargo fmt --check`, `cargo clippy --workspace`, `cargo test --workspace`,
-  `cargo deny check`.
-- `web`: build + test + lint (once the web workspace provides lint configs).
-- `security`: `cargo audit` on schedule and on PRs.
-- `tools`: `tools/verify.sh` when present.
-
-These are real gates for Rust today; the web/tools gates are tolerant until the
-respective streams land their artifacts.
+[GitHub Actions](../.github/workflows/) runs Rust formatting, lint, tests, and
+dependency checks; web lint, tests, and build; and tools lint, type checks, and
+tests. See [testing](testing.md) for coverage and local commands.

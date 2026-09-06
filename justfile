@@ -1,12 +1,4 @@
-# =============================================================================
-# Nisaba — developer task runner (https://github.com/casey/just)
-# =============================================================================
-# `just` with no argument lists all recipes. Recipes that touch files owned by
-# sibling implementation streams (tools/verify.sh, web build) are tolerant: they
-# run the real check when the prerequisite exists and skip cleanly otherwise.
-# =============================================================================
-
-# Project root (where this justfile lives).
+# Developer commands. Run `just` to list recipes.
 export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "target")
 
 # Load .env (same file compose interpolates) so recipes like psql, s3, and
@@ -92,15 +84,10 @@ psql:
 psql-admin:
     docker compose exec postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"
 
-# Run migrations via sqlx-cli against the embedded migrations/ directory
-# (the app stream owns it; sqlx-cli must be installed separately).
+# Run migrations with sqlx-cli (installed separately).
 migrate dir='migrations':
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -d "{{dir}}" ]; then
-        echo "[migrate] no '{{dir}}' directory yet (owned by the app stream); nothing to do."
-        exit 0
-    fi
     if command -v sqlx >/dev/null 2>&1; then
         # DATABASE_URL is synthesised from the NISABA_DB_* parts (the single
         # source compose also uses) against the host-published port — .env
@@ -254,10 +241,11 @@ e2e-up:
 e2e-test:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd web && bunx playwright install chromium --with-deps 2>/dev/null || true
+    cd web
+    bunx playwright install chromium --with-deps
     bunx playwright test --config e2e/
 
-# Full e2e lifecycle: start stack, run tests, tear down.
+# Start the stack and run browser tests. Use `just down` to stop it.
 e2e-suite: e2e-up
     #!/usr/bin/env bash
     set -euo pipefail
@@ -269,19 +257,10 @@ e2e-suite: e2e-up
     done
     just e2e-test
 
-# ---------- Tools (tolerant) -----------------------------------------------
+# ---------- Tools ----------------------------------------------------------
 
-# Run the tools verification suite (owned by the tools stream).
 verify:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -x ./tools/verify.sh ]; then
-        ./tools/verify.sh
-    elif [ -f ./tools/verify.sh ]; then
-        bash ./tools/verify.sh
-    else
-        echo "[verify] tools/verify.sh not found; nothing to do."
-    fi
+    ./tools/verify.sh
 
 # ---------- Images ---------------------------------------------------------
 

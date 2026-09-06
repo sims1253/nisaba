@@ -24,7 +24,7 @@ test harness, or a third-party peer) must speak. The implementation of record is
 | 2   | `WELCOME`   | srv→client   | `[u8 status][str note][u8 catchup_tag][catchup bytes?]`                                 |
 | 3   | `UPDATE`    | both         | `[bytes]` — opaque Loro CRDT update                                                      |
 | 4   | `SNAPSHOT`  | srv→client   | `[bytes]` — opaque Loro snapshot                                                         |
-| 5   | `PRESENCE`  | both         | client: `[bytes state]`; server: roster `[u32 count]([u64 peer][u32 len][bytes state])*`|
+| 5   | `PRESENCE`  | both         | client: `[bytes state]`; server: `[bytes roster]`|
 | 6   | `HEARTBEAT` | both         | *(empty)*                                                                                |
 | 7   | `ERROR`     | srv→client   | `[u16 code][str msg]`                                                                    |
 | 8   | `BYE`       | client→srv   | *(empty)*                                                                                |
@@ -34,14 +34,19 @@ test harness, or a third-party peer) must speak. The implementation of record is
 - `last_vv` (HELLO): the peer's last version vector, encoded with
   `loro::VersionVector::encode`. An empty `last_vv` requests a full snapshot.
 
+The server roster is `[u32 count]([u64 peer][bytes state])*`, enclosed in
+the frame's outer `[u32 length][roster bytes]` field. An empty server roster
+is therefore `[u8 5][u32 4][u32 0]`.
+
 ## Application error codes
 
 | Code | Meaning                                   |
 |-----:|-------------------------------------------|
 | 4000 | protocol error (bad frame / wrong order / undecodable CRDT update)  |
 | 4001 | bad document id / peer id                 |
-| 4003 | forbidden (role lacks the capability, or a reviewer update violates the review policy) |
-| 4029 | limit exceeded (peer cap)                 |
+| 4003 | access denied (invalid/expired token, changed access, missing capability, or review-policy violation) |
+| 4029 | limit exceeded (peer cap or frame rate)    |
+| 4091 | resync required after server eviction     |
 | 4130 | payload too large                         |
 | 4500 | internal error                            |
 
@@ -60,15 +65,17 @@ test harness, or a third-party peer) must speak. The implementation of record is
    peer. Presence is carried out-of-band via `PRESENCE` / `HEARTBEAT`.
 5. Reconnect: a peer that kept its replica sends `HELLO` with its retained
    `last_vv`; the server replies with the incremental delta.
-6. Graceful leave: send `BYE`; otherwise presence expires after the TTL.
+6. Graceful leave: send `BYE`. A slow peer or one whose presence expires is
+   evicted. The server sends an `ERROR` frame with code 4091, then closes the
+   WebSocket with code 4091. Reconnect with the retained version vector to
+   catch up before sending more updates.
 
-## Design invariants
+## Update handling
 
-- **Opaque transport.** `UPDATE` / `SNAPSHOT` payloads are never inspected or
-  re-serialised by the relay. Review-layer "soft deletes" (marks over CRDT
-  positions) pass through untouched — there are **no physical deletion
-  assumptions** in the sync path.
-- **Presence is ephemeral.** It is never written to the op log or snapshots;
-  entries expire without a heartbeat.
-- **Roles are enforced at the transport.** Only `author` and `reviewer` may send
-  `UPDATE`; `read-only` receives state and presence but cannot mutate.
+Accepted updates are relayed as their original bytes. The authority imports
+updates and inspects reviewer changes to enforce the review policy: a text
+change must have a corresponding review record. This check is not a complete
+validation of review semantics; see [security](../../docs/security.md).
+Read-only peers cannot send updates.
+
+Presence is ephemeral. The service does not store it in the op log or snapshots.

@@ -34,7 +34,7 @@ use base64::Engine as _;
 use chrono::Utc;
 use nisaba_core::prelude::RedlineStyle;
 use nisaba_core::{Document as CoreDocument, View as CoreView};
-use nisaba_export::{PdfCompliance, ProjectArchiveInput, build_project_archive, write_zip};
+use nisaba_export::{ProjectArchiveInput, build_project_archive, write_zip};
 use nisaba_references::{
     Bibliography, Citation, FullText as CoreFullText, IssuedDate, Metadata as CoreMetadata, Person,
     ReferenceEntry as CoreReferenceEntry, ReferenceId, bibliography_yaml, extract_citations,
@@ -1496,12 +1496,10 @@ fn inject_redline_review(request: &mut CompileRequest) {
     } else {
         format!("{entry_dir}/{REVIEW_SUPPORT_PATH}")
     };
-    if request.sources.contains_key(&module_path) {
-        return;
-    }
     request
         .sources
-        .insert(module_path, REVIEW_SUPPORT_SOURCE.to_owned());
+        .entry(module_path)
+        .or_insert_with(|| REVIEW_SUPPORT_SOURCE.to_owned());
     if let Some(entry_source) = request.sources.get_mut(&request.entry)
         && !entry_source.contains("#import \"review.typ\"")
         && !entry_source.contains("#import 'review.typ'")
@@ -1761,7 +1759,7 @@ fn decode_compile_pdf(compile: &CompileResponse) -> Result<Vec<u8>, AppError> {
     let b64 = compile
         .pdf_base64
         .as_ref()
-        .ok_or_else(|| AppError::Conflict("compile produced no PDF".into()))?;
+        .ok_or_else(|| AppError::CompileFailed(compile.diagnostics.clone()))?;
     base64::engine::general_purpose::STANDARD
         .decode(b64)
         .map_err(|error| AppError::Conflict(format!("compile PDF was not base64: {error}")))
@@ -1900,7 +1898,7 @@ async fn export_project(
         documents: archive_documents,
         bibliographies,
     };
-    let export = build_project_archive(&archive_input, &pdf_compliance())
+    let export = build_project_archive(&archive_input)
         .map_err(|error| AppError::Conflict(format!("export blocked: {error}")))?;
     let zip =
         write_zip(&export).map_err(|error| AppError::Conflict(format!("zip failed: {error}")))?;
@@ -1924,17 +1922,6 @@ async fn export_project(
         zip_base64: Some(base64::engine::general_purpose::STANDARD.encode(zip)),
         zip_filename: Some(zip_filename),
     }))
-}
-
-fn pdf_compliance() -> PdfCompliance {
-    PdfCompliance {
-        no_watermark: true,
-        not_protected: true,
-        commentable: true,
-        text_extractable: true,
-        indexes_rendered: true,
-        links_live: true,
-    }
 }
 
 // --- Share link handlers ---

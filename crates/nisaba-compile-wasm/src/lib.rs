@@ -1,75 +1,19 @@
-//! # nisaba-compile-wasm
+//! WebAssembly wrapper around [`nisaba_compile_core`] for browser compilation.
 //!
-//! WebAssembly compile wrapper for the Nisaba web client (issue #20, stage
-//! 2b).
+//! Requests and responses use the compile service's JSON shapes. The browser
+//! loads this module lazily in a Web Worker; `web/src/wasm-compile` owns loading,
+//! timeouts, and server fallback.
 //!
-//! This crate drives the pure compilation core in [`nisaba_compile_core`]
-//! exactly the way the `compile` service does, minus the HTTP plane: no axum
-//! router, bearer auth, body limits, concurrency semaphore, per-compile
-//! timeouts, or `/proc/self/status` RSS reader. The browser gets the same
-//! `Worker::new` → `update_sources` → `compile` pipeline, the same span map,
-//! outline, and diagnostics shaping, and — because the core pins the PDF
-//! timestamp — the same bytes the server produces.
+//! [`CompileWorker`] keeps one project's incremental compiler state alive.
+//! [`CompileWorkers`] caches workers across projects with LRU/TTL eviction.
+//! Both use the core's request limits and embedded Typst fonts. Embedded fonts
+//! account for much of the module's size. Process RSS is unavailable in browsers.
 //!
-//! ## Boundary design
-//!
-//! Like `nisaba-core-wasm` (the stage 1 projection wrapper), each feature is
-//! a pair: a plain-Rust half whose errors are `Result<_, String>` (fully
-//! exercisable by the native test suite) and a `#[wasm_bindgen]` half whose
-//! errors surface as JS `Error` objects (constructing a [`JsError`] calls a
-//! JS import, which panics on non-wasm targets, so those halves run under
-//! wasm-bindgen-test only).
-//!
-//! The boundary is strings in, strings out: requests are the compile
-//! service's HTTP body verbatim (`{"project_id", "entry", "sources",
-//! "view"}` — the DTO lives in the core, shared by both hosts), and compile
-//! results are the service's HTTP response verbatim (`pdf` base64, span map,
-//! diagnostics, outline, `build_id`, `instrumentation`; serialized from the
-//! core's `CompileResponse`). Stage 2c can therefore pass the objects the
-//! client already builds for `POST /api/compile` straight through.
-//!
-//! Two shapes are exported, mirroring how the service holds workers:
-//!
-//! - [`CompileWorker`] (JS: created by [`new_compile_worker`]) is one
-//!   long-lived project worker — the browser-tab equivalent of a cache hit on
-//!   the server. Keep it alive across keystrokes; the warm `comemo` caches
-//!   die with it.
-//! - [`CompileWorkers`] (JS: created by [`new_compile_workers`]) is the
-//!   per-project worker cache with the service's LRU/TTL eviction
-//!   ([`WorkerEntry`], `evict_idle`/`evict_lru` from the core), sized by the
-//!   host. One per Web Worker is enough for a browser tab.
-//!
-//! Requests are validated with the core's canonical limits
-//! ([`DEFAULT_MAX_SOURCES`] / [`DEFAULT_MAX_SOURCE_BYTES`]); the server's
-//! HTTP-only body limit has no analogue here (there is no body). The
-//! `instrumentation.rss_bytes` field stays `None`: the core deliberately
-//! leaves it to the host, and reading process memory is not portable to the
-//! browser.
-//!
-//! ## Fonts
-//!
-//! The `tinymist-world` `mock` feature embeds `typst-assets` fonts in the
-//! binary — the same mechanism the compile service uses — so no font I/O
-//! happens at runtime and wasm compiles embed the same fonts as the server.
-//! The cost is a wasm module of tens of megabytes; the PR carrying this crate
-//! reports the measured size. Stage 2c loads it lazily in a Web Worker.
-//!
-//! ## Parity
-//!
-//! `tests/parity.rs` compiles the same fixture sources through the native
-//! core (the code path the service drives) and through this boundary on
-//! `wasm32-unknown-unknown` (wasm-bindgen-test), and asserts both are
-//! byte-identical to the committed golden responses — PDF bytes included,
-//! which the core's fixed PDF timestamp makes achievable. Native and wasm
-//! suites run the identical assertions.
-//!
-//! ## Gaps left to stage 2c (tracked in issue #20)
-//!
-//! The Web Worker wiring, lazy loading, and the server-fallback toggle live
-//! in the web client; this crate only provides the module. Per-compile
-//! timeouts do not exist here (no JS API can interrupt a running wasm
-//! compile), so the pool's `poisoned` flag — the server's mechanism for
-//! abandoning timed-out compiles — can never be set and is not exposed.
+//! Each API has a Rust implementation returning `Result<_, String>` and a
+//! `wasm_bindgen` wrapper returning JavaScript errors. Native tests exercise
+//! the Rust implementation; WASM tests exercise the JavaScript boundary.
+//! Golden parity tests compare native and WASM responses, including PDF bytes.
+//! The core fixes PDF timestamps to make this comparison deterministic.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

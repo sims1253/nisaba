@@ -1,18 +1,15 @@
 # Nisaba tools
 
-Repeatable, CI-friendly tooling for importing and validating document templates:
-DOCX introspection → a deterministic intermediate manifest → a Typst template
-skeleton, with required-placeholder/schema preservation validation, a page-image
-visual-diff harness, and PDF compatibility checks.
+Tools for inspecting DOCX files, generating Typst template skeletons, validating
+placeholders and structure, comparing rendered pages, and checking PDFs.
 
-- **Language:** TypeScript + [Effect 4](https://effect.website) (core `effect`
-  package). Runtime: Bun (Node ≥20 also works). No Python required — DOCX is a
-  ZIP of XML, parsed in-process.
+- TypeScript with [Effect 4](https://effect.website), run with Bun. DOCX XML is
+  parsed in-process.
 - **External tools:** LibreOffice, Poppler (`pdftoppm`/`pdfinfo`/`pdftotext`),
   ImageMagick (`compare`), qpdf, and optionally Typst. All detected with clear
   failure when missing.
-- **Determinism:** every report is key-sorted, timestamp-free, and stable across
-  platforms; fixtures and golden files are byte-stable.
+- JSON reports use sorted keys and omit timestamps. Fixture generation has
+  byte-stability checks; rendered comparisons depend on external tool versions.
 
 See [`../docs/template-pipeline.md`](../docs/template-pipeline.md) for the full
 contract, and [`../fixtures/templates`](../fixtures/templates) for the sample DOCX
@@ -22,7 +19,7 @@ fixtures and the golden manifest/skeleton outputs.
 
 ```sh
 cd tools
-bun install
+bun install --frozen-lockfile
 bun bin/nisaba-tools.ts capabilities
 ./verify.sh                 # lint + typecheck + tests + golden-stability + skeleton compile
 ```

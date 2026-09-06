@@ -1,4 +1,4 @@
-# Testing Strategy
+# Testing
 
 Nisaba uses a **test pyramid** where fast, deterministic integration tests are
 the primary CI signal, browser-driven end-to-end tests run nightly against the
@@ -9,7 +9,7 @@ validation only.
 
 ### 1. Integration & unit tests (primary CI signal — run on every PR)
 
-These are fast (seconds), deterministic, and cover application logic:
+These suites cover application logic:
 
 | Suite | Command | Scope |
 |-------|---------|-------|
@@ -25,7 +25,7 @@ workflows on every push to `main` and on every pull request.
 
 - `cargo fmt --check` / `cargo clippy` / `cargo deny` / `cargo audit`
 - [oxlint](https://oxc.rs/docs/guide/usage/linter.html) + `tsc` (web — `bun run
-  lint` / `bun run build` in CI; oxlint replaces ESLint)
+  lint` / `bun run build` in CI)
 - `oxlint` + `tsc --noEmit` (tools — `bun run lint` / `bun run typecheck`)
 - `shellcheck` (deploy scripts)
 - `docker compose config` validation (`validate-compose.sh`)
@@ -56,29 +56,12 @@ logic, which is covered by layers 1 and 3.
 | `deploy/smoke.sh` | Infra tier: Postgres `pg_isready`, SeaweedFS liveness, Keycloak realm import | CI: only when infra files change (`deploy/**`, `docker-compose.yml`, `.env.example`) or on schedule/dispatch/main. Local: `just smoke`. |
 | `deploy/e2e-app.sh` | Full stack: builds the four app-profile images (app/sync/compile/web) and pulls the pinned infra images, mints a dev OIDC token, compile→PDF round trip, sync WS handshake, app authorize loop | Local only (`just e2e`) — too heavy for per-PR CI. |
 
-**Rationale:** smoke tests are slow (2–3 min for `smoke.sh`, 10+ min for
-`e2e-app.sh` because it builds images), fragile (Docker daemon state, network
-flakiness, container startup races), and test infrastructure configuration
-rather than application correctness. The integration tests in layer 1 are
-faster, more specific, and more reliable — they catch logic regressions that a
-Docker smoke test would never surface.
+## Adding tests
 
-## Guidelines for contributors and automation
+Use Rust integration tests or web/tools Vitest tests for application logic.
+Add browser flows to the existing Playwright suite and infrastructure checks
+to the existing smoke scripts. Avoid adding Docker startup scripts for tests
+that fit these suites.
 
-1. **Prefer integration tests.** When adding a feature or fixing a bug, write
-   a test in the appropriate `*.test.ts` (web) or `tests/` directory (Rust).
-   These run on every PR and give immediate, specific feedback.
-
-2. **Do not add smoke tests for application logic.** If a new feature needs
-   end-to-end coverage, add it to the existing Rust integration test suites
-   (`services/*/tests/`), the web vitest suite, or — for real-browser flows —
-   a Playwright spec in `web/e2e/` — not as a new shell script that spins up
-   Docker.
-
-3. **Smoke scripts are for infra config only.** Use them to verify that a
-   Dockerfile, compose service, or healthcheck change works. Do not use them
-   to test API endpoints, CRDT behavior, or rendering — those belong in the
-   integration test layer (or the Playwright tier for browser flows).
-
-4. **`just ci-local`** runs the full integration test suite locally and
-   mirrors what CI runs on every PR. Run it before pushing.
+Run `just ci-local` before pushing; see [CONTRIBUTING.md](../CONTRIBUTING.md)
+for the required checks.

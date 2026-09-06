@@ -79,7 +79,7 @@ let lastBuild: BuildSummary | undefined
  *  the compile subsystem demands of it (all reads, no writes). */
 export interface CompileWorkspace {
   project?: Project
-  selected?: { readonly document: NisabaDocument }
+  selected?: NisabaDocument
   view: CompileView
   review: ReviewState
   diagnostics: readonly CompileDiagnostic[]
@@ -379,11 +379,11 @@ export function compileCurrent(): void {
   // user's explicit action (button/Ctrl+S/view switch) is never silently lost.
   if (compiling) { pendingCompile = true; return }
   compiling = true
-  const entry = selected.document.path
+  const entry = selected.path
   // Capture the document id so the async success/error callbacks can bail if the
   // user has switched documents while the compile was in flight — otherwise the
   // old document's diagnostics/PDF are applied to the new document's editor/preview.
-  const documentId = selected.document.id
+  const documentId = selected.id
   setCompileButtonBusy(true)
   setText("#build-label", "Building…")
   const startedAt = Date.now()
@@ -400,7 +400,7 @@ export function compileCurrent(): void {
     (result) => {
       // Document-switch guard: discard the result if the user has moved to a
       // different document while this compile was in flight.
-      if (state.selected?.document.id !== documentId) return
+      if (state.selected?.id !== documentId) return
       const diagnostics = result.diagnostics as readonly CompileDiagnostic[]
       const errors = diagnostics.filter((item) => item.severity !== "warning").length
       const warnings = diagnostics.length - errors
@@ -435,7 +435,7 @@ export function compileCurrent(): void {
     (error: unknown) => {
       // Document-switch guard: don't clobber the new document's preview with the
       // old document's compile error.
-      if (state.selected?.document.id !== documentId) return
+      if (state.selected?.id !== documentId) return
       // A thrown/transport error leaves the pane empty with the reason rather
       // than the last good PDF.
       const message = error instanceof Error ? error.message : "The preview could not be built"
@@ -466,20 +466,20 @@ export function compileForDiagnostics(): void {
   // Capture the document ID so the async callback can bail if the user has
   // switched documents while the compile request was in flight, preventing
   // the old document's diagnostics from being applied to the new one.
-  const documentId = selected.document.id
+  const documentId = selected.id
   // Bail if a compile (manual or background) is already running; it will emit
   // the diagnostics this debounce was after.
   if (compiling) return
   compiling = true
   run(
-    compileRequest(project.id, selected.document.path, collectOpenSuggestionMarks()).pipe(
+    compileRequest(project.id, selected.path, collectOpenSuggestionMarks()).pipe(
       Effect.tap(() => Effect.sync(settleBackgroundCompile)),
       Effect.tapError(() => Effect.sync(settleBackgroundCompile))
     ),
     (result) => {
       // Document-switch guard: if the user has switched documents while this
       // background compile was in flight, discard the result.
-      if (state.selected?.document.id !== documentId) return
+      if (state.selected?.id !== documentId) return
       const diagnostics = result.diagnostics as readonly CompileDiagnostic[]
       renderDiagnostics(diagnostics)
       // Update the PDF preview only on a clean build. A build with errors leaves
