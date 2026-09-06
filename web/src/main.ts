@@ -1863,8 +1863,8 @@ async function saveBeforeServerSnapshot(): Promise<void> {
   }
 }
 
-// Debounce diagnostic builds without refreshing the PDF. The compile module
-// serializes builds; document switches cancel this timer.
+// Debounce background builds. The compile module serializes them; document
+// switches cancel this timer.
 let diagnosticsTimer: ReturnType<typeof setTimeout> | undefined
 const DIAGNOSTICS_DEBOUNCE_MS = 2000
 
@@ -2108,7 +2108,7 @@ const editor = new EditorView({
             if (!remote && localIntent && !recordedSuggestion && !resolution) {
               scheduleSave()
               // Live error checking: after the typing pause, recompile in the
-              // background for fresh diagnostic underlines (no PDF update). Same
+              // background for fresh diagnostics and a preview on successful builds. Same
               // remote/load exclusions as save — peer imports and the load seed
               // are not user typing, so they must not trigger a diagnostics build.
               scheduleDiagnosticsCompile()
