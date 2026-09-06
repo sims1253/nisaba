@@ -41,7 +41,6 @@ secondary metadata (tooltips, the history and build surfaces).
 | diagnostics | **Problems** | Plain word for "the thing that is wrong on line 12". |
 | build / build id | **Preview** / shown as `#41` in the build drawer only | Build identity matters for provenance, not for drafting. |
 | checkpoint | **version** (History), `c128` shown as metadata | "Restore version from 12:04" reads; "restore checkpoint c128" does not. |
-| entrypoint | **MAIN** tag on the file | One word, in the file tree, where the question is asked. |
 | projection: proposed | **Final** | Every suggestion applied — what the document becomes. |
 | projection: baseline | **Original** | Every suggestion rejected — the last agreed text. |
 | projection: redline | **All markup** | Word's own term for the marked-up rendering. |
@@ -151,9 +150,9 @@ and the empty three-pane workspace behind it was noise.
 
 *Goal: jump to the part I am working on, in a 60-page document.*
 
-* **Files** is a real tree. Folders come from the paths (`chapters/intro.typ` nests), which
-  is the platform's actual model — the old flat list with truncated path suffixes hid it.
-  The entrypoint carries a `MAIN` tag; that is the file the preview builds from.
+* **Files** shows folders derived from paths (`chapters/intro.typ` nests).
+  The selected row and document bar identify the open file. **Update preview**
+  compiles that file; there is no separate project entrypoint setting.
 * **Outline** lists the open document's headings, live, parsed from the source as you type,
   indented by level, with the current section highlighted. This is how writers navigate
   prose. It was entirely absent before.

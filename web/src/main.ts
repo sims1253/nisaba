@@ -986,15 +986,7 @@ function closeOpenDocument(): void {
 // Navigator: file tree + section outline
 // ---------------------------------------------------------------------------
 
-/**
- * The file tree.
- *
- * Folders are derived from the documents' paths (see outline.ts) because that is
- * what the project model actually is — a flat set of path-addressed files. The
- * previous flat list with a truncated path suffix hid the structure authors put
- * there. The entrypoint carries a MAIN tag: it is the file the preview builds
- * from, and that is the only question the tag needs to answer.
- */
+/** Render folders from project-relative document paths. */
 function renderFileTree(): void {
   const host = el<HTMLElement>("#file-tree")
   if (!host || !state.project) return
@@ -1054,13 +1046,6 @@ function renderTreeNodes(nodes: readonly TreeNode<NisabaDocument>[], depth: numb
     row.innerHTML = `<span class="twist" aria-hidden="true"></span><span class="label"></span>`
     const label = row.querySelector<HTMLElement>(".label")
     if (label) label.textContent = node.name
-    if (isEntrypoint(entry.path)) {
-      const tag = document.createElement("span")
-      tag.className = "tag"
-      tag.textContent = "MAIN"
-      tag.title = "The preview is built from this file"
-      row.append(tag)
-    }
     row.addEventListener("click", () => openDocument(entry))
     row.addEventListener("dblclick", () => renameDocument(entry))
     const remove = document.createElement("button")
@@ -1076,21 +1061,6 @@ function renderTreeNodes(nodes: readonly TreeNode<NisabaDocument>[], depth: numb
     out.push(item)
   }
   return out
-}
-
-/**
- * Which file the preview builds from. The project model has no explicit
- * entrypoint field yet, so the convention is `main.typ` at the root, falling back
- * to the first file — the same choice compileCurrent makes, kept in one place so
- * the tag and the build can never disagree.
- */
-function entrypointPath(): string | undefined {
-  const paths = state.outline.map((entry) => entry.path)
-  return paths.find((path) => path === "main.typ") ?? paths[0]
-}
-
-function isEntrypoint(path: string): boolean {
-  return entrypointPath() === path
 }
 
 function renameDocument(entry: NisabaDocument): void {
@@ -1417,18 +1387,13 @@ function loadOutline(): void {
   })
 }
 
-/**
- * The navigator's footer: the project's standing facts, as facts rather than
- * buttons. Files, how many references still lack an attached PDF (which is what
- * blocks an export), and which file the preview builds from.
- */
+/** Show file and reference counts in the navigator footer. */
 function renderProjectFacts(): void {
   const host = el<HTMLElement>("#nav-foot")
   if (!host) return
   const files = state.outline.length
   const references = state.references.length
   const withFulltext = state.references.filter((reference) => state.fulltexts.has(reference.id)).length
-  const entry = entrypointPath()
   host.replaceChildren()
   const line = (label: string, value: string): void => {
     const row = document.createElement("div")
@@ -1440,7 +1405,6 @@ function renderProjectFacts(): void {
   }
   line("files", `${files}`)
   line("references", references === 0 ? "none yet" : `${withFulltext} of ${references} with a PDF`)
-  if (entry !== undefined) line("preview builds", entry)
 }
 
 function addDocument(): void {

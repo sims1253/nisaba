@@ -441,12 +441,6 @@ body:not(.has-project) .appbar-tools { display: none }
   flex: 0 0 auto; width: 13px; text-align: center; color: var(--faint); font-size: 9px;
 }
 .tree-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.tree-row .tag {
-  margin-left: auto; flex: 0 0 auto;
-  font: 600 8.5px/1 var(--mono); letter-spacing: .1em;
-  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-line);
-  padding: 2px 4px; border-radius: 2px;
-}
 .tree-row.folder { color: var(--muted); font-weight: 500 }
 /* Indent guides make a nested path readable without drawing a full tree. */
 .tree-item { display: flex; align-items: stretch }
