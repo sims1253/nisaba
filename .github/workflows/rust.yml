@@ -71,6 +71,23 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-bookworm@sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f
+        env:
+          POSTGRES_USER: nisaba_test
+          POSTGRES_PASSWORD: nisaba_test
+          POSTGRES_DB: nisaba_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nisaba_test -d nisaba_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://nisaba_test:nisaba_test@127.0.0.1:5432/nisaba_test
+      TEST_DATABASE_URL: postgres://nisaba_test:nisaba_test@127.0.0.1:5432/nisaba_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # 1.94
@@ -78,6 +95,14 @@ jobs:
       # --locked builds against the committed Cargo.lock and fails on drift.
       - run: cargo test --workspace --all-targets --locked
       - run: cargo test --workspace --doc --locked
+      - name: PostgreSQL API and adapter tests
+        run: cargo test -p nisaba-app --locked -- --ignored
+      - name: Invalid database configuration must fail
+        run: |
+          if DATABASE_URL=not-a-postgres-url cargo test -p nisaba-app --test live_api --locked live_project_deletion_actually_deletes -- --ignored; then
+            echo "Live API tests passed with an invalid database URL" >&2
+            exit 1
+          fi
 
   # Parity guard for the wasm wrappers (issue #20 stages 1 and 2b): the golden
   # projection fixtures and the golden compile responses (PDF bytes included)

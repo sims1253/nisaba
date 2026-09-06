@@ -119,24 +119,17 @@ check:
     cargo check --workspace --all-targets
 
 test:
-    # DATABASE_URL in the environment (e.g. an older .env that still ships a
-    # literal one) points at the Docker-internal hostname for the app
-    # container. Drop it so the live_api tests fall back to their own .env
-    # parse, which builds the host-reachable 127.0.0.1:{POSTGRES_HOST_PORT}
-    # URL — otherwise dotenv-load would make them skip "no reachable database".
-    env -u DATABASE_URL cargo test --workspace --all-targets
-    env -u DATABASE_URL cargo test --workspace --doc
+    cargo test --workspace --all-targets
+    cargo test --workspace --doc
 
 # Fast feedback build of all binaries.
 build:
     cargo build --workspace --release
 
-# Postgres-backed live API integration tests for the app service (the compose
-# stack must be running; skips cleanly when no database is reachable).
-# env -u DATABASE_URL: same reason as `test` — an exported value is likely
-# container-facing.
+# Run against the local Compose database; missing or broken setup fails.
+# Drop a container-facing DATABASE_URL so the tests use .env's host port.
 test-live:
-    env -u DATABASE_URL cargo test -p nisaba-app --test live_api
+    env -u DATABASE_URL cargo test -p nisaba-app --test live_api -- --ignored
 
 clippy:
     cargo clippy --workspace --all-targets

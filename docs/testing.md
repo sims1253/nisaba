@@ -16,10 +16,15 @@ These suites cover application logic:
 | **Rust workspace** | `cargo test --workspace` | Sync convergence/reconnect/persistence, app CRUD/permissions/share-links, core projection golden + mark semantics + proptest |
 | **Web (vitest)** | `cd web && bun run test` | API client, auth/PKCE, CRDT sync protocol, review state machine, PDF effects, model parsing, decorations, protocol encode/decode, in-browser compile pipeline/toggle/worker host (mocked worker; runs without the wasm artifacts) |
 | **Tools (vitest)** | `cd tools && bunx vitest run` | DOCX introspection, schema validation, RIS round-trip, fixture stability |
+| **PostgreSQL API and adapter tests** | `just test-live` (local API tests; see [app test setup](../services/app/README.md)) | Real repository migrations, persistence, and authorization through HTTP |
 | **Rust doctests** | `cargo test --workspace --doc` | API contract examples in rustdoc |
 
 These tests run via the `rust.yml`, `web.yml`, and `tools.yml` GitHub Actions
-workflows on every push to `main` and on every pull request.
+workflows when relevant paths change on `main` or a pull request. Database tests
+are marked ignored in the default Rust run. The Rust CI test job starts a
+PostgreSQL service and invokes them explicitly with `--ignored`; configuration,
+connection, or migration failures fail the job. It also checks that an invalid
+database URL cannot pass the live API tests.
 
 ### 2. Static analysis (runs alongside tests in CI)
 
