@@ -7,7 +7,7 @@
  */
 
 import { test, expect } from "@playwright/test"
-import { signIn, createProject, openFirstProject } from "./helpers"
+import { signIn, createProject, createDocument, openFirstProject } from "./helpers"
 
 test.describe("Compile and PDF preview", () => {
   test("compile renders a PDF preview", async ({ page }) => {
@@ -32,6 +32,23 @@ test.describe("Compile and PDF preview", () => {
     const canvas = page.locator(".pdf-page canvas").first()
     const width = await canvas.evaluate((el: HTMLCanvasElement) => el.width)
     expect(width).toBeGreaterThan(0)
+  })
+
+  test("preview follows the open file when main.typ also exists", async ({ page }) => {
+    await signIn(page, { username: "demo", password: "demo", role: "author" })
+    await createProject(page, "Preview Entry Test")
+    await createDocument(page, "chapter.typ", "chapter.typ")
+    await page.locator("[data-document]").filter({ hasText: "chapter.typ" }).click()
+    await expect(page.locator("#document-path")).toHaveText("chapter.typ")
+    await expect(page.locator("[data-document]").filter({ hasText: "main.typ" })).toBeVisible()
+    const fileTree = page.locator("#file-tree")
+    await expect(fileTree).toBeVisible()
+    await expect(fileTree.getByText("MAIN", { exact: true })).toHaveCount(0)
+
+    const request = page.waitForRequest((request) =>
+      request.method() === "POST" && new URL(request.url()).pathname === "/api/compile")
+    await page.locator("#compile-button").click()
+    expect((await request).postDataJSON().entry).toBe("chapter.typ")
   })
 
   test("rapid preview updates do not invalidate an in-flight PDF", async ({ page }) => {
