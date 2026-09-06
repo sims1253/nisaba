@@ -156,7 +156,8 @@ Authorization: Bearer <NISABA_SYNC_AUTHZ_TOKEN>
 → 500                            // store or export failure
 ```
 
-A 204 means the document has no synced state. A 404 is an error: it may mean
+A 204 means the document has received no edits, even if a room or empty snapshot
+exists. Deleting all text or adding only review records still produces a 200. A 404 is an error: it may mean
 the caller reached an incorrect route or an incompatible service version.
 
 The endpoint compares a SHA-256 digest of the shared token in constant time;
