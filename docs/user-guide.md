@@ -71,9 +71,6 @@ The preview switch also selects the version requested for export.
 | All markup | Insertions and deletions marked |
 | Public copy | Final, with redacted passages removed |
 
-**All markup** can fail for marked passages in included files or during export.
-See [#66](https://github.com/sims1253/nisaba/issues/66).
-
 ## Share a project
 
 Open **Share**, enter a username, choose a role, and click **Invite**.

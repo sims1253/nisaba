@@ -1193,7 +1193,13 @@ fn openapi_describes_all_public_routes() {
 
 #[test]
 fn redline_imports_existing_review_module() {
-    for directory in ["", "chapters/"] {
+    for (directory, imports) in [
+        ("", ""),
+        ("chapters/", ""),
+        ("", "#import \"review.typ\" as changes\n"),
+        ("chapters/", "#import \"review.typ\": *\n"),
+        ("", "// #import \"review.typ\" as review\n"),
+    ] {
         let entry = format!("{directory}main.typ");
         let module = format!("{directory}review.typ");
         let custom_module = "#let add(body) = text(fill: green, body)";
@@ -1201,7 +1207,7 @@ fn redline_imports_existing_review_module() {
             project_id: Uuid::new_v4(),
             entry: entry.clone(),
             sources: BTreeMap::from([
-                (entry.clone(), "#review.add[Hello]".into()),
+                (entry.clone(), format!("{imports}#review.add[Hello]")),
                 (module.clone(), custom_module.into()),
             ]),
             marks: BTreeMap::new(),
@@ -1236,4 +1242,89 @@ async fn export_compile_failure_retains_diagnostics() {
     assert_eq!(body["error"]["code"], "conflict");
     assert_eq!(body["error"]["message"], "compile produced no PDF");
     assert_eq!(body["error"]["diagnostics"], json!(diagnostics));
+}
+
+#[test]
+fn redline_imports_support_in_each_marked_source() {
+    let entry = "#include \"chapter.typ\"\n#include \"nested/chapter.typ\"";
+    let custom_module =
+        "#let add(body) = text(fill: green, body)\n#let example = \"#review.add[x]\"";
+    let mut request = CompileRequest {
+        project_id: Uuid::new_v4(),
+        entry: "main.typ".into(),
+        sources: BTreeMap::from([
+            ("main.typ".into(), entry.into()),
+            ("chapter.typ".into(), "#review.add[Root chapter]".into()),
+            ("note.md".into(), "#review.add[Note]".into()),
+            (".typ".into(), "title: \"#review.add[literal]\"".into()),
+            (
+                "nested/.typ".into(),
+                "title: \"#review.add[literal]\"".into(),
+            ),
+            (
+                "nested/chapter.typ".into(),
+                "#review.add[Nested chapter]".into(),
+            ),
+            ("nested/review.typ".into(), custom_module.into()),
+            (
+                "metadata.yml".into(),
+                "title: \"#review.add[literal]\"".into(),
+            ),
+        ]),
+        marks: BTreeMap::from([(
+            "note.md".into(),
+            vec![MarkInput {
+                id: None,
+                start: 0,
+                end: 4,
+                kind: "insert".into(),
+                author: "alice".into(),
+                timestamp: 1,
+            }],
+        )]),
+        view: CompileView::Redline,
+    };
+    inject_redline_review(&mut request);
+    for path in ["chapter.typ", "nested/chapter.typ", "note.md"] {
+        assert!(
+            request.sources[path].starts_with("#import \"review.typ\" as review\n"),
+            "{path}"
+        );
+    }
+    assert_eq!(request.sources["main.typ"], entry);
+    for path in ["metadata.yml", ".typ", "nested/.typ"] {
+        assert_eq!(request.sources[path], "title: \"#review.add[literal]\"");
+    }
+    assert_eq!(request.sources["review.typ"], REVIEW_SUPPORT_SOURCE);
+    assert_eq!(request.sources["nested/review.typ"], custom_module);
+    let sources = request.sources.clone();
+    inject_redline_review(&mut request);
+    assert_eq!(request.sources, sources);
+}
+
+#[tokio::test]
+async fn redline_export_supplies_support_for_projected_marks() {
+    let (app, project, _, _, recorder) = export_project_with(|document_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                document_id,
+                synced_snapshot_with_open_insert("Hello world", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry": "intro.typ", "view": "redline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+    assert!(forwarded.sources["intro.typ"].starts_with("#import \"review.typ\" as review\n"));
+    assert!(forwarded.sources["intro.typ"].contains("#review.add[Hello]"));
+    assert_eq!(forwarded.sources["review.typ"], REVIEW_SUPPORT_SOURCE);
 }

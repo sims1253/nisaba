@@ -266,7 +266,7 @@ describe("buildWasmBoundaryRequest", () => {
     expect(request.sources["main.typ"]).toBe('#bibliography("mine.yml")')
   })
 
-  it("adds review support for the redline view when any source carries markers (the app's multi-file rule)", () => {
+  it("imports review support in the included file that carries markers", () => {
     const { deps } = recordingDeps()
     const request = buildWasmBoundaryRequest(
       {
@@ -278,7 +278,8 @@ describe("buildWasmBoundaryRequest", () => {
       deps
     )
     expect(request.sources["chapters/review.typ"]).toContain("#let add")
-    expect(request.sources["chapters/main.typ"]).toBe('#import "review.typ" as review\n\n#include "intro.typ"')
+    expect(request.sources["chapters/main.typ"]).toBe('#include "intro.typ"')
+    expect(request.sources["chapters/intro.typ"]).toBe('#import "review.typ" as review\n\n#review.add[more]')
   })
 
   it("does not add review support for other views, or without markers", () => {
@@ -289,13 +290,58 @@ describe("buildWasmBoundaryRequest", () => {
     expect(buildWasmBoundaryRequest(redlineClean, deps).sources["review.typ"]).toBeUndefined()
   })
 
+  it.each(["metadata.yml", ".typ", "nested/.typ"])("leaves literal marker strings in %s unchanged", (path) => {
+    const { deps } = recordingDeps()
+    const yaml = 'title: "#review.add[literal]"'
+    const request = buildWasmBoundaryRequest(
+      { ...job, view: "redline", sources: { "main.typ": "Document", [path]: yaml } },
+      deps
+    )
+    expect(request.sources[path]).toBe(yaml)
+    expect(request.sources["review.typ"]).toBeUndefined()
+  })
+
+  it("imports support for explicitly marked files with another extension", () => {
+    const { deps } = recordingDeps()
+    const request = buildWasmBoundaryRequest({
+      ...job,
+      view: "redline",
+      sources: { "main.typ": '#include "note.md"', "note.md": "#review.add[x]" },
+      marks: { "note.md": [{ start: 0, end: 1, kind: "insert", author: "alice", timestamp: 1 }] }
+    }, deps)
+    expect(request.sources["note.md"]).toBe('#import "review.typ" as review\n\n#review.add[x]')
+  })
+
+  it("imports an existing support module into a marked source", () => {
+    const { deps } = recordingDeps()
+    const request = buildWasmBoundaryRequest(
+      { ...job, view: "redline", sources: { "main.typ": "#review.add[x]", "review.typ": '#let add = it => it\n#let example = "#review.add[x]"'  } },
+      deps
+    )
+    expect(request.sources["review.typ"]).toBe('#let add = it => it\n#let example = "#review.add[x]"')
+    expect(request.sources["main.typ"]).toBe('#import "review.typ" as review\n\n#review.add[x]')
+  })
+
+  it.each([
+    '#import "review.typ" as changes',
+    '#import "review.typ": *',
+    '// #import "review.typ" as review'
+  ])("binds the review namespace despite %s", (existingImport) => {
+    const { deps } = recordingDeps()
+    const source = `${existingImport}\n#review.add[x]`
+    const request = buildWasmBoundaryRequest(
+      { ...job, view: "redline", sources: { "main.typ": source } }, deps
+    )
+    expect(request.sources["main.typ"]).toBe(`#import "review.typ" as review\n\n${source}`)
+  })
+
   it("never overwrites an existing review.typ or re-imports it", () => {
     const { deps } = recordingDeps()
     const request = buildWasmBoundaryRequest(
-      { ...job, view: "redline", sources: { "main.typ": '#import "review.typ" as review\n#review.add[x]', "review.typ": "#let add = it => it" } },
+      { ...job, view: "redline", sources: { "main.typ": '#import "review.typ" as review\n#review.add[x]', "review.typ": '#let add = it => it\n#let example = "#review.add[x]"'  } },
       deps
     )
-    expect(request.sources["review.typ"]).toBe("#let add = it => it")
+    expect(request.sources["review.typ"]).toBe('#let add = it => it\n#let example = "#review.add[x]"')
     expect(request.sources["main.typ"]).toBe('#import "review.typ" as review\n#review.add[x]')
   })
 })
