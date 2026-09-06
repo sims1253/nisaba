@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url"
 import { defineConfig, loadEnv } from "vite"
 
 export default defineConfig(({ mode }) => {
@@ -17,7 +18,7 @@ export default defineConfig(({ mode }) => {
       alias: [
         // Keep every runtime import (including loro-codemirror's) behind the
         // same explicitly initialized WASM boundary.
-        { find: /^loro-crdt$/, replacement: "/src/loro.ts" }
+        { find: /^loro-crdt$/, replacement: fileURLToPath(new URL("./src/loro.ts", import.meta.url)) }
       ]
     },
     server: {
