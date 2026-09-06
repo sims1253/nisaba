@@ -290,14 +290,14 @@ describe("buildWasmBoundaryRequest", () => {
     expect(buildWasmBoundaryRequest(redlineClean, deps).sources["review.typ"]).toBeUndefined()
   })
 
-  it("leaves data files containing literal marker strings unchanged", () => {
+  it.each(["metadata.yml", ".typ", "nested/.typ"])("leaves literal marker strings in %s unchanged", (path) => {
     const { deps } = recordingDeps()
     const yaml = 'title: "#review.add[literal]"'
     const request = buildWasmBoundaryRequest(
-      { ...job, view: "redline", sources: { "main.typ": '#yaml("metadata.yml").title', "metadata.yml": yaml } },
+      { ...job, view: "redline", sources: { "main.typ": "Document", [path]: yaml } },
       deps
     )
-    expect(request.sources["metadata.yml"]).toBe(yaml)
+    expect(request.sources[path]).toBe(yaml)
     expect(request.sources["review.typ"]).toBeUndefined()
   })
 

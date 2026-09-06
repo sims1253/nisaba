@@ -156,7 +156,8 @@ function injectRedlineReview(
 ): void {
   if (request.view !== "redline") return
   for (const [path, source] of Object.entries(request.sources)) {
-    if (path !== request.entry && !path.endsWith(".typ") && !marks[path]?.length) continue
+    // A leading dot alone is not an extension (the same rule as Rust Path).
+    if (path !== request.entry && !/(?:^|\/)[^/]+\.typ$/.test(path) && !marks[path]?.length) continue
     if (!REDLINE_MARKERS.some((marker) => source.includes(marker))) continue
     const directory = directoryOf(path)
     const modulePath = directory === "" ? REVIEW_SUPPORT_PATH : `${directory}/${REVIEW_SUPPORT_PATH}`

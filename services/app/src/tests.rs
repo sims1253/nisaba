@@ -1256,6 +1256,11 @@ fn redline_imports_support_in_each_marked_source() {
             ("main.typ".into(), entry.into()),
             ("chapter.typ".into(), "#review.add[Root chapter]".into()),
             ("note.md".into(), "#review.add[Note]".into()),
+            (".typ".into(), "title: \"#review.add[literal]\"".into()),
+            (
+                "nested/.typ".into(),
+                "title: \"#review.add[literal]\"".into(),
+            ),
             (
                 "nested/chapter.typ".into(),
                 "#review.add[Nested chapter]".into(),
@@ -1287,10 +1292,9 @@ fn redline_imports_support_in_each_marked_source() {
         );
     }
     assert_eq!(request.sources["main.typ"], entry);
-    assert_eq!(
-        request.sources["metadata.yml"],
-        "title: \"#review.add[literal]\""
-    );
+    for path in ["metadata.yml", ".typ", "nested/.typ"] {
+        assert_eq!(request.sources[path], "title: \"#review.add[literal]\"");
+    }
     assert_eq!(request.sources["review.typ"], REVIEW_SUPPORT_SOURCE);
     assert_eq!(request.sources["nested/review.typ"], custom_module);
     let sources = request.sources.clone();
