@@ -305,11 +305,8 @@ impl Denial {
 /// the public relay. Answers:
 ///
 /// * `200` `application/octet-stream` — the snapshot bytes;
-/// * `204` — the document has no state anywhere (never seeded). Deliberately
-///   NOT `404`: an unmatched route (version skew against an older sync, a
-///   misconfigured base URL in the app) also answers 404, and the caller must
-///   be able to tell "genuinely no state — empty marks" apart from "wrong
-///   door — fail loudly";
+/// * `204` — no edits yet; an empty snapshot can still exist. Routing errors
+///   use `404` so callers can distinguish them from empty state;
 /// * `400` — invalid document id (same validation as the WS path);
 /// * `401` / `403` — missing / wrong service token (see [`InternalAuth`]);
 /// * `500` — a store or export failure.

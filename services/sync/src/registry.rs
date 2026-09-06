@@ -146,9 +146,9 @@ impl DocRegistry {
             .map(|entry| Arc::clone(entry.value()))
     }
 
-    /// Read current state from a live room, or hydrate the persisted state
-    /// without registering a room. Returns `None` if no edits have arrived,
-    /// including when an unseeded room or empty snapshot exists.
+    /// Read live state, or hydrate persisted state without creating a room.
+    /// Internal reads must not retain op-log handles or grow the room map.
+    /// Returns `None` before the first edit, even if an empty snapshot exists.
     pub async fn export_state(&self, doc_id: &DocId) -> SyncResult<Option<Vec<u8>>> {
         if let Some(room) = self.room(doc_id) {
             return room.export_state();
