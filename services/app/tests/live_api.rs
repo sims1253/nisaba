@@ -1,4 +1,4 @@
-//! HTTP integration tests against PostgreSQL and the real repository migrations.
+//! HTTP integration tests against `PostgreSQL` and the real repository migrations.
 //!
 //! Ignored by default. Run `just test-live` against the local stack, or set
 //! `DATABASE_URL` and run `cargo test -p nisaba-app --test live_api -- --ignored`.
