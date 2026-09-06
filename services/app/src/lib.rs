@@ -1479,7 +1479,9 @@ fn inject_redline_review(request: &mut CompileRequest) {
         .iter()
         .filter(|(path, _)| {
             *path == &request.entry
-                || path.ends_with(".typ")
+                || std::path::Path::new(path)
+                    .extension()
+                    .is_some_and(|extension| extension == "typ")
                 || request
                     .marks
                     .get(*path)
