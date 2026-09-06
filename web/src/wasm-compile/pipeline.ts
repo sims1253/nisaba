@@ -162,7 +162,7 @@ function injectRedlineReview(
     const modulePath = directory === "" ? REVIEW_SUPPORT_PATH : `${directory}/${REVIEW_SUPPORT_PATH}`
     if (path === modulePath) continue
     request.sources[modulePath] ??= REVIEW_SUPPORT_SOURCE
-    if (!source.includes('#import "review.typ"') && !source.includes("#import 'review.typ'")) {
+    if (!source.startsWith('#import "review.typ" as review\n')) {
       request.sources[path] = `#import "review.typ" as review\n\n${source}`
     }
   }

@@ -1193,7 +1193,13 @@ fn openapi_describes_all_public_routes() {
 
 #[test]
 fn redline_imports_existing_review_module() {
-    for directory in ["", "chapters/"] {
+    for (directory, imports) in [
+        ("", ""),
+        ("chapters/", ""),
+        ("", "#import \"review.typ\" as changes\n"),
+        ("chapters/", "#import \"review.typ\": *\n"),
+        ("", "// #import \"review.typ\" as review\n"),
+    ] {
         let entry = format!("{directory}main.typ");
         let module = format!("{directory}review.typ");
         let custom_module = "#let add(body) = text(fill: green, body)";
@@ -1201,7 +1207,7 @@ fn redline_imports_existing_review_module() {
             project_id: Uuid::new_v4(),
             entry: entry.clone(),
             sources: BTreeMap::from([
-                (entry.clone(), "#review.add[Hello]".into()),
+                (entry.clone(), format!("{imports}#review.add[Hello]")),
                 (module.clone(), custom_module.into()),
             ]),
             marks: BTreeMap::new(),

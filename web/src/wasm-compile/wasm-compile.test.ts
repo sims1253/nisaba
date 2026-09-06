@@ -322,6 +322,19 @@ describe("buildWasmBoundaryRequest", () => {
     expect(request.sources["main.typ"]).toBe('#import "review.typ" as review\n\n#review.add[x]')
   })
 
+  it.each([
+    '#import "review.typ" as changes',
+    '#import "review.typ": *',
+    '// #import "review.typ" as review'
+  ])("binds the review namespace despite %s", (existingImport) => {
+    const { deps } = recordingDeps()
+    const source = `${existingImport}\n#review.add[x]`
+    const request = buildWasmBoundaryRequest(
+      { ...job, view: "redline", sources: { "main.typ": source } }, deps
+    )
+    expect(request.sources["main.typ"]).toBe(`#import "review.typ" as review\n\n${source}`)
+  })
+
   it("never overwrites an existing review.typ or re-imports it", () => {
     const { deps } = recordingDeps()
     const request = buildWasmBoundaryRequest(

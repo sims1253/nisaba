@@ -1514,8 +1514,7 @@ fn inject_redline_review(request: &mut CompileRequest) {
             .entry(module_path)
             .or_insert_with(|| REVIEW_SUPPORT_SOURCE.to_owned());
         if let Some(source) = request.sources.get_mut(&path)
-            && !source.contains("#import \"review.typ\"")
-            && !source.contains("#import 'review.typ'")
+            && !source.starts_with("#import \"review.typ\" as review\n")
         {
             source.insert_str(0, "#import \"review.typ\" as review\n\n");
         }
