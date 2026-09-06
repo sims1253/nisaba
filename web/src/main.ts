@@ -88,8 +88,7 @@ interface Workspace {
   view: CompileView
   signedIn: boolean
   diagnostics: readonly CompileDiagnostic[]
-  /** Caller's project-scoped role (owner/author/reviewer/read-only). Undefined
-   *  until getMembership resolves on openProject; gates reviewer UX (H1/M4). */
+  /** Project role, unknown until the membership request resolves. */
   role?: MembershipRole
 }
 
@@ -3225,19 +3224,8 @@ function toggleSuggesting(): void {
   renderReviewDock()
 }
 
-/**
- * Apply project-role UI gates. Called when the membership fetch resolves
- * (openProject) and whenever role-dependent chrome may need re-rendering.
- *
- * - H1: a reviewer is forced into suggesting mode and cannot turn it off, so
- *   every body edit they make is recorded as a suggestion rather than a silent
- *   overwrite. The lock is enforced here (UI) and relies on the server already
- *   permitting reviewer document writes (needed for suggestion-mode edits).
- * - M4: read-only viewers cannot export (the server returns 403), so the
- *   Export button is hidden up-front rather than failing on click. Reviewers
- *   CAN export (the server grants them Permission::Document for review
- *   copies), so the button is shown to them.
- */
+// Reapply project-role gates after membership loads or the review state resets.
+// Reviewers must suggest changes; read-only viewers cannot export.
 function applyRoleGates(): void {
   // Outside a project the membership role is unknown; gate the project list
   // (＋, row deletes) on the IdP roles claim from the token instead — the same
@@ -4458,21 +4446,11 @@ document.addEventListener("keydown", (event) => {
 })
 
 window.addEventListener("beforeunload", (event) => {
-  // Snapshot whether the debounce timer is still armed BEFORE flushing, because
-  // flushPendingSave() clears saveTimer/pendingSave — checking them afterwards
-  // (the old code) was always false, making the guard dead code. We also check
-  // saveInFlight for a PATCH already over the wire that would be lost on close.
+  // Capture the debounce state before flushing clears it.
   const timerPending = saveTimer !== undefined
-  // HIGH #5b: flushPendingSave() fires an async fetch() PATCH, but the browser
-  // aborts in-flight requests during teardown — so the pending edit is lost.
-  // A last-chance save must survive the unload. navigator.sendBeacon can't be
-  // used here because it sends an unauthenticated POST (no Authorization header,
-  // wrong method) — the save endpoint requires PATCH + Bearer token. Instead use
-  // fetch with keepalive:true, which survives page teardown AND allows custom
-  // headers and method. Only fire when there is actually pending data (a
-  // debounced save or an armed timer). We still call flushPendingSave()
-  // afterwards for its timer-cleanup side effects, but clear pendingSave first so
-  // it does not ALSO fire the doomed async fetch.
+  // keepalive allows an authenticated PATCH to outlive this page. sendBeacon
+  // cannot set the required method or Authorization header. Clear pendingSave
+  // before flushing below so it does not send a second, non-keepalive request.
   if (pendingSave || saveTimer) {
     const context = pendingSave ?? captureSaveContext()
     const beaconToken = readStoredAccessToken()
@@ -4494,30 +4472,15 @@ window.addEventListener("beforeunload", (event) => {
     event.preventDefault()
     event.returnValue = ""
   }
-  // HIGH #4: Do NOT destroy the editor or close the sync connection here.
-  // beforeunload can fire and then the user clicks "Stay on page", which
-  // would leave the editor permanently destroyed with no recovery path. The
-  // destructive teardown now runs on "pagehide", which only fires on a real unload.
+  // The user can cancel beforeunload. Keep the editor and sync alive until pagehide.
 })
-// HIGH #4: Real teardown belongs here. "pagehide" fires only when the document is
-// genuinely being unloaded (navigation/close), unlike "beforeunload" which the
-// user can cancel — so destroying the editor here can never strand a staying user.
 window.addEventListener("pagehide", (event) => {
-  // bfcache freeze: the browser snapshots the page for back-forward cache
-  // and restores it without reloading when the user navigates back. Destroying
-  // the editor or closing sync here would leave a
-  // visually-intact but completely dead page. Skip teardown on persisted freeze;
-  // the handlers run only on a genuine unload.
+  // A page stored in the back-forward cache must remain usable when restored.
   if (event.persisted) return
   syncConnection?.close()
   editor.destroy()
 })
-// Honest connectivity indicator (H3): the browser fires offline/online the moment
-// the network changes, whereas the sync WebSocket can keep a half-open socket for
-// tens of seconds before its close event. Listening here makes the connection
-// label reflect a real network drop immediately. `setSyncStatus` treats
-// browserOffline as a one-way dimmer (offline overrides; online just re-shows the
-// last relay status, it never falsely claims connected).
+// Browser offline status overrides the last relay status.
 window.addEventListener("offline", () => {
   browserOffline = true
   setSyncStatus(lastSyncStatus ?? "disconnected", "Network offline · changes saved locally")
@@ -4616,7 +4579,6 @@ void completeSignIn().then(() => {
         status(error instanceof Error ? error.message : "Share link could not be redeemed")
       })
     } else if (projects.length > 0) {
-      // M5: reopen the project/document the user last had open before tab-away.
       restoreLastOpen()
     }
   })
