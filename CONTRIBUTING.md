@@ -34,8 +34,8 @@ additional system prerequisites documented in [`tools/README.md`](tools/README.m
 Run the web checks without generated WASM artifacts. To work on browser
 compilation, use `just wasm-web`; it requires `wasm-bindgen-cli 0.2.127` and
 the `wasm32-unknown-unknown` target. Output goes to the ignored
-`web/src/wasm-generated/` directory. The app uses server compilation when
-these artifacts are absent.
+`web/src/wasm-generated/` directory. The workspace uses server compilation. These artifacts are for compiler library
+development.
 
 ## Change guidelines
 
