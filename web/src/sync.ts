@@ -196,7 +196,6 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
         socket?.close()
         return
       }
-      retries = 0
       try {
         socket?.send(encodeSyncFrame({
           type: "hello",
@@ -263,6 +262,7 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
             if (relayHadContent) importRemote(doc, frame.catchup.bytes)
             unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
           }
+          retries = 0
           status("connected")
           // Announce ourselves as soon as the handshake completes (and again
           // after every reconnect), so peers see who joined without waiting for
@@ -284,6 +284,13 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
         }
         if (frame.type === "heartbeat") return
         if (frame.type === "error") {
+          if (frame.code === 4500 && /peer [0-9]+ already connected to document/.test(frame.message)) {
+            // A half-open previous connection can outlive a network drop.
+            // Retry until the relay releases it; this is not a protocol failure.
+            status("disconnected", "Previous connection is still closing; reconnecting…")
+            socket?.close()
+            return
+          }
           if (frame.code === 4003 && /access (?:was revoked|changed|could not be verified)/i.test(frame.message)) {
             options.onAccessRevoked?.(frame.message)
           }
