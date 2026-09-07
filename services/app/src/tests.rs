@@ -310,6 +310,7 @@ async fn sync_fixture(role: MembershipRole) -> (AppState, Document) {
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Shared notes".into(),
                 created_at: now,
@@ -403,6 +404,7 @@ async fn compile_proxy_converts_markdown_headings_like_export() {
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Headings".into(),
                 created_at: now,
@@ -450,6 +452,7 @@ async fn compile_proxy_projects_review_marks_before_forwarding() {
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Compile".into(),
                 created_at: now,
@@ -560,6 +563,7 @@ async fn export_project_with(
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Export marks".into(),
                 created_at: now,
@@ -722,23 +726,12 @@ async fn export_projects_synced_review_marks() {
     assert!(!forwarded.sources.contains_key("main.typ"));
     assert_eq!(forwarded.sources["intro.typ"], " world");
     assert_eq!(forwarded.sources["notes.typ"], "plain");
-    // The decoded mark itself rode along on the request (path-keyed), with
-    // the cursors resolved to 0..5 despite the stale raw offsets.
-    assert_eq!(forwarded.marks["intro.typ"].len(), 1);
-    assert_eq!(forwarded.marks["intro.typ"][0].start, 0);
-    assert_eq!(forwarded.marks["intro.typ"][0].end, 5);
-    assert_eq!(forwarded.marks["intro.typ"][0].kind, "insert");
-    assert_eq!(forwarded.marks["intro.typ"][0].author, "bea");
-    assert_eq!(forwarded.marks["intro.typ"][0].timestamp, 5);
+    assert!(forwarded.marks.is_empty());
 }
 
 #[tokio::test]
-async fn export_refuses_when_the_saved_body_lags_the_crdt() {
-    // Mark offsets are resolved against the CRDT text; projecting them over a
-    // different stored body would silently misplace them. While a document is
-    // being edited (the web client's body PATCH is debounced) the CRDT is
-    // ahead of the saved body — exactly this fixture — and the export refuses.
-    let (app, project, _main, _notes, _recorder) = export_project_with(|main_id| {
+async fn export_captures_live_text_and_marks_when_rest_body_lags() {
+    let (app, project, _main, _notes, recorder) = export_project_with(|main_id| {
         Arc::new(StubSyncState {
             states: HashMap::from([(
                 main_id,
@@ -758,13 +751,10 @@ async fn export_refuses_when_the_saved_body_lags_the_crdt() {
         Some(json!({"entry": "intro.typ", "view": "baseline"})),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    let value: Value = response_body(response).await;
-    let message = value["error"]["message"].as_str().unwrap();
-    assert!(
-        message.contains("not saved yet"),
-        "the failure must be actionable: {message}"
-    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+    assert_eq!(forwarded.sources["intro.typ"], " world — edited");
+    assert!(forwarded.marks.is_empty());
 }
 
 #[tokio::test]
@@ -1327,4 +1317,204 @@ async fn redline_export_supplies_support_for_projected_marks() {
     assert!(forwarded.sources["intro.typ"].starts_with("#import \"review.typ\" as review\n"));
     assert!(forwarded.sources["intro.typ"].contains("#review.add[Hello]"));
     assert_eq!(forwarded.sources["review.typ"], REVIEW_SUPPORT_SOURCE);
+}
+
+#[tokio::test]
+async fn project_preview_keeps_entrypoint_when_editing_another_file() {
+    let (app, project, main, notes, recorder) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "PATCH",
+        &format!("/projects/{}", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry_document_id": main.id})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "alice",
+        "author",
+        Some(
+            json!({"view":"proposed", "draft":{"document_id":notes.id,"body":"new chapter text"}}),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let preview: ProjectPreview = response_body(response).await;
+    assert_eq!(preview.entry, "intro.typ");
+    let inputs = recorder.0.lock().unwrap().clone().unwrap();
+    assert_eq!(inputs.sources["intro.typ"], "Hello world");
+    assert_eq!(inputs.sources["notes.typ"], "new chapter text");
+    // A preview draft does not mutate the project document.
+    let response = request(
+        app,
+        "GET",
+        &format!("/projects/{}/documents/{}", project.id, notes.id),
+        "alice",
+        "author",
+        None,
+    )
+    .await;
+    let stored: Document = response_body(response).await;
+    assert_eq!(stored.body, "plain");
+}
+
+#[tokio::test]
+async fn project_preview_and_export_use_identical_project_inputs() {
+    let (app, project, _, _, recorder) = export_project_with(|main_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                main_id,
+                synced_snapshot_with_open_insert("Hello world changed", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "alice",
+        "author",
+        Some(json!({"view":"baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let preview_inputs = serde_json::to_value(recorder.0.lock().unwrap().clone().unwrap()).unwrap();
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry":"intro.typ", "view":"baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let export_inputs = serde_json::to_value(recorder.0.lock().unwrap().clone().unwrap()).unwrap();
+    assert_eq!(preview_inputs, export_inputs);
+}
+
+#[tokio::test]
+async fn project_preview_rejects_a_draft_from_another_project() {
+    let (app, project, _, _, _) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "alice",
+        "author",
+        Some(json!({"view":"proposed", "draft":{"document_id":Uuid::new_v4(),"body":"foreign"}})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn readonly_member_can_preview_but_cannot_change_entrypoint() {
+    let (app, project, main, _, _) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/members", project.id),
+        "alice",
+        "author",
+        Some(json!({"subject":"reader","role":"read-only"})),
+    )
+    .await;
+    assert!(response.status().is_success());
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "reader",
+        "read-only",
+        Some(json!({"view":"proposed"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = request(
+        app,
+        "PATCH",
+        &format!("/projects/{}", project.id),
+        "reader",
+        "read-only",
+        Some(json!({"entry_document_id":main.id})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn ordinary_export_does_not_require_reference_attachments() {
+    let (app, project, _, notes, recorder) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/references", project.id),
+        "alice",
+        "author",
+        Some(json!({"metadata":{"title":"An open reference","authors":["A. Writer"],"extra":{}}})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let reference: ReferenceEntry = response_body(response).await;
+    let response = request(
+        app.clone(),
+        "PATCH",
+        &format!("/projects/{}/documents/{}", project.id, notes.id),
+        "alice",
+        "author",
+        Some(json!({"body":format!("#cite(<{}>)", reference.id),"expected_revision":0})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry":"notes.typ","view":"proposed"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        recorder.0.lock().unwrap().as_ref().unwrap().sources["refs.yml"]
+            .contains("An open reference")
+    );
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry":"notes.typ","view":"proposed","include_fulltexts":true})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }

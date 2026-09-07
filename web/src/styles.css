@@ -1190,3 +1190,11 @@ body.focus-mode .cm-scroller { padding-top: 40px }
   .appbar-tools .btn { padding-inline: 6px }
   #compile-button { padding-inline: 10px }
 }
+
+/* The file being edited and the project being built have separate labels. */
+.build-entry-field { display: grid; gap: 6px; margin-bottom: 12px; color: var(--ink); font: 13px var(--sans); }
+.build-entry-field select { min-width: 0; width: 100%; font: 13px var(--mono); padding: 6px; }
+.editing-label { color: var(--muted); font: 12px var(--sans); }
+.doc-id strong { font-family: var(--serif); font-size: 16px; }
+.preview-stale { color: var(--comment, #a4761b); }
+.preview-pane .pane-bar { flex-wrap: wrap; }

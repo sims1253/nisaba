@@ -34,6 +34,7 @@ export class ApiError extends Data.TaggedError("ApiError")<{
 // ---------------------------------------------------------------------------
 
 const Project = Schema.Struct({
+  entry_document_id: Schema.optional(Schema.NullOr(Schema.String)),
   id: Schema.String,
   name: Schema.String,
   created_at: Schema.String,
@@ -406,6 +407,23 @@ export const compile = (input: {
       view: input.view ?? "proposed"
     })
   )
+
+const ProjectPreview = Schema.Struct({
+  entry: Schema.String,
+  view: Schema.Literals(["baseline", "proposed", "redline", "public"]),
+  compile: CompileResponse
+})
+export type ProjectPreview = typeof ProjectPreview.Type
+
+export const previewProject = (
+  projectId: string,
+  view: CompileView,
+  draft: { readonly document_id: string; readonly body: string; readonly marks: readonly MarkInput[] }
+): Effect.Effect<ProjectPreview, ApiError> =>
+  request(path("projects", projectId, "preview"), decoder(ProjectPreview), json({ view, draft }))
+
+export const setProjectEntrypoint = (projectId: string, documentId: string): Effect.Effect<Project, ApiError> =>
+  request(path("projects", projectId), decoder(Project), patch({ entry_document_id: documentId }))
 
 export interface MarkInput {
   readonly id?: number

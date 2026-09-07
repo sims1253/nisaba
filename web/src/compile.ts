@@ -1,18 +1,4 @@
-/**
- * The compile/preview subsystem, extracted from the workspace shell (main.ts).
- *
- * Everything here is behaviour-identical to the code it replaces: same DOM ids,
- * same Effect pipes, same policies. The two compile paths are two policies over
- * one set of machinery (see the "Shared compile plumbing" banner below).
- *
- * Ownership: this module OWNS the compile lifecycle state (`compiling`,
- * `pendingCompile`, `lastBuild`) and renders the surfaces only it can interpret
- * (the build label, the build-health cell, the preview pane's empty/failure/
- * clean-PDF states, the compile button's busy state). It owns NONE of the
- * handles it drives: the workspace state, the editor, the PDF viewer, the
- * active Loro replica, and the renderers its results feed into all belong to
- * main.ts and are handed in once, via initCompile, before the first render.
- */
+/** Project preview lifecycle, provenance, and PDF downloads. */
 import { Effect } from "effect"
 import type { EditorView } from "@codemirror/view"
 import type { LoroDoc } from "loro-crdt"
@@ -20,10 +6,9 @@ import * as api from "./api"
 import type { CompileView, MarkInput, NisabaDocument, Project } from "./api"
 import { currentBindings, prettyChord } from "./keybindings"
 import { resolveCursor } from "./cursor"
-import { decodeBase64Pdf } from "./effects"
+import { decodeBase64Pdf, downloadBase64 } from "./effects"
 import type { VirtualPdfViewer } from "./pdf-viewer"
 import type { ReviewItem, ReviewState } from "./review"
-import { wasmCompile } from "./wasm-compile"
 
 // ---------------------------------------------------------------------------
 // Compile diagnostics (mirrors services/compile Diagnostic: severity/message/path/start/end)
@@ -63,12 +48,18 @@ let pendingCompile = false
 /** What the current preview was built from — shown on the preview bar. */
 interface BuildSummary {
   readonly buildId: string
+  readonly entry: string
+  readonly view: CompileView
+  readonly projectId: string
+  readonly pdf: string | null
+  readonly generation: number
   readonly at: number
   readonly ms: number
   pages?: number
 }
 
 let lastBuild: BuildSummary | undefined
+let generation = 0
 
 // ---------------------------------------------------------------------------
 // The borrowed handles: main.ts owns them and passes them in via initCompile
@@ -83,12 +74,7 @@ export interface CompileWorkspace {
   view: CompileView
   review: ReviewState
   diagnostics: readonly CompileDiagnostic[]
-  /** The project's reference rows, as the library pane shows them. The
-   *  in-browser compile path builds its bibliography from these (the app
-   *  service reads them from the database on every server compile); the
-   *  server path never looks at them — marks and references travel in the
-   *  request it posts. */
-  references: readonly api.Reference[]
+
 }
 
 /** Everything the compile module needs but does not own. main.ts supplies these
@@ -118,11 +104,7 @@ let host: CompileHost | undefined
 /** The one-time handoff from main.ts. Must be called before any other export. */
 export function initCompile(handles: CompileHost): void {
   host = handles
-  // When the writer opted into in-browser compiles, start paying the wasm
-  // artifact download on idle instead of at their first build. A no-op for
-  // everyone else (the default path), and boot failures surface later as the
-  // fallback note below, not here.
-  wasmCompile.prefetch()
+
 }
 
 function requireHost(): CompileHost {
@@ -191,15 +173,17 @@ function setCompileButtonBusy(busy: boolean): void {
 }
 
 export function renderBuildLabel(): void {
-  const { el, state, timeAgo } = requireHost()
+  const { el, timeAgo } = requireHost()
   const label = el<HTMLElement>("#build-label")
   if (!label) return
   if (lastBuild === undefined) {
     label.textContent = "No preview yet"
     label.title = ""
+    label.classList.remove("preview-stale")
     return
   }
-  label.textContent = `${VIEW_LABELS[state.view]} · built ${timeAgo(lastBuild.at)}`
+  label.textContent = `${lastBuild.entry} · ${VIEW_LABELS[lastBuild.view]} · ${timeAgo(lastBuild.at)}${lastBuild.generation !== generation ? " · Edited since preview" : ""}`
+  label.classList.toggle("preview-stale", lastBuild.generation !== generation)
   // Provenance is a first-class fact in Nisaba, but the build id is expert
   // metadata: it belongs in the tooltip and the log, not in the writer's line.
   label.title = lastBuild.ms > 0
@@ -231,10 +215,15 @@ export function renderBuildHealth(): void {
     const pages = lastBuild.pages === undefined ? "" : ` · ${lastBuild.pages} page${lastBuild.pages === 1 ? "" : "s"}`
     mark.textContent = warnings > 0
       ? `${warnings} warning${warnings === 1 ? "" : "s"}${pages}`
-      : `Preview up to date${pages}`
+      : `${lastBuild.generation !== generation ? "Preview needs updating" : "Preview ready"}${pages}`
     cell.title = "Open the build log"
   }
   cell.append(mark)
+}
+
+function elDownloadDisabled(disabled: boolean): void {
+  const button = requireHost().el<HTMLButtonElement>("#download-preview")
+  if (button) button.disabled = disabled
 }
 
 /** Clears the last-build summary and repaints the surfaces that show it — the
@@ -242,6 +231,7 @@ export function renderBuildHealth(): void {
  *  The one write to lastBuild from outside the compile paths. */
 export function resetBuildSummary(): void {
   lastBuild = undefined
+  elDownloadDisabled(true)
   renderBuildLabel()
   renderBuildHealth()
 }
@@ -278,53 +268,31 @@ function collectOpenSuggestionMarks(): readonly MarkInput[] {
     }))
 }
 
-/**
- * The compile request both paths send: the current document as a single
- * in-memory source, its open suggestion marks, and the active view. One
- * builder so the manual and background paths can never drift in what they
- * ask the engine to build.
- *
- * Which engine serves it is the wasm-compile dispatcher's call (issue #20
- * stage 2c): the server route by default, an in-browser Web Worker for users
- * who opted in via the localStorage toggle — and, when the opted-in engine
- * cannot serve (artifacts not built, worker failed), the server again, with
- * one log line saying so. Both paths consume the identical request and
- * produce the identical response contract, so nothing downstream can tell
- * (or needs to tell) the difference except the log line.
- */
-function compileRequest(projectId: string, entry: string, marks: readonly MarkInput[]): Effect.Effect<api.CompileResponse, api.ApiError> {
+/** Capture all project files with the open editor's current draft. */
+function compileRequest(projectId: string, marks: readonly MarkInput[]): Effect.Effect<api.CompileResponse & { entry: string; view: CompileView }, api.ApiError> {
   const { editor, state } = requireHost()
-  const fallback = wasmCompile.fallbackReason()
-  if (fallback !== undefined) noteWasmCompileFallback(fallback)
-  return wasmCompile.compile(
-    {
-      projectId,
-      entry,
-      sources: { [entry]: editor.state.doc.toString() },
-      marks: { [entry]: marks },
-      view: state.view
-    },
-    state.references
-  )
+  return api.previewProject(projectId, state.view, {
+    document_id: state.selected!.id,
+    body: editor.state.doc.toString(),
+    marks
+  }).pipe(Effect.map((result) => ({ ...result.compile, entry: result.entry, view: result.view })))
 }
 
-/** Whether the fallback note has been logged this session. The note exists so
- *  an opted-in writer learns why builds still hit the server (usually: the
- *  artifacts are not built — `just wasm-web`); once is enough. */
-let notedWasmFallback = false
-
-function noteWasmCompileFallback(reason: string): void {
-  if (notedWasmFallback) return
-  notedWasmFallback = true
-  const { logBuild } = requireHost()
-  logBuild("info", `In-browser compile is enabled but unavailable: ${reason}. Building on the server.`)
+/** Local and received edits make the displayed PDF older than the document. */
+export function markPreviewStale(): void {
+  generation++
+  renderBuildLabel()
+  renderBuildHealth()
 }
 
-/** The engine suffix for the build log line: which path served the compile
- *  (issue #20 stage 2c). The log is the expert surface, so the writer's
- *  status line and the build label stay engine-agnostic. */
-function engineLabel(): string {
-  return wasmCompile.lastServedBy() === "wasm" ? "in-browser" : "server"
+/** Downloads the bytes of the displayed build without compiling again. */
+export function downloadPreview(): void {
+  const { state, status } = requireHost()
+  if (!lastBuild?.pdf || lastBuild.projectId !== state.project?.id) {
+    status("Update preview before downloading a PDF")
+    return
+  }
+  downloadBase64(lastBuild.pdf, `${state.project.name}.pdf`, "application/pdf")
 }
 
 /** Release after a manual compile settles: free the guard, re-enable the
@@ -370,7 +338,7 @@ function loadCleanPdf(pdf: string, onRenderError?: (error: unknown) => void): vo
 }
 
 export function compileCurrent(): void {
-  const { state, status, setText, run, renderDiagnostics, setDrawerOpen, logBuild } = requireHost()
+  const { state, status, setText, renderDiagnostics, setDrawerOpen, logBuild } = requireHost()
   const { project, selected } = state
   if (!project || !selected) { status("Open a document first"); return }
   // Re-entrancy guard: a slow earlier build must not be superseded by a later
@@ -379,7 +347,7 @@ export function compileCurrent(): void {
   // user's explicit action (button/Ctrl+S/view switch) is never silently lost.
   if (compiling) { pendingCompile = true; return }
   compiling = true
-  const entry = selected.path
+  const buildGeneration = generation
   // Capture the document id so the async success/error callbacks can bail if the
   // user has switched documents while the compile was in flight — otherwise the
   // old document's diagnostics/PDF are applied to the new document's editor/preview.
@@ -390,13 +358,10 @@ export function compileCurrent(): void {
   // Clear the previous result on EVERY attempt so a failing compile can never
   // leave a stale PDF (or stale kept pages) on the canvas — the pane must reflect
   // the source being compiled, not the last successful build.
+  resetBuildSummary()
   clearPreview()
   renderDiagnostics([])
-  run(
-    compileRequest(project.id, entry, collectOpenSuggestionMarks()).pipe(
-      Effect.tap(() => Effect.sync(settleManualCompile)),
-      Effect.tapError(() => Effect.sync(settleManualCompile))
-    ),
+  runCompile(settleManualCompile, compileRequest(project.id, collectOpenSuggestionMarks()),
     (result) => {
       // Document-switch guard: discard the result if the user has moved to a
       // different document while this compile was in flight.
@@ -406,7 +371,8 @@ export function compileCurrent(): void {
       const warnings = diagnostics.length - errors
       // A manual compile reports real elapsed time — the writer asked for this
       // build, so the label's tooltip shows what it cost.
-      lastBuild = { buildId: result.build_id, at: Date.now(), ms: Date.now() - startedAt }
+      lastBuild = { buildId: result.build_id, entry: result.entry, view: result.view, projectId: project.id, pdf: result.pdf_base64, generation: buildGeneration, at: Date.now(), ms: Date.now() - startedAt }
+      elDownloadDisabled(!result.pdf_base64 || errors > 0)
       renderBuildLabel()
       renderDiagnostics(diagnostics)
       // The PDF only matches the source when the build is clean; a build with
@@ -426,7 +392,7 @@ export function compileCurrent(): void {
       renderBuildHealth()
       logBuild(
         errors > 0 ? "err" : warnings > 0 ? "warn" : "ok",
-        `build ${result.build_id} — ${VIEW_LABELS[state.view].toLowerCase()} · ${((Date.now() - startedAt) / 1000).toFixed(2)} s${errors > 0 ? ` · ${errors} problem${errors === 1 ? "" : "s"}` : warnings > 0 ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : ""} · ${engineLabel()}`
+        `build ${result.build_id} — ${VIEW_LABELS[result.view].toLowerCase()} · ${((Date.now() - startedAt) / 1000).toFixed(2)} s${errors > 0 ? ` · ${errors} problem${errors === 1 ? "" : "s"}` : warnings > 0 ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : ""} · server`
       )
       status(errors > 0
         ? `${errors} problem${errors === 1 ? "" : "s"} stopped the preview`
@@ -460,7 +426,7 @@ export function compileCurrent(): void {
  * looks like user-driven work.
  */
 export function compileForDiagnostics(): void {
-  const { state, run, renderDiagnostics } = requireHost()
+  const { state, renderDiagnostics } = requireHost()
   const { project, selected } = state
   if (!project || !selected) return
   // Capture the document ID so the async callback can bail if the user has
@@ -471,11 +437,8 @@ export function compileForDiagnostics(): void {
   // the diagnostics this debounce was after.
   if (compiling) return
   compiling = true
-  run(
-    compileRequest(project.id, selected.path, collectOpenSuggestionMarks()).pipe(
-      Effect.tap(() => Effect.sync(settleBackgroundCompile)),
-      Effect.tapError(() => Effect.sync(settleBackgroundCompile))
-    ),
+  const buildGeneration = generation
+  runCompile(settleBackgroundCompile, compileRequest(project.id, collectOpenSuggestionMarks()),
     (result) => {
       // Document-switch guard: if the user has switched documents while this
       // background compile was in flight, discard the result.
@@ -492,7 +455,8 @@ export function compileForDiagnostics(): void {
         // `ms: 0` is deliberate: renderBuildLabel only shows a timing in the
         // tooltip when ms > 0, and a background build the writer never asked
         // for should not claim one.
-        lastBuild = { buildId: result.build_id, at: Date.now(), ms: 0 }
+        lastBuild = { buildId: result.build_id, entry: result.entry, view: result.view, projectId: project.id, pdf: result.pdf_base64, generation: buildGeneration, at: Date.now(), ms: 0 }
+        elDownloadDisabled(false)
         renderBuildLabel()
         // A render failure is logged (in loadCleanPdf) but not surfaced:
         // showing it would clobber the last good PDF the writer is still
@@ -523,4 +487,10 @@ function drainPendingCompile(): void {
  *  must not stomp the disabled state an in-flight manual compile just set. */
 export function isCompiling(): boolean {
   return compiling
+}
+
+function runCompile<A>(settle: () => void, effect: Effect.Effect<A, api.ApiError>, success: (result: A) => void, failure: (error: unknown) => void): void {
+  requireHost().run(effect,
+    (result) => { try { success(result) } finally { settle() } },
+    (error) => { try { failure(error) } finally { settle() } })
 }

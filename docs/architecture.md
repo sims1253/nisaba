@@ -16,9 +16,9 @@ The following table is validated by CI against the Cargo workspace members
 | `nisaba-sync`      | Rust        | Loro CRDT authority, relay, presence, op-log      | impl. (`/healthz`, `/health/ready`) |
 | `nisaba-app`       | Rust        | CRUD, references, export orchestration, auth      | impl. (`/healthz`, `/health/ready`; Postgres + S3, inline JWKS) |
 | `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
-| `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection and bibliography wrapper for the web client | impl. (pure; used by the web client's optional in-browser compile path) |
+| `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection and bibliography wrapper for the web client | impl. (pure; experimental WASM library) |
 | `nisaba-compile-core` | Rust (lib)  | Typst workers, compilation, span map, outline, and diagnostics | impl. (pure, no I/O, no async) |
-| `nisaba-compile-wasm` | Rust (lib, wasm-bindgen) | Compile wrapper for the web client | impl. (used by the web client's optional in-browser compile path) |
+| `nisaba-compile-wasm` | Rust (lib, wasm-bindgen) | Compile wrapper for the web client | impl. (experimental WASM library) |
 | `nisaba-auth`      | Rust (lib)  | Shared role vocabulary (`Role` spellings for tokens and the app/sync authz contract) | impl. |
 | `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
 | `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
@@ -30,9 +30,8 @@ The following table is validated by CI against the Cargo workspace members
 
 `nisaba-compile-core` hosts Typst in-process and keeps project workers warm
 between requests. The compile service adds HTTP authentication, request limits,
-concurrency control, and timeouts. The browser uses the same compilation core
-through `nisaba-compile-wasm` and the same projections through
-`nisaba-core-wasm`. Golden tests compare native and WASM output, including PDFs.
+concurrency control, and timeouts. The experimental WASM libraries expose the same compilation core
+through `nisaba-compile-wasm` and projections through `nisaba-core-wasm`. Golden tests compare native and WASM output, including PDFs.
 
 ## 2. Topology
 
@@ -81,9 +80,7 @@ policy where egress restriction is required.
 4. **Compile (compile).** `app` sends the **projection** of the document to `compile` as plain Typst sources. `compile` knows nothing
    about CRDTs, marks or reviews; it returns PDF, diagnostics, outline, and span
    map. Warm state is keyed by `project_id`.
-   A tab that opts into the experimental in-browser compile (§4.1) runs the same
-   projection + compile pipeline client-side, in a Web Worker, and skips the
-   HTTP round trip; the server path remains the default and the fallback.
+   Workspace previews use the server project pipeline (§4.1.1).
 5. **Store reference files (seaweedfs).** Uploaded full-text PDFs land in
    `nisaba-blobs`. Object keys are opaque ids — **never citation numbers**. Compile/export artifacts are still returned directly;
    content-addressed artifact storage is future work.
@@ -121,28 +118,28 @@ Content-Type: application/json
   sends only the projected sources here.
 - Warm `comemo` caches persist across calls for the same `project_id`.
 
-#### 4.1.1 The optional in-browser compile path (experimental)
+#### 4.1.1 Project previews
 
-The default compile engine is the server. To opt into browser compilation,
-build the artifacts with `just wasm-web`, set
-`localStorage.setItem("nisaba.compilePath", "wasm")` in the browser console,
-and reload. Remove that key to return to the default. The preference applies
-to that browser origin; each tab runs its own Web Worker.
+The workspace calls `POST /projects/{project_id}/preview` with a view and an
+optional draft of the open document. The app captures each document's collaborative
+text and review marks together, falling back to its stored body only when sync has
+no state for that document. An unavailable sync service fails the request.
 
-The worker in `web/src/wasm-compile/` loads the compiler and projection modules
-on demand, projects the requested view, converts Markdown headings, and injects
-bibliography and redline helpers. It caches workers by project. The build log
-identifies the engine used for each manual build.
+The project's `entry_document_id` selects the compilation entrypoint. It follows
+renames and resets when that document is deleted. Without an explicit selection,
+the app uses `main.typ`, then the first path in lexical order.
 
-`just wasm-web` requires `wasm-bindgen-cli 0.2.127` and the
-`wasm32-unknown-unknown` target. It writes to the ignored
-`web/src/wasm-generated/` directory. Embedded fonts make the compiler download
-large, so opted-in tabs prefetch it while idle.
+Preview and export share source projection, bibliography injection, and redline
+support. The response includes the actual entrypoint and view. The browser keeps
+the resulting PDF for direct download without another compile.
 
-Missing artifacts, unavailable workers, and worker startup or runtime failures
-fall back to server compilation. Web installation, checks, and builds work
-without the artifacts. Exports and API clients always use the server. Browser
-compiles do not produce app audit events.
+Each request captures document states independently. It does not yet create a
+durable project checkpoint or claim an atomic read across documents. The browser
+still uses REST autosave; replacing that second write path remains work to do.
+
+The workspace uses server compilation. The WASM compiler libraries and experimental
+client dispatcher remain available for development, but the workspace does not
+use the `nisaba.compilePath` preference.
 
 ### 4.2 `sync` — WebSocket (+ an internal state read)
 
@@ -208,22 +205,13 @@ edits between peers and *reads* the authoritative body from the app (via
 `GET /internal/document/{document_id}/body`) to seed/verify rooms; it never
 writes document bodies back to the database.
 
-Export review-marks data flow (the reverse internal hop): review state
-(suggestions/comments, their statuses, Loro cursors) is replicated inside each
-document's CRDT `review` container via the sync relay. On
-`POST /projects/{project_id}/exports`, the app fetches every document's whole
-state from sync (`GET /internal/docs/{doc_id}/state`, service token), decodes
-the `review` container with exactly the web compile path's semantics
-(`services/app/src/review_state.rs`: open non-orphaned suggestions only, cursor
-resolution with raw-offset fallback, end clamped to document length), and
-projects the marks into the exported sources per view. A document with no
-synced state exports with an empty mark list; if sync is unreachable the
-export **fails** (502) rather than silently dropping review marks —
-correctness over availability. The same policy enforces **exports at rest**:
-mark offsets are resolved against the CRDT text, so the app refuses the export
-while the stored body lags the CRDT (a document mid-edit — the web client's
-body save is debounced) instead of projecting marks over text they were never
-resolved against.
+Preview and export read text and review marks from the same per-document sync
+snapshot. They never project cursor positions from that snapshot over the REST
+body. Documents without collaborative state use their stored body and no marks.
+A sync failure fails the request rather than silently dropping review state.
+
+Ordinary export packages the compiled sources and PDF. `include_fulltexts: true`
+adds the evidence bundle and requires the cited reference attachments.
 
 Export compiles the selected entrypoint with the requested review projection.
 The entrypoint controls which other files contribute to the PDF through Typst
