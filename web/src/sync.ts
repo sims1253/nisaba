@@ -90,27 +90,10 @@ function importRemote(doc: LoroDoc, bytes: Uint8Array): void {
 }
 
 /**
- * Connect a Loro replica to the Nisaba binary relay. This is intentionally a
- * small adapter: the server owns framing, while Loro owns CRDT update bytes.
- * A failed handshake/import is reported as unsupported, never as a successful
- * local-only connection.
- *
- * Bug N1 (CRDT duplication): the caller seeds the persisted body into both
- * CodeMirror and the replica before calling this (so the editor shows content
- * immediately and the loro-codemirror binding's init reconcile does not blank
- * it). That local seed carries a fresh peer id, so two clients seeding the same
- * body and both pushing would merge at the relay as concurrent inserts and
- * duplicate the text. The welcome handler guarantees a single authoritative
- * origin instead: the first client to reach an empty relay pushes its seed
- * (becoming the origin); any later client clears its local seed (driven through
- * CodeMirror via `onBeforeAdopt`, so the binding keeps CM and the replica in
- * sync) and adopts the relay's snapshot. The clear is rebaselined below
- * `syncFrom`, so it is never exported back to the relay — it only discards the
- * duplicate local seed.
- *
- * The connection is self-healing: a dropped socket reconnects with exponential
- * backoff, a heartbeat keeps the peer alive past the presence TTL, and after
- * every reconnect the replica re-imports server catch-up so it reconverges.
+ * Start with an empty replica. The first welcome establishes its origin from
+ * the relay snapshot or the stored body, then onReady attaches the editor.
+ * Reconnects merge catch-up into the existing replica and resend local history
+ * since the confirmed baseline. Sending is not a persistence acknowledgment.
  */
 export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection {
   let socket: WebSocket | undefined
@@ -129,14 +112,9 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
   // disconnect gap.
   let firstHandshake = true
   let retries = 0
-  // The empty baseline: everything committed above it (the locally-seeded body)
-  // is eligible to be exported to the relay. On the first welcome it is either
-  // (a) used wholesale to push the seed as the origin, then advanced to the
-  // post-push vector; or (b) discarded by clearing the seed and rebaselining to
-  // the post-import vector (the relay is the origin). After that, live local
-  // edits stream via subscribeLocalUpdates and only genuinely-new ops are sent.
-  // A fresh empty vector is correct because the replica was created empty and
-  // the seed is the only thing committed before connect.
+  // Only the first server snapshot is a confirmed baseline. Sending bytes does
+  // not acknowledge persistence: retain later operations for every reconnect,
+  // including updates whose previous send was interrupted. Loro deduplicates them.
   let syncFrom = new VersionVector(undefined)
   const status = (value: SyncStatus, detail?: string): void => options.onStatus?.(value, detail)
 
@@ -269,7 +247,6 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
               doc.getText("text").updateByLine(options.seedBody)
               doc.commit({ origin: "load" })
               sendUpdate(doc.export({ mode: "update", from: syncFrom }))
-              syncFrom = doc.oplogVersion()
               unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
               options.onReady?.()
             } else {
@@ -278,16 +255,13 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
               options.onReady?.()
             }
           } else {
-            // A reconnect welcome: the local replica still holds edits the user
-            // typed during the disconnect gap. Do NOT call onBeforeAdopt (do NOT
-            // clear the editor) — instead import the relay's catch-up so the CRDT
-            // merges relay state with our local gap edits, preserving both.
-            // Push our gap edits first so the relay and other peers converge too.
+            // Keep the existing replica, resend unconfirmed operations, and
+            // merge remote catch-up. Reattach the listener removed on close.
             handshakeComplete = true
             stopWelcomeTimer()
             sendUpdate(doc.export({ mode: "update", from: syncFrom }))
             if (relayHadContent) importRemote(doc, frame.catchup.bytes)
-            syncFrom = doc.oplogVersion()
+            unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
           }
           status("connected")
           // Announce ourselves as soon as the handshake completes (and again
