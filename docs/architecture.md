@@ -137,9 +137,9 @@ Each request captures document states independently. It does not yet create a
 durable project checkpoint or claim an atomic read across documents. The browser
 still uses REST autosave; replacing that second write path remains work to do.
 
-The workspace uses server compilation. The WASM compiler libraries and experimental
-client dispatcher remain available for development, but the workspace does not
-use the `nisaba.compilePath` preference.
+The workspace uses server compilation. WASM compiler libraries remain available
+for development; the old browser dispatcher and `nisaba.compilePath` preference
+have been removed.
 
 ### 4.2 `sync` — WebSocket (+ an internal state read)
 

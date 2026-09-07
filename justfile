@@ -158,13 +158,8 @@ web-test:
 web-lint:
     bun install --frozen-lockfile && cd web && bun run lint
 
-# Build the OPTIONAL in-browser compile WASM artifacts (issue #20 stage 2c)
-# into web/src/wasm-generated/ (gitignored — never committed; the compile
-# module is tens of megabytes, mostly embedded typst fonts). Without these
-# files the web client builds and runs exactly as shipped: compiles go to the
-# server, and an opted-in tab (localStorage nisaba.compilePath=wasm) logs one
-# line saying why it fell back. With them, an opted-in tab compiles in a Web
-# Worker instead (docs/architecture.md §4.1).
+# Build experimental compiler WASM artifacts into web/src/wasm-generated/
+# (gitignored). These libraries are not used by the workspace build path.
 #
 # Prerequisites (NOT needed for any other web work): the wasm32 target
 # (`rustup target add wasm32-unknown-unknown`) and wasm-bindgen-cli matching

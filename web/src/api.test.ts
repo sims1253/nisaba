@@ -111,16 +111,19 @@ describe("app service contract", () => {
     expect(JSON.parse(String(request?.body))).toEqual({ entry: "chapters/main.typ", view: "proposed" })
   })
 
-  it("compiles and attaches the bearer token", async () => {
+  it("previews the project and attaches the bearer token", async () => {
     vi.stubGlobal("localStorage", {
       getItem: () => JSON.stringify({ accessToken: "token-1" }), setItem: () => undefined, removeItem: () => undefined
     })
     vi.stubGlobal("fetch", vi.fn(async () => ok({
-      pdf_base64: "JVBERg==", span_map: [], diagnostics: [], outline: [], build_id: "b2"
+      entry: "main.typ", view: "proposed", compile: {
+        pdf_base64: "JVBERg==", span_map: [], diagnostics: [], outline: [], build_id: "b2"
+      }
     })))
-    await Effect.runPromise(api.compile({ projectId: "p1", entry: "main.typ", sources: { "main.typ": "= Hi" } }))
+    await Effect.runPromise(api.previewProject("p1", "proposed", { document_id: "d1", body: "= Hi", marks: [] }))
     const [url, request] = vi.mocked(fetch).mock.calls[0] ?? []
-    expect(url).toBe("/api/compile")
+    expect(url).toBe("/api/projects/p1/preview")
+    expect(JSON.parse(request?.body as string)).toEqual({ view: "proposed", draft: { document_id: "d1", body: "= Hi", marks: [] } })
     expect(new Headers(request?.headers).get("authorization")).toBe("Bearer token-1")
   })
 

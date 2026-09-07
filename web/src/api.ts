@@ -105,10 +105,6 @@ const Fulltext = Schema.Struct({
 })
 export type Fulltext = typeof Fulltext.Type
 
-// Exported as a value (not just the type): the in-browser compile path
-// (wasm-compile/) decodes its responses through the same schema, so a drift
-// between the wasm boundary's output and this contract surfaces as a typed
-// error on whichever path produced it, not as `[object Object]` downstream.
 export const CompileResponse = Schema.Struct({
   pdf_base64: Schema.NullOr(Schema.String),
   span_map: Schema.Array(Schema.Unknown),
@@ -382,31 +378,6 @@ export const exportProject = (
   view: CompileView = "proposed"
 ): Effect.Effect<ExportResponse, ApiError> =>
   request(path("projects", projectId, "exports"), decoder(ExportResponse), json({ entry, view }))
-
-/**
- * Compiles sources to a PDF.
- *
- * Marks travel with the request: the app applies the projection for `view` server-side
- * and forwards only the projected text to the compile service, which never sees marks.
- */
-export const compile = (input: {
-  readonly projectId: string
-  readonly entry: string
-  readonly sources: Readonly<Record<string, string>>
-  readonly marks?: Readonly<Record<string, readonly MarkInput[]>>
-  readonly view?: CompileView
-}): Effect.Effect<CompileResponse, ApiError> =>
-  request(
-    "/api/compile",
-    decoder(CompileResponse),
-    json({
-      project_id: input.projectId,
-      entry: input.entry,
-      sources: input.sources,
-      marks: input.marks ?? {},
-      view: input.view ?? "proposed"
-    })
-  )
 
 const ProjectPreview = Schema.Struct({
   entry: Schema.String,

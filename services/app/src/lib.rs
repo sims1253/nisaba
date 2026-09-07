@@ -1855,9 +1855,8 @@ async fn export_project(
     let compile = s.compile.compile(compile_request).await?;
     let pdf = decode_compile_pdf(&compile)?;
     let date = Utc::now().format("%Y-%m-%d").to_string();
-    // The download is the portable ARCHIVE, not the compiled PDF; naming it
-    // after the PDF filename misled every client (the archive contains all
-    // documents + per-document RIS + the PDF). Use a stable, descriptive name.
+    // Package projected sources (including generated bibliography) and the PDF.
+    // Reference evidence is included only when include_fulltexts was requested.
     let zip_filename = format!("{}-export-{}.zip", project.name, date);
     let archive_input = ProjectArchiveInput {
         date,
