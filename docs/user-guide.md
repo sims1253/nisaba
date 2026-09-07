@@ -107,6 +107,9 @@ Open **Export**, choose an entry document, and click **Prepare download** to bui
 a new PDF and source archive from current collaborative project files. The archive
 includes the projected Typst sources and generated bibliography needed by that build.
 Cited references do not need full-text attachments for this ordinary export.
+Source paths and extensions stay intact under `documents/`. To compile the extracted
+project locally, run `typst compile --root . main.typ` from that directory, replacing
+`main.typ` with your chosen entrypoint.
 
 API clients can request `include_fulltexts: true` on an export to add the reference
 evidence bundle. This option requires a PDF for every cited reference.

@@ -143,7 +143,7 @@ pub fn build_project_archive_from_owned(
     finish_archive(files, pdf_filename, &bibliographies)
 }
 
-/// The sanitized archive path for one document source, or a compliance error for an
+/// The unchanged archive path for one document source, or a compliance error for an
 /// unsafe path.
 fn document_entry_path(path: &str) -> Result<String, ExportError> {
     safe_path(path).map_or_else(
@@ -199,18 +199,18 @@ fn safe_component(value: &str) -> String {
     safe_filename_component(value, "unnamed")
 }
 
-fn safe_path(value: &str) -> Option<String> {
-    if value.is_empty() || value.starts_with('/') || value.contains('\\') {
+fn safe_path(value: &str) -> Option<&str> {
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.contains(['\\', ':'])
+        || value.chars().any(char::is_control)
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+    {
         return None;
     }
-    let mut parts = Vec::new();
-    for part in value.split('/') {
-        if part.is_empty() || part == "." || part == ".." || part.contains('\0') {
-            return None;
-        }
-        parts.push(safe_component(part));
-    }
-    Some(parts.join("/"))
+    Some(value)
 }
 
 /// Write the export as a byte-stable ZIP. Files are sorted, stored without compression,
@@ -253,7 +253,7 @@ impl ZipWriter {
         let crc = crc32(data);
         write_u32(&mut self.bytes, 0x0403_4b50);
         write_u16(&mut self.bytes, 20);
-        write_u16(&mut self.bytes, 0);
+        write_u16(&mut self.bytes, 1 << 11); // UTF-8 filenames
         write_u16(&mut self.bytes, 0);
         write_u16(&mut self.bytes, 0);
         write_u16(&mut self.bytes, 0);
@@ -279,7 +279,7 @@ impl ZipWriter {
             write_u32(&mut self.bytes, 0x0201_4b50);
             write_u16(&mut self.bytes, 20);
             write_u16(&mut self.bytes, 20);
-            write_u16(&mut self.bytes, 0);
+            write_u16(&mut self.bytes, 1 << 11); // UTF-8 filenames
             write_u16(&mut self.bytes, 0);
             write_u16(&mut self.bytes, 0);
             write_u16(&mut self.bytes, 0);
@@ -373,6 +373,34 @@ mod tests {
             "2026-04-08_Mueller.pdf"
         );
         assert_eq!(safe_component(""), "unnamed");
+    }
+
+    #[test]
+    fn source_paths_preserve_extensions_spaces_and_unicode() {
+        let input = ProjectArchiveInput {
+            pdf: b"%PDF-1.7".to_vec(),
+            documents: [
+                (
+                    "main.typ".into(),
+                    "#include \"chapters/Über uns.typ\"".into(),
+                ),
+                ("chapters/Über uns.typ".into(), "= Results".into()),
+            ]
+            .into_iter()
+            .collect(),
+            ..ProjectArchiveInput::default()
+        };
+        let archive = build_project_archive(&input).unwrap();
+        for (path, source) in &input.documents {
+            let exported = archive
+                .files
+                .iter()
+                .find(|file| file.path == format!("documents/{path}"))
+                .unwrap();
+            assert_eq!(exported.contents, source.as_bytes());
+        }
+        assert!(safe_path("C:/escape.typ").is_none());
+        assert!(safe_path("chapter\n.typ").is_none());
     }
 
     #[test]
@@ -521,6 +549,7 @@ mod tests {
         let mut seen: Vec<(String, usize)> = Vec::new();
         for _ in 0..count {
             assert_eq!(le32(cursor), 0x0201_4b50, "central header signature");
+            assert_eq!(le16(cursor + 8), 1 << 11, "UTF-8 central flag");
             let crc = le32(cursor + 16);
             let size = usize::try_from(le32(cursor + 20)).unwrap();
             let name_len = usize::from(le16(cursor + 28));
@@ -532,6 +561,7 @@ mod tests {
 
             // The local header at the recorded offset agrees with the central record.
             assert_eq!(le32(local_off), 0x0403_4b50, "local header signature");
+            assert_eq!(le16(local_off + 6), 1 << 11, "UTF-8 local flag");
             assert_eq!(le32(local_off + 14), crc, "local CRC for {name}");
             assert_eq!(le32(local_off + 18), le32(cursor + 20), "compressed size");
             assert_eq!(le32(local_off + 22), le32(cursor + 24), "uncompressed size");
