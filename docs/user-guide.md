@@ -62,7 +62,7 @@ With the review queue focused, use `↑`/`↓` to move, `Enter` to show an item,
 
 ## Choose a preview version
 
-The preview switch selects the view for the next build. **Edited since preview** means the document has changed since that PDF was built. **Download PDF** above the preview downloads the displayed PDF without building it again.
+The preview switch selects the view for the next build. **Edited since preview** means the document has changed since that PDF was built. **Download PDF** above the preview downloads the displayed PDF without building it again. If an update fails, the last successful PDF stays visible while you fix the problems.
 
 | Version | What you see |
 |---------|--------------|

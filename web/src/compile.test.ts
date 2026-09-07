@@ -5,7 +5,7 @@ import type { EditorView } from "@codemirror/view"
 import type { LoroDoc } from "loro-crdt"
 import type { VirtualPdfViewer } from "./pdf-viewer"
 import type { CompileHost, CompileWorkspace } from "./compile"
-import { compileCurrent, downloadPreview, initCompile, markPreviewStale, resetBuildSummary } from "./compile"
+import { compileCurrent, compileForDiagnostics, downloadPreview, initCompile, markPreviewStale, resetBuildSummary } from "./compile"
 import * as api from "./api"
 import { downloadBase64 } from "./effects"
 
@@ -77,4 +77,47 @@ describe("project preview", () => {
     downloadPreview()
     expect(downloadBase64).toHaveBeenCalledWith("second-pdf", "Paper.pdf", "application/pdf")
   })
+
+  it("keeps the last downloadable PDF when a manual update has errors", async () => {
+    compileCurrent()
+    await Promise.all(jobs)
+    markPreviewStale()
+    const failed = result("invalid-pdf")
+    vi.mocked(api.previewProject).mockReturnValue(Effect.succeed({ ...failed, compile: {
+      ...failed.compile, diagnostics: [{ severity: "error", message: "unknown variable" }]
+    } }))
+    compileCurrent()
+    await Promise.all(jobs)
+    downloadPreview()
+    expect(downloadBase64).toHaveBeenCalledWith("first-pdf", "Paper.pdf", "application/pdf")
+    expect((document.querySelector("#download-preview") as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("applies a project build after the author switches chapters", async () => {
+    compileCurrent()
+    state.selected = { ...state.selected!, id: "other", path: "other.typ" }
+    await Promise.all(jobs)
+    downloadPreview()
+    expect(downloadBase64).toHaveBeenCalledWith("first-pdf", "Paper.pdf", "application/pdf")
+  })
+
+  it("discards a result after leaving and reopening the project", async () => {
+    compileCurrent()
+    resetBuildSummary()
+    await Promise.all(jobs)
+    downloadPreview()
+    expect(downloadBase64).not.toHaveBeenCalled()
+  })
+
+  it("runs a background update queued during an earlier build", async () => {
+    compileCurrent()
+    vi.mocked(api.previewProject).mockReturnValue(Effect.succeed(result("latest-pdf")))
+    markPreviewStale()
+    compileForDiagnostics()
+    await jobs[0]
+    await Promise.all(jobs)
+    downloadPreview()
+    expect(downloadBase64).toHaveBeenCalledWith("latest-pdf", "Paper.pdf", "application/pdf")
+  })
+
 })
