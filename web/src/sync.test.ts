@@ -32,6 +32,35 @@ describe("sync access failures", () => {
 
 
 describe("sync reconnect", () => {
+  it("retries when the relay is still releasing the previous connection", () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    class FakeSocket extends EventTarget {
+      static readonly OPEN = 1
+      readyState = 1
+      send = vi.fn()
+      constructor() { super(); sockets.push(this) }
+      close(): void { this.readyState = 3; this.dispatchEvent(new Event("close")) }
+    }
+    vi.stubGlobal("WebSocket", FakeSocket)
+    const onStatus = vi.fn()
+    const connection = connectSync(new LoroDoc(), { documentId: "doc-1", onStatus })
+    try {
+      sockets[0]!.dispatchEvent(new Event("open"))
+      sockets[0]!.dispatchEvent(new MessageEvent("message", { data: encodeSyncFrame({
+        type: "error", code: 4500, message: "handshake error: peer 123 already connected to document doc-1"
+      }) }))
+      vi.advanceTimersByTime(1000)
+      expect(sockets).toHaveLength(2)
+      sockets[1]!.dispatchEvent(new Event("open"))
+      sockets[1]!.dispatchEvent(new MessageEvent("message", { data: encodeSyncFrame({
+        type: "welcome", status: 1, note: "", catchup: { type: "none" }
+      }) }))
+      expect(onStatus).toHaveBeenLastCalledWith("connected", undefined)
+      expect(onStatus.mock.calls.some(([status]) => status === "unsupported")).toBe(false)
+    } finally { connection.close(); vi.useRealTimers() }
+  })
+
   it.each([false, true])("resumes streaming and retries interrupted sends (drop first catch-up: %s)", (dropFirstCatchup) => {
     vi.useFakeTimers()
     const sockets: FakeSocket[] = []
