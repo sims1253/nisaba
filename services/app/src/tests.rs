@@ -253,8 +253,15 @@ async fn document_crud_is_flat_path_addressed_and_revision_checked() {
 #[tokio::test]
 async fn unsafe_and_duplicate_paths_are_rejected() {
     let app = router(state());
-    let (project, _) = create_project_and_document(app.clone()).await;
-    for path in ["../secret.typ", "/absolute.typ", "a//b.typ", r"a\b.typ"] {
+    let (project, document) = create_project_and_document(app.clone()).await;
+    for path in [
+        "../secret.typ",
+        "/absolute.typ",
+        "a//b.typ",
+        r"a\b.typ",
+        "chapter:notes.typ",
+        "C:/notes.typ",
+    ] {
         let response = request(
             app.clone(),
             "POST",
@@ -265,6 +272,16 @@ async fn unsafe_and_duplicate_paths_are_rejected() {
         )
         .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let renamed = request(
+            app.clone(),
+            "PATCH",
+            &format!("/projects/{}/documents/{}", project.id, document.id),
+            "alice",
+            "author",
+            Some(json!({"path": path})),
+        )
+        .await;
+        assert_eq!(renamed.status(), StatusCode::BAD_REQUEST, "rename {path}");
     }
     let duplicate = request(
         app,

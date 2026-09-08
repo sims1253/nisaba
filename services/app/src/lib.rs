@@ -651,7 +651,7 @@ fn valid_document_path(path: &str) -> bool {
     !path.is_empty()
         && path == path.trim()
         && !path.starts_with('/')
-        && !path.contains('\\')
+        && !path.contains(['\\', ':'])
         && path.chars().count() <= 1024
         && !path.chars().any(char::is_control)
         && path
@@ -730,7 +730,7 @@ async fn create_document(
     let project = project_for(&s, &pid).await?;
     if !valid_document_path(&r.path) {
         return Err(AppError::BadRequest(
-            "path must be a safe project-relative path".into(),
+            "Use a project-relative path without colons, backslashes, or . and .. segments".into(),
         ));
     }
     validate_text(&r.title, "title", 2048)?;
@@ -823,7 +823,8 @@ async fn patch_document(
     if let Some(x) = r.path {
         if !valid_document_path(&x) {
             return Err(AppError::BadRequest(
-                "path must be a safe project-relative path".into(),
+                "Use a project-relative path without colons, backslashes, or . and .. segments"
+                    .into(),
             ));
         }
         v.path = x;
