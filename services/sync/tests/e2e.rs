@@ -619,15 +619,15 @@ async fn protocol_two_receipts_confirm_persistence_and_duplicate_retries() {
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
                 let message = ws.next().await.unwrap().unwrap();
-                if let Message::Binary(raw) = message {
-                    if let Frame::Update(receipt) = Frame::decode(&raw, 1 << 24).unwrap() {
-                        assert_eq!(receipt, bytes);
-                        assert_eq!(
-                            log.read_all(&DocId::new("receipt").unwrap()).await.unwrap(),
-                            vec![bytes.clone()]
-                        );
-                        break;
-                    }
+                if let Message::Binary(raw) = message
+                    && let Frame::Update(receipt) = Frame::decode(&raw, 1 << 24).unwrap()
+                {
+                    assert_eq!(receipt, bytes);
+                    assert_eq!(
+                        log.read_all(&DocId::new("receipt").unwrap()).await.unwrap(),
+                        vec![bytes.clone()]
+                    );
+                    break;
                 }
             }
         })

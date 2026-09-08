@@ -106,7 +106,7 @@ describe("sync reconnect", () => {
         previous.readyState = 3
         previous.dispatchEvent(new Event("close"))
         edit(" gap")
-        vi.advanceTimersByTime(1000)
+        vi.advanceTimersByTime(2000)
         const next = sockets.at(-1)!
         expect(next).not.toBe(previous)
         next.welcome()

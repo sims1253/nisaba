@@ -416,13 +416,10 @@ async fn handle_message(
             } else if session.acknowledge_updates {
                 // Echo the exact batch only after handle_update made it durable.
                 // Legacy clients retain the original no-echo contract.
-                if socket
+                return socket
                     .send(Message::Binary(Frame::Update(b).encode().into()))
                     .await
-                    .is_err()
-                {
-                    return false;
-                }
+                    .is_ok();
             }
             true
         }
