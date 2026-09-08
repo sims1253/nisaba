@@ -7,7 +7,8 @@ test harness, or a third-party peer) must speak. The implementation of record is
 
 - **Transport:** a single WebSocket connection per document per peer. All frames
   are **binary** WebSocket messages; text frames are ignored.
-- **Protocol version:** `1` (carried in every `HELLO`).
+- **Protocol version:** `2` (carried in every `HELLO`). The server also accepts
+  legacy version `1`, which does not receive persistence receipts.
 - **Encoding:** big-endian integers; variable-length fields are
   `[u32 be length][bytes]`. A length-prefixed string is a length-prefixed UTF-8
   blob.
@@ -62,7 +63,8 @@ is therefore `[u8 5][u32 4][u32 0]`.
    `last_vv` is empty or the gap cannot be filled incrementally).
 4. Steady state: the client ships local edits as `UPDATE`; the server imports
    them into the authority and forwards the **same opaque bytes** to every other
-   peer. Presence is carried out-of-band via `PRESENCE` / `HEARTBEAT`.
+   peer. With protocol 2, the sender receives the same `UPDATE` bytes as a
+   persistence receipt. Presence is carried out-of-band via `PRESENCE` / `HEARTBEAT`.
 5. Reconnect: a peer that kept its replica sends `HELLO` with its retained
    `last_vv`; the server replies with the incremental delta.
 6. Graceful leave: send `BYE`. A slow peer or one whose presence expires is
@@ -77,5 +79,19 @@ updates and inspects reviewer changes to enforce the review policy: a text
 change must have a corresponding review record. This check is not a complete
 validation of review semantics; see [security](../../docs/security.md).
 Read-only peers cannot send updates.
+
+For protocol 2, the server echoes an accepted update to its sender only after
+its bytes are durable. A retry whose operations are already in the authority
+receives the same receipt without another log append. Rejected updates receive
+an error and no receipt. New updates waiting for dependencies are still logged.
+
+The browser keeps local update batches until their matching receipts arrive.
+It sends one batch at a time, preserving transaction boundaries and the 4 MiB
+per-update limit. Reconnect retries these original batches, never an aggregate
+of the document's history or other peers' updates. This queue lives in memory;
+it does not protect unsent edits when the tab closes.
+
+Deploy the protocol-2 relay before the new web client. Legacy clients can still
+connect to the upgraded relay; an old relay rejects protocol-2 clients explicitly.
 
 Presence is ephemeral. The service does not store it in the op log or snapshots.

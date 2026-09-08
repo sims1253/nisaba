@@ -1506,7 +1506,7 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
   if (dot) dot.dataset.state = effective
   // Keep the explanation in the tooltip and the short state in the status bar.
   const short = syncShortLabel(value)
-  const explanation = browserOffline ? "You are offline — your work is still saved to this device and syncs when you reconnect"
+  const explanation = browserOffline ? "You are offline. Keep this tab open until you reconnect; recent edits may not be saved."
     : value === "connected" ? "Connected: other people see your edits as you type"
       : value === "connecting" ? "Reconnecting to the collaboration server…"
         : value === "unsupported" ? `Collaboration unavailable${detail ? ` · ${detail}` : ""}`
@@ -4424,7 +4424,7 @@ window.addEventListener("pagehide", (event) => {
 // Browser offline status overrides the last relay status.
 window.addEventListener("offline", () => {
   browserOffline = true
-  setSyncStatus(lastSyncStatus ?? "disconnected", "Network offline · changes saved locally")
+  setSyncStatus(lastSyncStatus ?? "disconnected", "Offline · keep this tab open until you reconnect")
 })
 window.addEventListener("online", () => {
   browserOffline = false
