@@ -100,3 +100,84 @@ async fn fresh_doc_has_no_snapshot() {
         String::new()
     );
 }
+
+#[tokio::test]
+async fn duplicate_retries_do_not_grow_the_durable_log() {
+    use nisaba_sync::{MemoryOpLogStore, MemorySnapshotStore, OpLogStore};
+    let log = Arc::new(MemoryOpLogStore::default());
+    let id = DocId::new("retries").unwrap();
+    let room = Arc::new(
+        DocRoom::open(
+            id.clone(),
+            log.clone(),
+            Arc::new(MemorySnapshotStore::default()),
+            Arc::new(Config::default()),
+            Arc::new(SystemClock),
+            Arc::new(nisaba_sync::DenyAllSeedVerifier),
+        )
+        .await
+        .unwrap(),
+    );
+    let mut peer = SimPeer::new(1, Role::Author);
+    peer.connect(&room, &[]).await;
+    peer.insert(0, "persist once");
+    let update = peer.captured_updates().remove(0);
+    let (a, b) = tokio::join!(
+        room.handle_update(peer.peer, peer.role, &update),
+        room.handle_update(peer.peer, peer.role, &update)
+    );
+    a.unwrap();
+    b.unwrap();
+    room.handle_update(peer.peer, peer.role, &update)
+        .await
+        .unwrap();
+    assert_eq!(log.len(&id).await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn updates_waiting_for_dependencies_are_still_durable() {
+    use nisaba_sync::{MemoryOpLogStore, MemorySnapshotStore, OpLogStore};
+    let log = Arc::new(MemoryOpLogStore::default());
+    let snapshots = Arc::new(MemorySnapshotStore::default());
+    let id = DocId::new("dependencies").unwrap();
+    let room = Arc::new(
+        DocRoom::open(
+            id.clone(),
+            log.clone(),
+            snapshots.clone(),
+            Arc::new(Config::default()),
+            Arc::new(SystemClock),
+            Arc::new(nisaba_sync::DenyAllSeedVerifier),
+        )
+        .await
+        .unwrap(),
+    );
+    let mut peer = SimPeer::new(1, Role::Author);
+    peer.connect(&room, &[]).await;
+    peer.insert(0, "first");
+    peer.insert(5, " second");
+    let updates = peer.captured_updates();
+    room.handle_update(peer.peer, peer.role, &updates[1])
+        .await
+        .unwrap();
+    assert_eq!(log.len(&id).await.unwrap(), 1);
+    drop(room);
+    let room = DocRoom::open(
+        id.clone(),
+        log.clone(),
+        snapshots,
+        Arc::new(Config::default()),
+        Arc::new(SystemClock),
+        Arc::new(nisaba_sync::DenyAllSeedVerifier),
+    )
+    .await
+    .unwrap();
+    room.handle_update(peer.peer, peer.role, &updates[0])
+        .await
+        .unwrap();
+    let restored = loro::LoroDoc::new();
+    restored
+        .import(&room.export_state().unwrap().unwrap())
+        .unwrap();
+    assert_eq!(restored.get_text("text").to_string(), "first second");
+}

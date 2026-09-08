@@ -1,5 +1,4 @@
 import type { LoroDoc } from "loro-crdt"
-import { VersionVector } from "loro-crdt"
 import { decodeSyncFrame, encodeSyncFrame } from "./protocol"
 import { decodeRoster, encodePresenceState, type PresencePeer, type PresenceState } from "./presence"
 
@@ -92,8 +91,8 @@ function importRemote(doc: LoroDoc, bytes: Uint8Array): void {
 /**
  * Start with an empty replica. The first welcome establishes its origin from
  * the relay snapshot or the stored body, then onReady attaches the editor.
- * Reconnects merge catch-up into the existing replica and resend local history
- * since the confirmed baseline. Sending is not a persistence acknowledgment.
+ * Reconnects merge catch-up and retry unacknowledged local batches in order.
+ * An echoed update is the relay's persistence receipt (protocol 2).
  */
 export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection {
   let socket: WebSocket | undefined
@@ -112,19 +111,26 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
   // disconnect gap.
   let firstHandshake = true
   let retries = 0
-  // Only the first server snapshot is a confirmed baseline. Sending bytes does
-  // not acknowledge persistence: retain later operations for every reconnect,
-  // including updates whose previous send was interrupted. Loro deduplicates them.
-  let syncFrom = new VersionVector(undefined)
+  // Protocol 2 echoes each update only after persistence. Keep original local
+  // batches until that receipt arrives; never aggregate peer history on retry.
+  const pending: Uint8Array[] = []
+  let awaitingReceipt = false
   const status = (value: SyncStatus, detail?: string): void => options.onStatus?.(value, detail)
 
   const send = (data: Uint8Array): void => {
     if (socket?.readyState === WebSocket.OPEN) socket.send(data as BufferSource)
   }
 
+  const sendNext = (): void => {
+    if (!handshakeComplete || awaitingReceipt || !pending[0] || socket?.readyState !== WebSocket.OPEN) return
+    awaitingReceipt = true
+    send(encodeSyncFrame({ type: "update", bytes: pending[0] }))
+  }
+
   const sendUpdate = (bytes: Uint8Array): void => {
     if (bytes.byteLength === 0) return
-    send(encodeSyncFrame({ type: "update", bytes }))
+    pending.push(bytes)
+    sendNext()
   }
 
   // Latest presence state this client wants published, and the payload actually
@@ -176,8 +182,8 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
   const teardownSocket = (): void => {
     stopHeartbeat()
     stopWelcomeTimer()
-    unsubscribe?.()
-    unsubscribe = undefined
+    if (closed || unsupported) { unsubscribe?.(); unsubscribe = undefined }
+    awaitingReceipt = false
     handshakeComplete = false
     // The relay drops a disconnected peer from its roster, so nothing of ours is
     // on the wire any more: forget it, or the dedupe check would suppress the
@@ -199,7 +205,7 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
       try {
         socket?.send(encodeSyncFrame({
           type: "hello",
-          proto: 1,
+          proto: 2,
           documentId: options.documentId,
           peer: doc.peerId,
           token: options.token ?? "",
@@ -237,7 +243,6 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
               // The relay owns the authoritative body. Import its snapshot into
               // the (empty) replica — no local seed to conflict with.
               importRemote(doc, frame.catchup.bytes)
-              syncFrom = doc.oplogVersion()
               unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
               options.onReady?.()
             } else if (options.seedBody !== undefined && options.seedBody.length > 0) {
@@ -245,7 +250,7 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
               // push it as the single authoritative origin.
               doc.getText("text").updateByLine(options.seedBody)
               doc.commit({ origin: "load" })
-              sendUpdate(doc.export({ mode: "update", from: syncFrom }))
+              sendUpdate(doc.export({ mode: "update" }))
               unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
               options.onReady?.()
             } else {
@@ -254,15 +259,13 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
               options.onReady?.()
             }
           } else {
-            // Keep the existing replica, resend unconfirmed operations, and
-            // merge remote catch-up. Reattach the listener removed on close.
+            // Keep the replica and its local subscription through the gap.
             handshakeComplete = true
             stopWelcomeTimer()
-            sendUpdate(doc.export({ mode: "update", from: syncFrom }))
             if (relayHadContent) importRemote(doc, frame.catchup.bytes)
-            unsubscribe = doc.subscribeLocalUpdates(sendUpdate)
+            sendNext()
           }
-          retries = 0
+          if (pending.length === 0) retries = 0
           status("connected")
           // Announce ourselves as soon as the handshake completes (and again
           // after every reconnect), so peers see who joined without waiting for
@@ -273,6 +276,14 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
         if (frame.type === "update" || frame.type === "snapshot") {
           if (!handshakeComplete) throw new Error("Sync update arrived before welcome")
           importRemote(doc, frame.bytes)
+          const first = pending[0]
+          if (frame.type === "update" && awaitingReceipt && first && first.length === frame.bytes.length
+            && first.every((byte, index) => byte === frame.bytes[index])) {
+            pending.shift()
+            retries = 0
+            awaitingReceipt = false
+            sendNext()
+          }
           return
         }
         if (frame.type === "presence") {
@@ -284,10 +295,9 @@ export function connectSync(doc: LoroDoc, options: SyncOptions): SyncConnection 
         }
         if (frame.type === "heartbeat") return
         if (frame.type === "error") {
-          if (frame.code === 4500 && /peer [0-9]+ already connected to document/.test(frame.message)) {
-            // A half-open previous connection can outlive a network drop.
-            // Retry until the relay releases it; this is not a protocol failure.
-            status("disconnected", "Previous connection is still closing; reconnecting…")
+          if (frame.code === 4029 || frame.code === 4091 || frame.code === 4500) {
+            // Limits, eviction and relay failures can recover. Retain the queue
+            // and retry; only explicit access/protocol failures stop the session.
             socket?.close()
             return
           }
