@@ -730,7 +730,7 @@ async fn create_document(
     let project = project_for(&s, &pid).await?;
     if !valid_document_path(&r.path) {
         return Err(AppError::BadRequest(
-            "Use a project-relative path without colons, backslashes, or . and .. segments".into(),
+            "Use a project-relative path of 1–1024 characters: no leading slash, colons, backslashes, empty or . or .. segments, control characters, or surrounding whitespace".into(),
         ));
     }
     validate_text(&r.title, "title", 2048)?;
@@ -823,7 +823,7 @@ async fn patch_document(
     if let Some(x) = r.path {
         if !valid_document_path(&x) {
             return Err(AppError::BadRequest(
-                "Use a project-relative path without colons, backslashes, or . and .. segments"
+                "Use a project-relative path of 1–1024 characters: no leading slash, colons, backslashes, empty or . or .. segments, control characters, or surrounding whitespace"
                     .into(),
             ));
         }
