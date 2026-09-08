@@ -93,12 +93,8 @@ function findFunctionConstructs(source: string): Construct[] {
   return constructs
 }
 
-// Single-entry memo. `findConstructs` is a pure function of `source`, but it is
-// invoked more than once per edit: the hybrid-editor StateField re-parses on
-// every doc-change transaction, and main.ts's selection listener parses again
-// to refresh its own cursor-reveal cache. A one-slot cache keyed on the source
-// string makes those redundant calls O(1). The returned array is shared across
-// callers and must be treated as read-only.
+// Decorations and the outline share a parse of the current source.
+// Callers must treat the cached array as read-only.
 let findConstructsCacheKey: string | null = null
 let findConstructsCacheValue: Construct[] = []
 

@@ -536,3 +536,102 @@ async fn readiness_passes_when_probes_pass() {
     assert!(body.contains("200"), "{body}");
     assert!(body.contains("\"status\":\"ready\""), "{body}");
 }
+
+#[tokio::test]
+async fn protocol_two_receipts_confirm_persistence_and_duplicate_retries() {
+    use nisaba_sync::{OpLogStore, SyncError, SyncResult};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct FailOnceLog {
+        inner: MemoryOpLogStore,
+        fail: AtomicBool,
+    }
+    #[async_trait::async_trait]
+    impl OpLogStore for FailOnceLog {
+        async fn append(&self, doc: &DocId, update: &[u8]) -> SyncResult<()> {
+            if self.fail.swap(false, Ordering::SeqCst) {
+                return Err(SyncError::Internal("test storage failure".into()));
+            }
+            self.inner.append(doc, update).await
+        }
+        async fn read_all(&self, doc: &DocId) -> SyncResult<Vec<Vec<u8>>> {
+            self.inner.read_all(doc).await
+        }
+        async fn len(&self, doc: &DocId) -> SyncResult<u64> {
+            self.inner.len(doc).await
+        }
+    }
+    let log = Arc::new(FailOnceLog {
+        inner: MemoryOpLogStore::default(),
+        fail: AtomicBool::new(true),
+    });
+    let access = Arc::new(StaticAccessResolver::allow_all(Role::Author));
+    let config = Arc::new(Config::default());
+    let registry = DocRegistry::new(
+        log.clone(),
+        Arc::new(MemorySnapshotStore::default()),
+        config.clone(),
+        Arc::new(SystemClock),
+        access,
+    );
+    let router = nisaba_sync::server::build(registry, config);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let mut ws = dial(addr, "receipt").await;
+    send(
+        &mut ws,
+        Frame::Hello {
+            proto: 2,
+            doc_id: "receipt".into(),
+            peer: 5,
+            token: "author".into(),
+            last_vv: vec![],
+        },
+    )
+    .await;
+    let doc = LoroDoc::new();
+    doc.set_peer_id(5).unwrap();
+    doc.get_text("text").insert(0, "durable").unwrap();
+    doc.commit();
+    let bytes = doc.export(loro::ExportMode::Snapshot).unwrap();
+    send(&mut ws, Frame::Update(bytes.clone())).await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Message::Binary(raw) = ws.next().await.unwrap().unwrap() {
+                match Frame::decode(&raw, 1 << 24).unwrap() {
+                    Frame::Update(_) => panic!("failed persistence must not produce a receipt"),
+                    Frame::Error { code, .. } => {
+                        assert_eq!(code, nisaba_sync::session::codes::INTERNAL);
+                        assert!(log.is_empty(&DocId::new("receipt").unwrap()).await.unwrap());
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        send(&mut ws, Frame::Update(bytes.clone())).await;
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let message = ws.next().await.unwrap().unwrap();
+                if let Message::Binary(raw) = message
+                    && let Frame::Update(receipt) = Frame::decode(&raw, 1 << 24).unwrap()
+                {
+                    assert_eq!(receipt, bytes);
+                    assert_eq!(
+                        log.read_all(&DocId::new("receipt").unwrap()).await.unwrap(),
+                        vec![bytes.clone()]
+                    );
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+}

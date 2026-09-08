@@ -16,8 +16,8 @@ import { Decoration, EditorView, keymap, placeholder, type DecorationSet, type V
 import { LoroExtensions, loroSyncAnnotation, redo as loroRedo } from "loro-codemirror"
 import { LoroDoc, LoroText, UndoManager } from "loro-crdt"
 import { Effect, Layer } from "effect"
-import { findConstructs, type Construct } from "./model"
-import { hybridEditorField, revealConstruct, reviewEditorField, setReviewItems, type ReferenceDisplay } from "./decorations"
+import { type Construct } from "./model"
+import { hybridEditorField, reviewEditorField, setReviewItems, type ReferenceDisplay } from "./decorations"
 import { downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { filterAndSortProjects, type ProjectSort } from "./projects-list"
@@ -1536,7 +1536,7 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
   if (dot) dot.dataset.state = effective
   // Keep the explanation in the tooltip and the short state in the status bar.
   const short = syncShortLabel(value)
-  const explanation = browserOffline ? "You are offline — your work is still saved to this device and syncs when you reconnect"
+  const explanation = browserOffline ? "You are offline. Keep this tab open until you reconnect; recent edits may not be saved."
     : value === "connected" ? "Connected: other people see your edits as you type"
       : value === "connecting" ? "Reconnecting to the collaboration server…"
         : value === "unsupported" ? `Collaboration unavailable${detail ? ` · ${detail}` : ""}`
@@ -1973,9 +1973,6 @@ const referenceCompletions: CompletionSource = (context: CompletionContext): Com
   }
 }
 
-// Cache parsed constructs between text changes; cursor moves reuse the parse.
-let cachedConstructs: Construct[] = []
-
 const editor = new EditorView({
   state: EditorState.create({
     doc: "",
@@ -2042,12 +2039,6 @@ const editor = new EditorView({
           const head = update.state.selection.main.head
           const line = update.state.doc.lineAt(head)
           setText("#cursor-position", `Ln ${line.number}, Col ${head - line.from + 1}`)
-          const construct = cachedConstructs.find((item) => head >= item.from && head <= item.to)
-          // Entering a chip (figure/table/…) reveals its raw source; leaving must
-          // re-chip it again. The reveal set is rebuilt from effects on each update,
-          // so dispatching a sentinel that matches no construct empties the set and
-          // returns every still-chipped construct to its button form.
-          update.view.dispatch({ effects: revealConstruct.of(construct ? { from: construct.from, to: construct.to } : { from: -1, to: -1 }) })
           // Where the caret is drives four surfaces: the sticky heading, the
           // outline highlight, the breadcrumb's section, and what peers see of us.
           renderStickyHeading()
@@ -2057,7 +2048,6 @@ const editor = new EditorView({
         }
         if (update.docChanged) {
           if (!isLoadingDocument) markPreviewStale()
-          cachedConstructs = findConstructs(update.state.doc.toString())
           refreshDocumentStructure()
           renderCrumbs()
         }
@@ -2670,13 +2660,13 @@ function openSettings(): void {
             : ""}
         </select>
       </div>
-      <p class="settings-note">“Opening file” applies when this project is entered without a more recent file in this tab. It is this browser's choice, not the project's.</p>`
+      <p class="settings-note">This browser uses the opening file when this tab has no recent file for the project.</p>`
     : ""
-  const keyboardRows = `<p class="settings-note">Keyboard — click a chord, then press its replacement. Esc cancels; browser-owned chords are refused.</p>
+  const keyboardRows = `<p class="settings-note">To change a shortcut, click it and press the new keys. Esc cancels. Browser shortcuts stay reserved.</p>
       ${BINDING_ACTIONS
         .map((action) => `<div class="settings-row"><label>${bindingLabel(action)}</label><button type="button" class="btn keybind-btn" data-rebind="${action}" style="margin-left:auto">${prettyChord(bindings[action])}</button></div>`)
         .join("")}
-      <div class="settings-row"><label></label><button type="button" class="btn" id="keybinds-reset" style="margin-left:auto">Reset chords</button></div>`
+      <div class="settings-row"><label></label><button type="button" class="btn" id="keybinds-reset" style="margin-left:auto">Reset shortcuts</button></div>`
   const body = `<div class="settings-body">
       ${defaultFileRow}
       <div class="settings-row">
@@ -2703,7 +2693,7 @@ function openSettings(): void {
         <input id="settings-line-height" type="range" min="1.2" max="2.2" step="0.05" value="${settings.lineHeight}" aria-label="Editor line spacing">
         <output id="settings-line-height-out" for="settings-line-height">${settings.lineHeight.toFixed(2)}</output>
       </div>
-      <p class="settings-note">Editor look only — your choices live in this browser and never affect collaborators or compiled output. <button type="button" class="btn" id="settings-reset">Reset to defaults</button></p>
+      <p class="settings-note">These settings change the editor appearance in this browser. Collaborators and compiled output are unaffected. <button type="button" class="btn" id="settings-reset">Reset to defaults</button></p>
       ${keyboardRows}
     </div>`
   // On a project screen the settings live in the dock like every standing
@@ -2729,7 +2719,6 @@ function openSettings(): void {
       return
     }
     commit({ ...settings, customFont: cleaned })
-    applySettings(settings)
   })
   const fontSize = el<HTMLInputElement>("#settings-font-size")
   fontSize?.addEventListener("input", () => {
@@ -4480,7 +4469,7 @@ window.addEventListener("pagehide", (event) => {
 // Browser offline status overrides the last relay status.
 window.addEventListener("offline", () => {
   browserOffline = true
-  setSyncStatus(lastSyncStatus ?? "disconnected", "Network offline · changes saved locally")
+  setSyncStatus(lastSyncStatus ?? "disconnected", "Offline · keep this tab open until you reconnect")
 })
 window.addEventListener("online", () => {
   browserOffline = false

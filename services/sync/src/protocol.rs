@@ -20,8 +20,8 @@
 
 use crate::error::ProtoError;
 
-/// Wire protocol version. Bumped on any breaking change to this component.
-pub const PROTOCOL_VERSION: u8 = 1;
+/// Protocol 2 adds durable update echoes. The server also accepts legacy protocol 1.
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// A message type tag. Stable across versions; reordering is a breaking change.
 #[repr(u8)]
