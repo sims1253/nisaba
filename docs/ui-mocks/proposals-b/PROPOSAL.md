@@ -1,5 +1,9 @@
 # Proposal B — “Ink Desk”: a typography-led art direction for Nisaba
 
+> **Status:** design reference based on the August 2026 interface. The ink
+> chrome is an alternative under consideration. Merging these mocks does not
+> adopt it; [the current design](../../ui-design.md) records the shipped direction.
+
 > Companion to [`docs/ui-design.md`](../../ui-design.md), which this proposal
 > argues with — respectfully, and only on material. The workflow, the anatomy,
 > the vocabulary, and the keyboard model are kept exactly as shipped; this is a
@@ -7,8 +11,8 @@
 > paper-and-hairline direction exists in parallel (proposal A); this document is
 > the bold one, and it names its own costs honestly (§5).
 > Mockups: open [`index.html`](index.html) in a browser. Every file is
-> self-contained (inline CSS, system font stacks only — the app's no-web-font,
-> works-offline constraint is honoured by the proposal itself).
+> self-contained (inline CSS and system font stacks, with no network requests).
+> The app bundles its fonts locally; it does not require a font CDN.
 
 ---
 
@@ -46,8 +50,7 @@ Nisaba's subject world is *the tablet house*: Nisaba is the Mesopotamian patron
 of scribes; the artifact is the inscribed tablet; the instrument is the wedge
 stylus; the prestige material is lapis; the closing convention is the colophon.
 The current paper/hairline direction, whatever its merits, belongs to the
-print-shop — a world dozens of writing apps already borrow. The tablet house is
-*ours by name*, and nobody else can claim it.
+print-shop — a world dozens of writing apps already borrow. The tablet house gives this proposal a visual reference tied to the name.
 
 ### Skill principles → what they drove here
 
@@ -58,8 +61,8 @@ print-shop — a world dozens of writing apps already borrow. The tablet house i
 | Calibration warning — avoid the three default AI looks (cream+serif+terracotta; near-black+single acid accent; broadsheet hairlines) | The current direction is adjacent to defaults 1 and 3 (warm cream, hairline rules, serif accents). Ink Desk exits via *structure* — light-dominant composition on dark chrome (not a dark page), warm bitumen (not neutral near-black), lapis (not acid green/vermilion), and a serif that carries meaning (document-ness), not decoration |
 | “Structure is information” — numbering/dividers must encode real meaning | The dot leader in the ToC encodes the same thing it encodes in a book (name → location); the wedge marks *live/active* only; the colophon's segments are the actual provenance facts |
 | Concentrate boldness in one signature element; keep the rest disciplined | The ToC screen + the ink/lumen figure-ground carry the drama; every control, row, and chip stays quiet, squared, and same-density as today |
-| Copy is design too | Empty states get the display voice and one instruction + one key (“Pick up where you left off — ⌘K”); the sign-in screen speaks in one question (“Whose desk is this?”) |
-| Quality floor, met quietly | Focus rings are lapis on ink and lapis-deep on paper; `prefers-reduced-motion` noted per mock; contrast floor checked (§5) |
+| Copy is design too | Empty states get the display voice and one instruction + one key (“Pick up where you left off — ⌘K”); the sign-in screen names the action and explains where it leads |
+| Accessibility work to verify | Focus rings are lapis on ink and lapis-deep on paper; `prefers-reduced-motion` noted per mock; contrast and keyboard behavior still need per-control checks (§5) |
 
 ---
 
@@ -67,9 +70,8 @@ print-shop — a world dozens of writing apps already borrow. The tablet house i
 
 Same token *architecture* (surfaces / ink / rules / one accent / semantic /
 type / metrics): the proposal is implementable as a re-skin of the existing
-`:root` block plus the additions marked **new**. Two tokens are **renamed**
-because their meaning inverts (`--chrome` → `--bitumen`); everything else keeps
-its name and changes value.
+`:root` block plus the additions marked **new**. Several tokens are renamed to distinguish text, rules, and surfaces on the
+light and dark backgrounds. The table lists those names and the new values.
 
 | Token (old) | Old value | Token (new) | New value | Notes |
 |---|---|---|---|---|
@@ -81,9 +83,9 @@ its name and changes value.
 | `--overlay` | `#ffffff` | `--overlay` → `--paper` | `#fbfaf5` | Popovers/palette/modals become *paper slips* on the ink desk |
 | `--ink` | `#1b1e1c` | `--carbon` | `#221f17` | Text on paper (rename: `--ink` is now the ground, so the text-on-paper token must not be called ink) |
 | `--ink-soft` | `#3d443e` | `--carbon-soft` | `#55524a` | |
-| `--muted` | `#6a706a` | `--paper-muted` | `#8a8776` | Muted *on paper* |
+| `--muted` | `#6a706a` | `--paper-muted` | `#6a6758` | Muted *on paper* |
 | — | — | **`--bone`** | `#e9e7da` | Text on ink (new) |
-| — | — | `--bone-muted` / `--bone-faint` | `#aab0a0` / `#7e8372` | Secondary/tertiary on ink (new; `--faint` splits by ground) |
+| — | — | `--bone-muted` / `--bone-faint` | `#aab0a0` / `#a4aa97` | Secondary/tertiary on ink (new; `--faint` splits by ground) |
 | `--rule` / `--rule-strong` | `#e2e3dd` / `#c8cac2` | `--prule` / `--prule-s` | `#e3e0d0` / `#c6c3ae` | Rules on paper (values ~unchanged) |
 | — | — | `--irule` / `--irule-s` | `#41453a` / `#575c4c` | Rules on ink (new) |
 | `--accent` | `#23508a` | **`--lapis`** | `#4a63d8` | On ink: fills, active states, primary button |
@@ -118,8 +120,8 @@ the same hues — one language, two registers.
 | Source | `--mono` (user-settable per Settings) | 12–24 | The editor — on paper, measure-limited at 74ch, exactly as today |
 | Page | `--display` | rendered | The preview is a document; unchanged |
 
-Rule: **the serif never appears below 16px and never on a control.** Display is
-for moments (names, titles, first impressions), not for furniture.
+Use display serif at 16px or larger for names and titles, and sans for controls.
+The index and rendered-page facsimile also use smaller serif text for supporting prose.
 
 ---
 
@@ -138,10 +140,10 @@ The summary table first; details (what / why / where in code / migration) follow
 | Build drawer | Ink list; selected tab is a light slip; jump-to-line; lume severities | `04-problems.html` |
 | Status bar | Colophon treatment; wedge live dot; lapis Update-preview block | all |
 | Palette | Paper slip over dimmed desk; lapis selection bar; footer hints | `05-palette.html` |
-| Share dock | Ink rows; owner tag in amber; links on lapis-dark field | `06-share.html` |
+| Share dock | Ink rows; neutral role tags; links on lapis-dark field | `06-share.html` |
 | Settings dock | Ink rows; lapis segmented active; capturing chord pulses | `07-settings.html` |
 | History dock | Timeline in ink; diff as paper inset; pin chips | `08-history.html` |
-| References dock | Serif titles per entry; state wedges; export-block tally | `09-references.html` |
+| References dock | Serif titles per entry; state wedges; attachment tally | `09-references.html` |
 | Signed-out | One paper slip on the ink desk; one question, one action | `10-signed-out-empty.html` |
 | Empty states | Display voice + one instruction + one key; ❦ fleuron | `10-signed-out-empty.html` |
 
@@ -297,10 +299,9 @@ The summary table first; details (what / why / where in code / migration) follow
 ### 4.10 Share / Settings / History / References docks
 
 * **Share** (`06`): invite row on ink (inputs bitumen-2), role descriptions
-  beneath in the hint voice; member rows with tablet stamps; the **Owner tag
-  reads in amber** (it is the one role that can destroy — semantic reuse, not
-  decoration); link codes sit on a lapis-dark field (`#232747`) so a “key”
-  looks like a key.
+  beneath in the hint voice, and member rows with tablet stamps. Owner uses
+  the same neutral tag as other roles; amber remains reserved for comments and
+  warnings. Link codes sit on a lapis-dark field (`#232747`).
 * **Settings** (`07`): rows on ink; segmented typeface control's active segment
   solid lapis; sliders `accent-color: var(--lapis)`; a **capturing chord
   button pulses a lapis ring** (with `prefers-reduced-motion` fallback to a
@@ -313,18 +314,19 @@ The summary table first; details (what / why / where in code / migration) follow
 * **References** (`09`): entry titles in the display serif (they are *titles of
   works* — the serif means “document” wherever it appears); state glyphs
   (full-text ✓ / no-PDF ⚠) become wedges in insert-green/comment-amber; the
-  export-blocking tally also surfaces in the status bar's build cell
-  (`3 refs block export`) — the fact the nav-foot already states, said once
-  more where the export decision is made.
+  attachment tally stays in the References dock. Missing PDFs affect only an
+  export that explicitly includes reference full texts; source/PDF export and
+  preview do not require them.
 * **Where:** `styles.css` dock blocks; `main.ts` `openShare/openSettings/
-  openHistory/renderReferences` templates for the pin chips and tally line
-  only. All flows, validations, and role gates untouched.
+  openHistory/renderReferences` templates for the pin chips and reference titles.
+  Project role tags also need the caller's role in the projects-list API. All flows, validations, and role gates untouched.
 
 ### 4.11 Signed-out & empty states
 
 * **What:** signed-out screen: the ink desk, a **single paper slip** — eyebrow,
-  display question (“Whose desk is this?”), one field, one lapis action, one
-  line of context. Empty states (no document, no preview, no files, outline
+  display heading (“Sign in to Nisaba”), one lapis action, and one line
+  explaining the handoff to the instance's sign-in service. No credentials are
+  collected in this screen. Empty states (no document, no preview, no files, outline
   pending): display serif headline + one instruction + one key, with a ❦
   fleuron standing where an ornament belongs.
 * **Why:** first impressions are the skill's other hero; the current empty
@@ -360,16 +362,13 @@ Named plainly, including what this reopens:
    executed lazily (neutral `#1e1e1e`, one saturated accent, no serif), this
    direction degenerates into “generic dark IDE.” The direction *depends* on
    its typography landing.
-3. **The serif display voice rides system fonts.** No webfonts (offline, no
-   phoning home — kept), so the display stack falls back Charter → Cambria →
-   Georgia across platforms, with real metric variance. Discipline required:
-   display sizes are fixed and roomy (≥16px, generous line-height), ToC rows
-   ellipsize, no display text in buttons. If the owner later ships one bundled
-   font, the display role is where it would go (a packaging decision, not a
-   network one).
+3. **These mocks use system fonts.** Charter, Cambria, and Georgia have
+   different metrics across platforms. The app already bundles Source Serif 4,
+   DM Sans, and DM Mono locally. Implementation should use those packaged fonts
+   and recheck truncation, rather than add a remote font dependency.
 4. **Contrast floor needs engineering attention, not just design intent.**
-   `--bone-muted` on bitumen ≈ 7:1 and `--bone-faint` ≈ 4.5:1 are fine; but
-   lapis `#4a63d8` *as small text* on bitumen is marginal, which is why the
+   The original `--bone-faint` was too dim. The mocks now use `#a4aa97`
+   for faint text on ink and `#6a6758` for muted text on paper. Lapis `#4a63d8` *as small text* on bitumen is marginal, which is why the
    token table introduces `--lapis-bright` for small text and reserves solid
    lapis for fills with white text. This must be checked per-usage in
    implementation (WCAG AA on every chrome pairing), and `prefers-contrast`

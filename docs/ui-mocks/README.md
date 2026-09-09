@@ -1,4 +1,4 @@
-# UI mocks — three design directions for the Nisaba workspace
+# UI design references
 
 > **Outcome:** the shipped interface is a synthesis of all three, documented in
 > [`../ui-design.md`](../ui-design.md) — mock A's navigator, status strip, and
@@ -23,7 +23,13 @@ variable is the interface.
 
 ---
 
-## Review of the current UI (`web/src/main.ts` + `styles.css`)
+## Follow-up proposals
+
+- [Proposal B: Ink Desk](proposals-b/index.html) explores dark chrome and serif
+  document titles. It is a design reference, not an adopted theme. See its
+  [rationale](proposals-b/PROPOSAL.md).
+
+## Review of the interface before the original mocks
 
 The current build gets the fundamentals right: the source ↔ page split is the
 correct backbone for a compile-based writing tool; review marks keep one color

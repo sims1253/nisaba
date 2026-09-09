@@ -14,7 +14,7 @@
   --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
   --irule: #41453a; --irule-s: #575c4c;
   --paper: #fbfaf5; --paper-2: #f2f0e6;
-  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #a4aa97;
   --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
   --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
   --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -42,17 +42,18 @@ a { color: inherit }
 
 .group { margin: 34px 0 10px; font: 600 10px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint) }
 .toc a {
-  display: flex; align-items: baseline; gap: 0; padding: 13px 6px 13px 2px;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0; padding: 13px 6px 13px 2px;
   border-bottom: 1px solid var(--irule); text-decoration: none;
 }
 .toc a:hover .name { color: #fff }
-.toc .name { font: 500 18px/1.3 var(--display); color: var(--bone); white-space: nowrap }
+.toc .name { font: 500 18px/1.3 var(--display); color: var(--bone); min-width: 0; overflow-wrap: anywhere }
 .toc .lead { flex: 1; min-width: 28px; margin: 0 12px; border-bottom: 2px dotted var(--irule-s); transform: translateY(-4px) }
 .toc .file { font: 10.5px var(--mono); color: var(--bone-faint); white-space: nowrap }
 .toc .desc { flex-basis: 100%; font: 12px/1.5 var(--sans); color: var(--bone-muted); padding-left: 2px; margin-top: 4px }
 
 .colophon { margin-top: 56px; border-top: 2px solid var(--bone); padding-top: 14px; display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; font: 10px var(--mono); color: var(--bone-faint) }
 .colophon a { color: var(--lapis-bright) }
+@media (max-width:600px){.toc .name{flex-basis:100%}.toc .lead{display:none}.toc .file{margin-top:6px}.mast h1{font-size:32px}}
 </style>
 </head>
 <body>
@@ -65,15 +66,11 @@ a { color: inherit }
   </div>
 
   <p class="thesis">
-    <b>Ink Desk</b> inverts Nisaba's material: every piece of apparatus — bars,
-    navigator, docks, drawer, status — becomes one warm bitumen, and the two
-    surfaces that <b>are</b> the document, the source column and the rendered
-    page, become the only paper, so they glow for it. The accent becomes
-    <b>lapis</b>, the scribe's prestige material; the serif is promoted from the
-    rendered page into the chrome's few big moments; and the projects screen
-    becomes a <b>table of contents</b> — your work presented the way a document
-    presents itself. Same workflow, same bones: prose-first, docks-not-modals,
-    palette-driven, collaboration always visible.
+    Design reference from August 2026. <b>Ink Desk</b> places dark bars,
+    navigation, and tools around light document panes. A blue accent marks
+    primary actions and selection. Serif titles give documents more prominence,
+    and the projects screen uses a table-of-contents layout. These static mocks
+    explore an alternative appearance for Nisaba's writing and review workflows.
   </p>
 
   <div class="group">The screens</div>
@@ -116,7 +113,7 @@ a { color: inherit }
     </a>
     <a href="09-references.html">
       <span class="name">References</span><span class="lead"></span><span class="file">09-references.html</span>
-      <span class="desc">The library at dock width: full-text state per entry, export-blocking truth stated, inline completer shown.</span>
+      <span class="desc">The library at dock width: attachment state per entry, optional full-text bundles, inline completer shown.</span>
     </a>
     <a href="10-signed-out-empty.html">
       <span class="name">Signed out, and empty states</span><span class="lead"></span><span class="file">10-signed-out-empty.html</span>

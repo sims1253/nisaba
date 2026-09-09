@@ -15,9 +15,9 @@
   --irule: #41453a; --irule-s: #575c4c;
   --shell: #3a3e33;
   --paper: #fbfaf5; --paper-2: #f2f0e6;
-  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #8a8776;
+  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #6a6758;
   --prule: #e3e0d0; --prule-s: #c6c3ae;
-  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #a4aa97;
   --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
   --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
   --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -34,7 +34,7 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--paper-muted); border: 1px soli
 
 /* each frame is a 1440x900 screen */
 .frame { width: 1440px; max-width: 100%; height: 900px; overflow: hidden; display: grid; grid-template-rows: 52px 1fr; background: var(--bitumen); box-shadow: 0 24px 60px #00000088 }
-.framelabel { width: 1440px; max-width: 100%; font: 600 10px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: #7e8372 }
+.framelabel { width: 1440px; max-width: 100%; font: 600 10px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: #a4aa97 }
 
 .appbar { display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--irule-s) }
 .brand { display: flex; align-items: center; gap: 9px }
@@ -58,12 +58,6 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--paper-muted); border: 1px soli
 .slip .eyebrow { font: 600 9.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--paper-muted) }
 .slip h1 { font: 700 26px/1.15 var(--display); margin: 8px 0 10px }
 .slip p { font-size: 12.5px; color: var(--carbon-soft); line-height: 1.6; margin-bottom: 18px }
-.slip label { display: block; font-size: 11.5px; color: var(--paper-muted); margin: 12px 0 5px }
-.slip input {
-  width: 100%; border: 1px solid var(--prule-s); border-radius: 2px; background: #fff;
-  color: var(--carbon); padding: 8px 10px; font: 13px var(--sans);
-}
-.slip input:focus { border-color: var(--lapis-deep); outline: none; box-shadow: 0 0 0 2px #2b3fae33 }
 .slip .go { width: 100%; justify-content: center; display: inline-flex; margin-top: 16px;
   background: var(--lapis-deep); color: #fff; font: 600 12.5px var(--sans); padding: 8px 14px; border-radius: 2px }
 .slip .go:hover { background: #23348f }
@@ -124,14 +118,10 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--paper-muted); border: 1px soli
   <main class="signed-out">
     <div class="slip" role="main">
       <span class="eyebrow">Nisaba · collaborative writing, self-hosted</span>
-      <h1>Whose desk is this?</h1>
-      <p>Sign in with the username your host gave you. Prose drafts, track changes, and the rendered page all live behind this one door.</p>
-      <form onsubmit="return false">
-        <label for="u">Username</label>
-        <input id="u" type="text" autocomplete="username" placeholder="e.g. twinkleburst">
-        <button class="go" type="submit">Sign in</button>
-      </form>
-      <p class="foot">No account? This instance is private — ask its owner. <kbd>⌘K</kbd> works the moment you are in.</p>
+      <h1>Sign in to Nisaba</h1>
+      <p>Continue to this instance's sign-in service to open your projects.</p>
+      <button class="go" type="button">Sign in</button>
+      <p class="foot">Need access? Ask the person who runs this instance.</p>
     </div>
   </main>
 </section>

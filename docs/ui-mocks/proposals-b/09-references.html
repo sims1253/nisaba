@@ -6,7 +6,7 @@
 <title>Proposal B · Ink Desk — references dock</title>
 <!--
   Nisaba · Proposal B "Ink Desk" — the References dock: the library at dock
-  width — authors, year, full-text state — with the export-blocking truth
+  width — authors, year, full-text state — with the attachment state
   stated per entry. Self-contained; system font stacks only.
 -->
 <style>
@@ -14,9 +14,9 @@
   --bitumen: #262921; --bitumen-2: #2e322a; --bitumen-3: #383c31;
   --irule: #41453a; --irule-s: #575c4c;
   --paper: #fbfaf5; --paper-2: #f2f0e6;
-  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #8a8776;
+  --carbon: #221f17; --carbon-soft: #55524a; --paper-muted: #6a6758;
   --prule: #e3e0d0; --prule-s: #c6c3ae;
-  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #7e8372;
+  --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #a4aa97;
   --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
   --insert-lume: #62c28d; --comment-lume: #d3a83f; --delete-lume: #e2705f;
   --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
@@ -90,7 +90,7 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid
 .tally { font: 10px var(--mono); color: var(--bone-faint); margin: 10px 2px 4px }
 
 .ref { padding: 10px 2px; border-bottom: 1px solid var(--irule) }
-.ref .title { font: 500 12.5px/1.45 var(--display); color: var(--bone) }
+.ref .title { font: 500 16px/1.45 var(--display); color: var(--bone) }
 .ref .meta { font: 10px/1.6 var(--mono); color: var(--bone-faint); margin-top: 3px }
 .ref .meta b { color: var(--bone-muted); font-weight: 600 }
 .state { display: inline-flex; align-items: center; gap: 5px; font: 600 9px var(--mono); letter-spacing: .04em; margin-right: 8px }
@@ -169,7 +169,7 @@ by <span class="cite">@twinkleburst-2024</span>.
         <input type="search" placeholder="Filter by author, year, or title…" aria-label="Filter references">
         <button class="btn btn-primary">Add</button>
       </div>
-      <p class="tally num">12 entries · 9 with a full text · 3 block export</p>
+      <p class="tally num">12 entries · 9 with a PDF · 3 without a PDF</p>
 
       <div class="ref">
         <div class="title">Field methods for glitter-spectroscopy in subterranean venues</div>
@@ -187,7 +187,7 @@ by <span class="cite">@twinkleburst-2024</span>.
         <div class="title">A survey of mustelid attendance at unofficial gatherings</div>
         <div class="meta num"><span class="state warn">no PDF</span><b>clawson</b> · 2021 · cited 1×</div>
         <div class="row"><button class="btn">Attach PDF</button><button class="btn">Cite here</button><button class="btn">Edit</button></div>
-        <p class="used num">blocks a full-text export bundle until attached</p>
+        <p class="used num">Attach a PDF to include this reference in a full-text bundle.</p>
       </div>
 
       <p class="dock-note">Typing <b>@</b> or <b>#cite(&lt;</b> in the text searches this library inline — fuzzy over authors, year, and title.</p>
@@ -201,7 +201,7 @@ by <span class="cite">@twinkleburst-2024</span>.
   <span class="scell num">4,812 words</span>
   <span class="scell spacer"></span>
   <div class="sright">
-    <button class="scell num"><span class="warnword">3 refs block export</span></button>
+    <span class="scell num">Preview up to date</span>
     <button class="compile">Update preview <kbd>⌘↵</kbd></button>
   </div>
 </footer>
