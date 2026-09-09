@@ -28,6 +28,9 @@ variable is the interface.
 - [Proposal A: writer-first refinement](proposals-a/index.html) reviews the
   August 2026 interface. It is a design reference, not a specification of
   shipped behavior. See its [rationale](proposals-a/PROPOSAL.md).
+- [Proposal B: Ink Desk](proposals-b/index.html) explores dark chrome and serif
+  document titles. It is a design reference, not an adopted theme. See its
+  [rationale](proposals-b/PROPOSAL.md).
 
 ## Review of the interface before the original mocks
 
