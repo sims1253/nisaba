@@ -46,7 +46,7 @@ kbd{font:500 9.5px/1 var(--mono);letter-spacing:.04em;border:1px solid var(--rul
 .crumbs button{cursor:pointer}
 .crumbs .sep{color:var(--rule-strong);padding:0}
 .crumbs .current{color:var(--ink);font-weight:500}
-.palette-hint{margin:0 auto;display:flex;align-items:center;gap:8px;width:220px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--faint);font-size:12px;padding:5px 8px;border-radius:var(--radius);cursor:pointer}
+.palette-hint{margin:0 auto;display:flex;align-items:center;gap:8px;width:52px;flex-shrink:0;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--faint);font-size:12px;padding:5px 8px;border-radius:var(--radius);cursor:pointer}
 .palette-hint .lead{color:var(--accent);font-family:var(--mono);font-weight:700}
 .palette-hint kbd{margin-left:auto}
 .appbar-tools{display:flex;align-items:center;gap:2px}
@@ -232,6 +232,7 @@ button.status-cell{cursor:pointer}
 #compile-button kbd{border-color:#ffffff59;background:transparent;color:#ffffffb3}
 
 .tag{position:fixed;right:14px;top:60px;z-index:99;font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:var(--overlay);border:1px solid var(--rule-strong);padding:6px 9px;box-shadow:0 4px 14px #1b1e1c1a}
+@media (max-width:1600px){.people .role-tag{display:none}}
 </style>
 </head>
 <body>
@@ -248,8 +249,9 @@ button.status-cell{cursor:pointer}
     <button class="palette-hint" type="button"><span class="lead">⌕</span><kbd>⌘K</kbd></button>
     <div class="appbar-tools">
       <div class="people" aria-label="People with access">
-        <span class="person" style="--hue:280"><span class="pav">SP</span><strong>sparkletoes</strong><span class="role-tag">Author</span></span>
-        <span class="person" style="--hue:145"><span class="pav">CL</span><strong>clawson</strong><span class="role-tag">Reviewer</span></span>
+        <span class="person" style="--hue:210" title="twinkleburst (you) · Owner"><span class="pav">TW</span><strong>you</strong><span class="role-tag">Owner</span></span>
+        <span class="person" style="--hue:280" title="sparkletoes · Author"><span class="pav">SP</span><strong>sparkletoes</strong><span class="role-tag">Author</span></span>
+        <span class="person" style="--hue:145" title="clawson · Reviewer"><span class="pav">CL</span><strong>clawson</strong><span class="role-tag">Reviewer</span></span>
         <span class="person more num" title="moonmoss · Read-only — see all 4 in Share">+1</span>
       </div>
       <button class="btn btn-quiet" type="button">Share</button>
@@ -381,7 +383,7 @@ button.status-cell{cursor:pointer}
       </div>
       <div class="dock-body">
         <!-- K2 -->
-        <p class="dock-summary num">3 open — 2 from other people</p>
+        <p class="dock-summary num">3 open — 3 from other people</p>
         <div class="chips">
           <button class="chip" aria-pressed="true">All 3</button>
           <button class="chip" aria-pressed="false">Changes 2</button>

@@ -10,7 +10,7 @@
   sort, result counting — and opens with the signature element:
     P1  Continue-writing hero: the most recently touched project as one large
         door — serif title (the document voice), last-opened file + section,
-        live presence, one click back into the work. The rows below remain the
+        one click back into the work. The rows below remain the
         complete index; the hero is a shortcut, not a second list.
     P2  Role tag on every row (the decision record specifies it; the
         implementation dropped it). Roles govern what you came to do.
@@ -21,6 +21,7 @@
 :root{
   --paper:#fdfcf9; --chrome:#f2f3f0; --chrome-raised:#f8f8f6; --shell:#e9eae6; --overlay:#ffffff;
   --ink:#1b1e1c; --ink-soft:#3d443e; --muted:#6a706a; --faint:#8d938c;
+  --delete:#a63a2e;
   --rule:#e2e3dd; --rule-strong:#c8cac2;
   --accent:#23508a; --accent-strong:#1b3f6e; --accent-soft:#e8eef6; --accent-line:#b9cbe1;
   --sans:"DM Sans",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
@@ -70,10 +71,6 @@ kbd{font:500 9.5px/1 var(--mono);border:1px solid var(--rule-strong);border-radi
 .hero-meta{display:block;font:10.5px var(--mono);color:var(--muted)}
 .hero-meta b{color:var(--ink-soft);font-weight:600}
 .hero-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px;flex:0 0 auto}
-.hero-presence{display:flex;align-items:center;gap:0}
-.avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font:600 10px/1 var(--sans);color:hsl(var(--hue) 55% 22%);background:hsl(var(--hue) 62% 88%);border:1.5px solid var(--paper);margin-left:-8px}
-.hero-presence .avatar:first-child{margin-left:0}
-.hero-here{font:10px var(--mono);color:var(--muted);margin-left:10px}
 
 /* tools + rows (shipped design, with P2's role tags restored) */
 .project-tools{display:flex;align-items:center;gap:10px;margin:-6px 0 14px}
@@ -127,17 +124,12 @@ kbd{font:500 9.5px/1 var(--mono);border:1px solid var(--rule-strong);border-radi
 
       <!-- ═══ P1: continue writing — one click back into the work ═══ -->
       <div class="screen-hero" role="group" aria-label="Continue writing">
-        <button class="hero-open" type="button" title="Open Field lab at main.typ · §Results">
+        <button class="hero-open" type="button" title="Open Field lab at main.typ">
           <span class="hero-eyebrow">Continue writing</span>
           <span class="hero-name">Field lab</span>
-          <span class="hero-meta"><b>main.typ</b> · §Results — edited 2 h ago</span>
+          <span class="hero-meta"><b>main.typ</b> — edited 2 h ago</span>
         </button>
         <div class="hero-right">
-          <div class="hero-presence" aria-label="In this project now">
-            <span class="avatar" style="--hue:280" title="sparkletoes — main.typ · §Results">SP</span>
-            <span class="avatar" style="--hue:145" title="clawson — main.typ · §Background">CL</span>
-            <span class="hero-here">2 here now</span>
-          </div>
           <button class="btn btn-primary" type="button">Open</button>
         </div>
       </div>

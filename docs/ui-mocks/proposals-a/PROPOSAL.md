@@ -1,5 +1,9 @@
 # Proposal A — UI/UX review and refinement: a writer-first evolution
 
+> **Status:** design reference, based on the August 2026 interface. These are
+> proposals, not a record of shipped behavior. See [the current design](../../ui-design.md)
+> for the adopted direction.
+
 > **Brief:** refine the existing design language, not rebrand it. The shipped
 > system ( [`../../ui-design.md`](../../ui-design.md) → `web/src/styles.css`,
 > `web/src/shell.ts`, `web/src/main.ts`) is the baseline; this proposal reviews
@@ -38,7 +42,7 @@ principles, and how each one shaped a concrete change here:
 
 | View | Proposed changes | Mockup |
 |---|---|---|
-| Projects landing | Continue-writing hero (signature); role tags restored on rows; presence mini-stack on the hero; first-run invitation with demo path | [`a1-projects-landing.html`](a1-projects-landing.html) |
+| Projects landing | Continue-writing hero (signature); role tags restored on rows; first-run invitation with demo path | [`a1-projects-landing.html`](a1-projects-landing.html) |
 | App bar | Serif wordmark; roster chips get avatars + 3-chip cap with "+N" → Share; divider between people group and doc tools; presence avatars 24 px with "you" ring | [`a2-workspace-writing.html`](a2-workspace-writing.html) |
 | Navigator | Demo button moves to empty state + palette; outline reuses tree indent guides; fact footer as aligned label/value grid | a2 |
 | Document pane | Deliberately kept almost whole (74ch measure, mono source, sticky heading, remote carets); hairline separators in the doc bar; review popover gains a location line | a2, [`a3-workspace-review.html`](a3-workspace-review.html) |
@@ -94,7 +98,7 @@ wordmark switches from sans to serif small-caps. Cost: one rule.
 Lands: `styles.css` `.brand`.
 
 **A2. Roster: avatars, cap, and a divider that states the grouping.**
-Chips become avatar + name + role (G2), are capped at three visible, and
+Chips become avatar + name + role (G2), are capped at three visible (including you), and
 overflow becomes a "+N" chip that opens the Share dock — the roster is standing
 information (decision record §4.1) but four-plus full chips crowd the bar at
 1320 px, which is exactly where the palette hint sheds its label. Share stays
@@ -118,17 +122,20 @@ plain and honest; adding glyphs would decorate a fact that already reads.
 ### P. Projects landing screen
 
 **P1. Continue-writing hero (the signature element).**
-The screen opens with the most recently touched project as one large clickable
+The screen opens with the last-opened project as one large clickable
 block: eyebrow "CONTINUE WRITING", project title in the serif voice, the
-last-opened file and section ("main.typ · §Results"), "edited 2 h ago", the
-live presence avatars of anyone inside it right now, and an explicit Open
-button. Below it, the complete list (search + Recent/Name sort) is unchanged.
+last-opened file ("main.typ"), "edited 2 h ago", and an explicit Open
+button. The first version omits section and live presence. Below it, the
+complete list (search + Recent/Name sort) is unchanged.
 Why: the decision record's own goal for this screen is "get back to what I was
 writing, in one click or none" — today that click is row one of a sorted list,
 visually identical to every other row. The hero is that goal made visible. It
 is a shortcut, not a second statement of state: the rows remain the complete
-index. Data already exists (`nisaba.lastOpen` per tab + the API's recent
-order + the presence roster for open projects).
+index. Use `nisaba.lastOpen` to choose the last project and document, resolving the
+file name from that project's file list. If the stored project is unavailable,
+fall back to the API's recent order. The restore record has no section position.
+Project-wide presence would need a new summary API: the relay currently sends
+rosters only to clients joined to individual document rooms.
 Lands: `main.ts` `renderProjects` (renders a `#continue-hero` block above
 `#project-tools`), `shell.ts` static container, `styles.css` new
 `.screen-hero`. *Principle: the hero is a thesis.*
@@ -166,10 +173,9 @@ decision record's own rule, applied to its own chrome.*
 **N2. Outline indent guides** (G3).
 Lands: `styles.css` `.outline-row[data-level]`.
 
-**N3. Fact footer as an aligned grid.** "files 6 / references 3 of 12 with a
-PDF / preview builds main.typ" becomes a two-column label/value list with
-tabular numerals — the same facts, aligned so the numbers scan in a column.
-Still facts, not buttons.
+**N3. Align the fact footer values.** The footer already renders one label/value
+line per fact. Right-align the values and use tabular numerals so the numbers
+scan in a column. Keep the existing facts and rows.
 Lands: `styles.css` `.nav-foot`; `main.ts` `renderProjectFacts`.
 
 **N4. Kept:** the real tree (folders from paths, `MAIN` tag), the live outline
@@ -199,7 +205,8 @@ Lands: `main.ts` `openReviewPopover`.
 Today the dock is a dead end: to move from History to Share you close, aim at
 the app bar, reopen. Replace the bare mono title with a six-tab strip —
 `REVIEW 3 · REFERENCES · HISTORY · SHARE · EXPORT · SETTINGS` — active tab
-underlined in accent, close button right, at 9 px mono it fits the 340 px dock.
+underlined in accent, close button right. The strip scrolls horizontally when
+its labels exceed the dock width.
 This is *navigation within the dock*, not a second door: the app-bar buttons
 and the palette keep working, one dock stays open at a time, and the strip
 states what can be docked (structure is information).
@@ -207,7 +214,7 @@ Lands: `shell.ts` `.dock .pane-bar`; `main.ts` `showPanel`/`syncDockButtons`;
 `styles.css` new `.dock-tabs`.
 
 **K2. Every dock opens with a one-line summary.**
-Review: "3 open — 2 from other people". References: "12 entries · 3 with
+Review: "3 open — 3 from other people". References: "12 entries · 3 with
 PDFs". History: "working copy v128". Share: "4 people". Export: "Final · PDF
 + cited files". The room states its contents at the door; writers orient before
 they read.
@@ -324,9 +331,10 @@ The current design gets a great deal right; this proposal defends it explicitly:
 
 - Every change is native HTML/CSS/TS against the existing token set; no new
   dependencies, no web fonts, nothing offline-hostile.
-- Two changes lean on small data additions, flagged rather than hidden:
-  role-on-project-rows (P2) needs the role in the projects list response;
-  the hero's presence mini-stack (P1) reads the roster already published by the
-  sync relay for open projects, and simply omits it when the project is closed.
+- Role tags on project rows (P2) need the caller's role in the projects list
+  response.
+- The resume block (P1) uses stored project/document IDs and a file-list lookup.
+  It omits live presence and section position. Adding those would require a
+  project-scoped presence summary and a stored section position, respectively.
 - Suggested landing order (each independently shippable): V1 + V2 → K1 + K2 →
   A2 + A3 → P1 → K3 → N1 + P4 → the rest.
