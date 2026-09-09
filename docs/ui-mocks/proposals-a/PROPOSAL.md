@@ -100,8 +100,8 @@ Lands: `styles.css` `.brand`.
 **A2. Roster: avatars, cap, and a divider that states the grouping.**
 Chips become avatar + name + role (G2), are capped at three visible (including you), and
 overflow becomes a "+N" chip that opens the Share dock — the roster is standing
-information (decision record §4.1) but four-plus full chips crowd the bar at
-1320 px, which is exactly where the palette hint sheds its label. Share stays
+information (decision record §4.1). At 1600 px and below, both workspace mocks
+hide the roster role tags; each chip's tooltip keeps its role available. Share stays
 glued to the roster (they are one concern: people), and a 1 px divider
 separates that group from References/History/Export (document utilities), so
 the bar reads as *place · search · people · tools · state* instead of one long
