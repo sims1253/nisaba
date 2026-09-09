@@ -41,7 +41,6 @@ secondary metadata (tooltips, the history and build surfaces).
 | diagnostics | **Problems** | Plain word for "the thing that is wrong on line 12". |
 | build / build id | **Preview** / shown as `#41` in the build drawer only | Build identity matters for provenance, not for drafting. |
 | checkpoint | **version** (History), `c128` shown as metadata | "Restore version from 12:04" reads; "restore checkpoint c128" does not. |
-| entrypoint | **MAIN** tag on the file | One word, in the file tree, where the question is asked. |
 | projection: proposed | **Final** | Every suggestion applied — what the document becomes. |
 | projection: baseline | **Original** | Every suggestion rejected — the last agreed text. |
 | projection: redline | **All markup** | Word's own term for the marked-up rendering. |
@@ -151,9 +150,9 @@ and the empty three-pane workspace behind it was noise.
 
 *Goal: jump to the part I am working on, in a 60-page document.*
 
-* **Files** is a real tree. Folders come from the paths (`chapters/intro.typ` nests), which
-  is the platform's actual model — the old flat list with truncated path suffixes hid it.
-  The entrypoint carries a `MAIN` tag; that is the file the preview builds from.
+* **Files** shows folders derived from paths (`chapters/intro.typ` nests).
+  The selected row and document bar identify the open file. **Update preview**
+  compiles that file; there is no separate project entrypoint setting.
 * **Outline** lists the open document's headings, live, parsed from the source as you type,
   indented by level, with the current section highlighted. This is how writers navigate
   prose. It was entirely absent before.
@@ -238,11 +237,7 @@ build state it produces.
 * Errors and warnings live in the **build drawer**: a bottom strip with `Problems N` and
   `Log` tabs. It opens itself when a build fails and can be pinned open. Each problem shows
   severity, message, and `line 12`, and clicking it selects that span in the text.
-* The `Log` tab is the build history — time, status, duration, page count, build id, and
-  which engine served (`server` or `in-browser`; the in-browser wasm compile is an
-  experimental opt-in, and a tab that opted in but cannot use it logs one line saying why
-  it built on the server instead). This is the expert surface, and being a *log* it is
-  chronological, which is what a log is for.
+* The `Log` tab records build times, entrypoints, review views, durations, and build IDs.
 * When the drawer is closed, the status bar still states the truth: `✓ 12 pages · 1 warning`
   or `2 problems`, clickable to open the drawer.
 
@@ -317,8 +312,10 @@ record degrades to the defaults per field, never to a broken editor.
 
 Scopes, in delivery order:
 
-- **Editor typography** — typeface (mono/serif/sans, the stylesheet's font stacks), font
-  size (12–24 px), line spacing (1.2–2.2), applied live.
+- **Editor typography** — typeface presets (the bundled DM Mono / Source Serif 4 / DM Sans
+  plus system mono/serif/sans stacks, and Custom… with a sanitized font-family input),
+  font size (12–24 px), line spacing (1.2–2.2), applied live. Settings open from every
+  screen: the dock inside a project, the modal panel on the landing page.
 - **Opening file** (project open, per project) — which document opens when the project is
   entered *without* a more recent file in that tab (a reload restoring your last file
   still wins, and a manual pick during the open window overrides). This browser's
@@ -391,7 +388,7 @@ replacement, Esc cancels). The table shows the defaults.
 | `⌘⏎` | Update preview | Global |
 | `⌘S` | Save, then update preview | Global |
 | `⌘⇧F` | Focus mode | Global |
-| `⌘B` | Navigator | Global |
+| `⌘\` | Navigator | Global |
 | `⌘=` / `⌘−` | Zoom the preview | Pointer over the preview pane (not rebindable) |
 | `↑` `↓` `Enter` `A` `R` `C` `Esc` | Triage the review queue | Review dock only |
 | `Esc` | Close the palette, popover, or dock | Contextual |
@@ -399,7 +396,9 @@ replacement, Esc cancels). The table shows the defaults.
 Single-letter shortcuts bind **only** while focus is inside the review dock, so they can
 never fire into the text.
 
-**Browser defaults are not hijacked — and cannot be, by construction.** The chord model
+**Browser defaults are not hijacked — and cannot be, by construction.** The shipped
+defaults avoid browser-owned chords per platform too: the navigator toggle is `⌘\`,
+not the editor-reflexive `⌘B`, because Firefox owns Ctrl+B for its bookmarks sidebar. The chord model
 (`web/src/keybindings.ts`) refuses browser-essential chords for the shipped defaults AND
 for user rebinds alike: the reload family (`⌘R`, `⌘⇧R`, `F5`), devtools, history, and the
 browser-zoom chords; load-time validation drops any that slipped into storage, and the

@@ -29,7 +29,10 @@ export const DEFAULT_BINDINGS: Keybindings = {
   compile: "Mod+Enter",
   save: "Mod+S",
   focus: "Mod+Shift+F",
-  navigator: "Mod+B",
+  // Not Mod+B: Firefox owns Ctrl+B for its bookmarks sidebar, and the §6
+  // policy is that shipped defaults never take browser-owned chords. Mod+\
+  // is free in every major browser and reads as "sidebar" to editor users.
+  navigator: "Mod+\\",
 }
 
 const BINDINGS_KEY = "nisaba.keybindings"

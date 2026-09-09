@@ -72,6 +72,13 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "entry_document_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -93,6 +100,10 @@
           "name": {
             "type": "string",
             "maxLength": 1024
+          },
+          "entry_document_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -715,6 +726,11 @@
               "redline",
               "public"
             ]
+          },
+          "include_fulltexts": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include the evidence bundle; requires cited full-text PDFs."
           }
         }
       },
@@ -787,6 +803,73 @@
           },
           "details": {
             "type": "object"
+          }
+        }
+      },
+      "PreviewRequest": {
+        "type": "object",
+        "required": [
+          "view"
+        ],
+        "properties": {
+          "view": {
+            "type": "string",
+            "enum": [
+              "baseline",
+              "proposed",
+              "redline",
+              "public"
+            ]
+          },
+          "draft": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "document_id",
+              "body"
+            ],
+            "properties": {
+              "document_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "body": {
+                "type": "string"
+              },
+              "marks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MarkInput"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ProjectPreview": {
+        "type": "object",
+        "required": [
+          "entry",
+          "view",
+          "compile"
+        ],
+        "properties": {
+          "entry": {
+            "type": "string"
+          },
+          "view": {
+            "type": "string",
+            "enum": [
+              "baseline",
+              "proposed",
+              "redline",
+              "public"
+            ]
+          },
+          "compile": {
+            "$ref": "#/components/schemas/CompileResponse"
           }
         }
       }
@@ -1421,6 +1504,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CompileResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/preview": {
+      "post": {
+        "operationId": "previewProject",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Preview of captured project sources",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectPreview"
                 }
               }
             }

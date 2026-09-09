@@ -253,8 +253,15 @@ async fn document_crud_is_flat_path_addressed_and_revision_checked() {
 #[tokio::test]
 async fn unsafe_and_duplicate_paths_are_rejected() {
     let app = router(state());
-    let (project, _) = create_project_and_document(app.clone()).await;
-    for path in ["../secret.typ", "/absolute.typ", "a//b.typ", r"a\b.typ"] {
+    let (project, document) = create_project_and_document(app.clone()).await;
+    for path in [
+        "../secret.typ",
+        "/absolute.typ",
+        "a//b.typ",
+        r"a\b.typ",
+        "chapter:notes.typ",
+        "C:/notes.typ",
+    ] {
         let response = request(
             app.clone(),
             "POST",
@@ -265,6 +272,16 @@ async fn unsafe_and_duplicate_paths_are_rejected() {
         )
         .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let renamed = request(
+            app.clone(),
+            "PATCH",
+            &format!("/projects/{}/documents/{}", project.id, document.id),
+            "alice",
+            "author",
+            Some(json!({"path": path})),
+        )
+        .await;
+        assert_eq!(renamed.status(), StatusCode::BAD_REQUEST, "rename {path}");
     }
     let duplicate = request(
         app,
@@ -310,6 +327,7 @@ async fn sync_fixture(role: MembershipRole) -> (AppState, Document) {
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Shared notes".into(),
                 created_at: now,
@@ -403,6 +421,7 @@ async fn compile_proxy_converts_markdown_headings_like_export() {
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Headings".into(),
                 created_at: now,
@@ -450,6 +469,7 @@ async fn compile_proxy_projects_review_marks_before_forwarding() {
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Compile".into(),
                 created_at: now,
@@ -560,6 +580,7 @@ async fn export_project_with(
     let project = repository
         .create_project(
             Project {
+                entry_document_id: None,
                 id: Uuid::new_v4(),
                 name: "Export marks".into(),
                 created_at: now,
@@ -618,8 +639,78 @@ async fn export_project_with(
 }
 
 #[tokio::test]
+async fn export_preserves_the_selected_entrypoint_and_sources() {
+    for documents in [
+        vec![("main.typ", "= The actual document")],
+        vec![("report.typ", "= A differently named document")],
+        vec![
+            (
+                "chapters/report.typ",
+                "#import \"../helper.typ\": title\n= #title",
+            ),
+            ("helper.typ", "#let title = \"Imported title\""),
+            ("main.typ", "= Another document"),
+            (
+                "unused.typ",
+                "This file must not be included automatically.",
+            ),
+        ],
+    ] {
+        let recorder = Arc::new(RecordingCompile(std::sync::Mutex::new(None)));
+        let app = router(
+            state()
+                .with_sync_state_client(Arc::new(StubSyncState {
+                    states: HashMap::new(),
+                }))
+                .with_exporters(recorder.clone(), Arc::new(NisabaReferencesExporter)),
+        );
+        let response = request(
+            app.clone(),
+            "POST",
+            "/projects",
+            "alice",
+            "author",
+            Some(json!({"name": "Export source graph"})),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let project: Project = response_body(response).await;
+        for (path, body) in &documents {
+            let response = request(
+                app.clone(),
+                "POST",
+                &format!("/projects/{}/documents", project.id),
+                "alice",
+                "author",
+                Some(json!({"path": path, "title": path, "body": body})),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+        let entry = documents[0].0;
+        let response = request(
+            app,
+            "POST",
+            &format!("/projects/{}/exports", project.id),
+            "alice",
+            "author",
+            Some(json!({"entry": entry, "view": "proposed"})),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+        assert_eq!(forwarded.entry, entry);
+        let expected = documents
+            .into_iter()
+            .map(|(path, body)| (path.to_owned(), body.to_owned()))
+            .collect();
+        assert_eq!(forwarded.sources, expected);
+    }
+}
+
+#[tokio::test]
 async fn export_projects_synced_review_marks() {
-    // main.typ has synced review state: an open insert suggestion over
+    // intro.typ has synced review state: an open insert suggestion over
     // "Hello" (0..5). notes.typ has none (never collaborated) — an empty
     // mark list is normal, its body projects unchanged.
     let (app, project, _main, _notes, recorder) = export_project_with(|main_id| {
@@ -645,34 +736,19 @@ async fn export_projects_synced_review_marks() {
     assert!(value["zip_base64"].as_str().is_some_and(|z| !z.is_empty()));
 
     // The compile request the export built: the insert-marked span is absent
-    // from the baseline view of main.typ, while the marks-less document is
+    // from the baseline view of intro.typ, while the marks-less document is
     // projected verbatim.
     let forwarded = recorder.0.lock().unwrap().clone().unwrap();
-    // The generated master replaces main.typ (the existing export contract);
-    // the real documents are the projected ones.
-    assert_eq!(
-        forwarded.sources["main.typ"],
-        "#include \"intro.typ\"\n#include \"notes.typ\""
-    );
+    assert_eq!(forwarded.entry, "intro.typ");
+    assert!(!forwarded.sources.contains_key("main.typ"));
     assert_eq!(forwarded.sources["intro.typ"], " world");
     assert_eq!(forwarded.sources["notes.typ"], "plain");
-    // The decoded mark itself rode along on the request (path-keyed), with
-    // the cursors resolved to 0..5 despite the stale raw offsets.
-    assert_eq!(forwarded.marks["intro.typ"].len(), 1);
-    assert_eq!(forwarded.marks["intro.typ"][0].start, 0);
-    assert_eq!(forwarded.marks["intro.typ"][0].end, 5);
-    assert_eq!(forwarded.marks["intro.typ"][0].kind, "insert");
-    assert_eq!(forwarded.marks["intro.typ"][0].author, "bea");
-    assert_eq!(forwarded.marks["intro.typ"][0].timestamp, 5);
+    assert!(forwarded.marks.is_empty());
 }
 
 #[tokio::test]
-async fn export_refuses_when_the_saved_body_lags_the_crdt() {
-    // Mark offsets are resolved against the CRDT text; projecting them over a
-    // different stored body would silently misplace them. While a document is
-    // being edited (the web client's body PATCH is debounced) the CRDT is
-    // ahead of the saved body — exactly this fixture — and the export refuses.
-    let (app, project, _main, _notes, _recorder) = export_project_with(|main_id| {
+async fn export_captures_live_text_and_marks_when_rest_body_lags() {
+    let (app, project, _main, _notes, recorder) = export_project_with(|main_id| {
         Arc::new(StubSyncState {
             states: HashMap::from([(
                 main_id,
@@ -692,13 +768,10 @@ async fn export_refuses_when_the_saved_body_lags_the_crdt() {
         Some(json!({"entry": "intro.typ", "view": "baseline"})),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    let value: Value = response_body(response).await;
-    let message = value["error"]["message"].as_str().unwrap();
-    assert!(
-        message.contains("not saved yet"),
-        "the failure must be actionable: {message}"
-    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+    assert_eq!(forwarded.sources["intro.typ"], " world — edited");
+    assert!(forwarded.marks.is_empty());
 }
 
 #[tokio::test]
@@ -1123,4 +1196,342 @@ fn openapi_describes_all_public_routes() {
     ] {
         assert!(text.contains(path), "openapi must document {path}");
     }
+}
+
+#[test]
+fn redline_imports_existing_review_module() {
+    for (directory, imports) in [
+        ("", ""),
+        ("chapters/", ""),
+        ("", "#import \"review.typ\" as changes\n"),
+        ("chapters/", "#import \"review.typ\": *\n"),
+        ("", "// #import \"review.typ\" as review\n"),
+    ] {
+        let entry = format!("{directory}main.typ");
+        let module = format!("{directory}review.typ");
+        let custom_module = "#let add(body) = text(fill: green, body)";
+        let mut request = CompileRequest {
+            project_id: Uuid::new_v4(),
+            entry: entry.clone(),
+            sources: BTreeMap::from([
+                (entry.clone(), format!("{imports}#review.add[Hello]")),
+                (module.clone(), custom_module.into()),
+            ]),
+            marks: BTreeMap::new(),
+            view: CompileView::Redline,
+        };
+        inject_redline_review(&mut request);
+        assert!(request.sources[&entry].starts_with("#import \"review.typ\" as review\n"));
+        assert_eq!(request.sources[&module], custom_module);
+        let sources = request.sources.clone();
+        inject_redline_review(&mut request);
+        assert_eq!(request.sources, sources);
+    }
+}
+
+#[tokio::test]
+async fn export_compile_failure_retains_diagnostics() {
+    let diagnostics = vec![json!({
+        "message": "label missing does not exist",
+        "path": "/main.typ",
+        "severity": "error"
+    })];
+    let compile = CompileResponse {
+        pdf_base64: None,
+        span_map: vec![],
+        diagnostics: diagnostics.clone(),
+        outline: vec![],
+        build_id: "failed-build".into(),
+    };
+    let response = decode_compile_pdf(&compile).unwrap_err().into_response();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: Value = response_body(response).await;
+    assert_eq!(body["error"]["code"], "conflict");
+    assert_eq!(body["error"]["message"], "compile produced no PDF");
+    assert_eq!(body["error"]["diagnostics"], json!(diagnostics));
+}
+
+#[test]
+fn redline_imports_support_in_each_marked_source() {
+    let entry = "#include \"chapter.typ\"\n#include \"nested/chapter.typ\"";
+    let custom_module =
+        "#let add(body) = text(fill: green, body)\n#let example = \"#review.add[x]\"";
+    let mut request = CompileRequest {
+        project_id: Uuid::new_v4(),
+        entry: "main.typ".into(),
+        sources: BTreeMap::from([
+            ("main.typ".into(), entry.into()),
+            ("chapter.typ".into(), "#review.add[Root chapter]".into()),
+            ("note.md".into(), "#review.add[Note]".into()),
+            (".typ".into(), "title: \"#review.add[literal]\"".into()),
+            (
+                "nested/.typ".into(),
+                "title: \"#review.add[literal]\"".into(),
+            ),
+            (
+                "nested/chapter.typ".into(),
+                "#review.add[Nested chapter]".into(),
+            ),
+            ("nested/review.typ".into(), custom_module.into()),
+            (
+                "metadata.yml".into(),
+                "title: \"#review.add[literal]\"".into(),
+            ),
+        ]),
+        marks: BTreeMap::from([(
+            "note.md".into(),
+            vec![MarkInput {
+                id: None,
+                start: 0,
+                end: 4,
+                kind: "insert".into(),
+                author: "alice".into(),
+                timestamp: 1,
+            }],
+        )]),
+        view: CompileView::Redline,
+    };
+    inject_redline_review(&mut request);
+    for path in ["chapter.typ", "nested/chapter.typ", "note.md"] {
+        assert!(
+            request.sources[path].starts_with("#import \"review.typ\" as review\n"),
+            "{path}"
+        );
+    }
+    assert_eq!(request.sources["main.typ"], entry);
+    for path in ["metadata.yml", ".typ", "nested/.typ"] {
+        assert_eq!(request.sources[path], "title: \"#review.add[literal]\"");
+    }
+    assert_eq!(request.sources["review.typ"], REVIEW_SUPPORT_SOURCE);
+    assert_eq!(request.sources["nested/review.typ"], custom_module);
+    let sources = request.sources.clone();
+    inject_redline_review(&mut request);
+    assert_eq!(request.sources, sources);
+}
+
+#[tokio::test]
+async fn redline_export_supplies_support_for_projected_marks() {
+    let (app, project, _, _, recorder) = export_project_with(|document_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                document_id,
+                synced_snapshot_with_open_insert("Hello world", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry": "intro.typ", "view": "redline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = recorder.0.lock().unwrap().clone().unwrap();
+    assert!(forwarded.sources["intro.typ"].starts_with("#import \"review.typ\" as review\n"));
+    assert!(forwarded.sources["intro.typ"].contains("#review.add[Hello]"));
+    assert_eq!(forwarded.sources["review.typ"], REVIEW_SUPPORT_SOURCE);
+}
+
+#[tokio::test]
+async fn project_preview_keeps_entrypoint_when_editing_another_file() {
+    let (app, project, main, notes, recorder) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "PATCH",
+        &format!("/projects/{}", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry_document_id": main.id})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "alice",
+        "author",
+        Some(
+            json!({"view":"proposed", "draft":{"document_id":notes.id,"body":"new chapter text"}}),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let preview: ProjectPreview = response_body(response).await;
+    assert_eq!(preview.entry, "intro.typ");
+    let inputs = recorder.0.lock().unwrap().clone().unwrap();
+    assert_eq!(inputs.sources["intro.typ"], "Hello world");
+    assert_eq!(inputs.sources["notes.typ"], "new chapter text");
+    // A preview draft does not mutate the project document.
+    let response = request(
+        app,
+        "GET",
+        &format!("/projects/{}/documents/{}", project.id, notes.id),
+        "alice",
+        "author",
+        None,
+    )
+    .await;
+    let stored: Document = response_body(response).await;
+    assert_eq!(stored.body, "plain");
+}
+
+#[tokio::test]
+async fn project_preview_and_export_use_identical_project_inputs() {
+    let (app, project, _, _, recorder) = export_project_with(|main_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                main_id,
+                synced_snapshot_with_open_insert("Hello world changed", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "alice",
+        "author",
+        Some(json!({"view":"baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let preview_inputs = serde_json::to_value(recorder.0.lock().unwrap().clone().unwrap()).unwrap();
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry":"intro.typ", "view":"baseline"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let export_inputs = serde_json::to_value(recorder.0.lock().unwrap().clone().unwrap()).unwrap();
+    assert_eq!(preview_inputs, export_inputs);
+}
+
+#[tokio::test]
+async fn project_preview_rejects_a_draft_from_another_project() {
+    let (app, project, _, _, _) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "alice",
+        "author",
+        Some(json!({"view":"proposed", "draft":{"document_id":Uuid::new_v4(),"body":"foreign"}})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn readonly_member_can_preview_but_cannot_change_entrypoint() {
+    let (app, project, main, _, _) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/members", project.id),
+        "alice",
+        "author",
+        Some(json!({"subject":"reader","role":"read-only"})),
+    )
+    .await;
+    assert!(response.status().is_success());
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/preview", project.id),
+        "reader",
+        "read-only",
+        Some(json!({"view":"proposed"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = request(
+        app,
+        "PATCH",
+        &format!("/projects/{}", project.id),
+        "reader",
+        "read-only",
+        Some(json!({"entry_document_id":main.id})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn ordinary_export_does_not_require_reference_attachments() {
+    let (app, project, _, notes, recorder) = export_project_with(|_| {
+        Arc::new(StubSyncState {
+            states: HashMap::new(),
+        })
+    })
+    .await;
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/references", project.id),
+        "alice",
+        "author",
+        Some(json!({"metadata":{"title":"An open reference","authors":["A. Writer"],"extra":{}}})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let reference: ReferenceEntry = response_body(response).await;
+    let response = request(
+        app.clone(),
+        "PATCH",
+        &format!("/projects/{}/documents/{}", project.id, notes.id),
+        "alice",
+        "author",
+        Some(json!({"body":format!("#cite(<{}>)", reference.id),"expected_revision":0})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry":"notes.typ","view":"proposed"})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        recorder.0.lock().unwrap().as_ref().unwrap().sources["refs.yml"]
+            .contains("An open reference")
+    );
+    let response = request(
+        app,
+        "POST",
+        &format!("/projects/{}/exports", project.id),
+        "alice",
+        "author",
+        Some(json!({"entry":"notes.typ","view":"proposed","include_fulltexts":true})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }

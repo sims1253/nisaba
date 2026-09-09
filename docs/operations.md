@@ -1,46 +1,38 @@
 # Operations
 
-Day-2 operations for the Nisaba stack: bring-up, health, observability,
-backup/restore, and the production deltas. Pairs with
-[`security.md`](security.md) (least privilege), [`architecture.md`](architecture.md)
-(service contracts), [`deployment.md`](deployment.md) (the self-hosting
-walkthrough built on the §5 deltas), and
-[`configuration.md`](configuration.md) (the environment-variable reference).
+Start, monitor, back up, and restore the local stack. For self-hosting, see
+[deployment](deployment.md), [security](security.md), and
+[configuration](configuration.md).
 
-> **Status:** the local infrastructure and application tiers, health probes, and
-> backup scripts run today. Metrics/OTLP export, high-availability deployment, and
-> production failure drills remain planned. Treat the Compose
-> configuration as a local development stack, not a production manifest.
-
----
+The Compose stack is for local development. Production deployment and restore
+drills have not been verified. Metrics and tracing exporters are planned.
 
 ## 1. Quick start
 
-```bash
-cp .env.example .env          # then edit any change-me-* secrets
-just up                        # Postgres + SeaweedFS + Keycloak (+ seaweedfs-init)
+Install Docker with Compose v2 and [just](https://github.com/casey/just).
+Run these commands from the repository root; Docker builds the application:
 
-# verify
-just compose-validate          # validate compose against .env.example (temp env)
-just smoke                     # bring up infra, probe health + realm, tear down
+```bash
+cp .env.example .env          # edit the change-me-* secrets
+just up-all                  # build and start infrastructure and app services
 docker compose ps
-open http://127.0.0.1:8103     # Nisaba web (sign in: demo / demo)
-open http://127.0.0.1:8090     # Keycloak admin (admin / <KEYCLOAK_ADMIN_PASSWORD>)
-open http://127.0.0.1:9100     # SeaweedFS S3 endpoint (<NISABA_S3_ADMIN_KEY>)
-
-# app tier (templates; builds the Rust/web images)
-just up-all                     # app-profile up --build; injects the dev realm
-                                # JWKS when NISABA_OIDC_JWKS_JSON is unset/empty
-just e2e                        # full app-profile smoke: build images, dev token,
-                                # compile→PDF through nginx, sync WS reachability
 ```
 
-Run the local CI-equivalent checks:
+After the services start, open http://127.0.0.1:8103 and sign in with
+`demo` / `demo`. Follow the [user guide](user-guide.md) to create a document.
+The bundled demo accounts and identity-provider realm are for local testing only.
+Published ports bind to `127.0.0.1`; see [deployment](deployment.md) before
+exposing the stack. Use `just down` to stop it and keep its data.
 
-```bash
-just ci-local     # fmt-check, clippy, test (incl. doctests), deny, audit,
-                  # verify, web-install, web-test, web-lint, web-build
-```
+Keycloak admin is
+at http://127.0.0.1:8090 (`admin` / `KEYCLOAK_ADMIN_PASSWORD`). The S3 API is
+at http://127.0.0.1:9100.
+
+`just up-all` fetches the development realm's signing keys when
+`NISABA_OIDC_JWKS_JSON` is unset or empty. Use `just up` for infrastructure
+only. `just smoke` checks infrastructure; `just e2e` checks the full app stack.
+
+For code changes and checks, see [Contributing](../CONTRIBUTING.md).
 
 ---
 
@@ -75,41 +67,16 @@ but the internal authorization endpoint remains deny-all.
 
 ---
 
-## 3. Observability plan
+## 3. Observability
 
-Three signals. Logging is implemented today; metrics and tracing are planned.
-The `OTEL_*` variables in `.env.example` are **reserved** — no service ships an
-OTLP exporter or a `/metrics` endpoint yet:
+Rust services log through `tracing`; `RUST_LOG` controls verbosity. Compose
+rotates each container's logs at 10 MB and retains three files. Logs can contain
+author identities, so restrict access when collecting them centrally.
 
-### Logs
-- Structured (`tracing`/`tracing-subscriber` in Rust; `RUST_LOG` controls
-  verbosity). Compose caps log size per container (`json-file`, 10m × 3).
-- **Production:** ship to a central log store with retention aligned to the
-  audit-trail requirement. PII is present (author identities) —
-  restrict access and mask at ingest where possible.
-
-### Metrics
-- **Plan:** Prometheus scrape of `/metrics` on each HTTP service (port shared
-  with the app, or a sidecar). Key metrics to instrument first:
-  - `compile`: warm-cache hit rate, cold vs warm compile latency histogram,
-    resident memory per pinned project, OOM/eviction count.
-  - `sync`: connected replicas, ops/sec, snapshot lag.
-  - `app`: request rate/latency, export job duration, DB pool saturation.
-- The `compile` memory metric is the one to watch: warm caches for
-  large projects are the failure mode. **Instrument before engineering
-  eviction.**
-
-### Traces
-- **Plan:** OpenTelemetry OTLP export to `OTEL_EXPORTER_OTLP_ENDPOINT`
-  (`.env.example`); spans tagged by `service.name` and `nisaba.project_id`.
-  The `project → compile` hop is the critical path to trace.
-
-### A collector for local dev (optional)
-Drop in `otel/opentelemetry-collector` + `prom/prometheus` + `grafana/grafana`
-as a `telemetry` profile when the service streams ship exporters. Not included
-today to avoid unused moving parts.
-
----
+No service exports OTLP or serves `/metrics`. The `OTEL_*` variables in
+`.env.example` are reserved and have no effect. Compile responses include
+worker/cache counters and RSS when available; use those when sizing the
+[worker pool](../services/compile/README.md#runtime-configuration).
 
 ## 4. Backup & restore
 
@@ -118,24 +85,16 @@ Scripts: [`deploy/backup/backup.sh`](../deploy/backup/backup.sh),
 `just backup` / `just restore <dir>`.
 
 ### What is backed up
-- **Postgres** `nisaba` database: logical dump (`pg_dump --clean --if-exists`,
-  gzipped). **A failed dump aborts the backup** — a snapshot without the
-  database dump is reported as INCOMPLETE and `backup.sh` exits non-zero
-  instead of printing a warning and continuing. Keycloak's DB is
-  *not* in the dev backup (it is stateful identity; back it up separately in
-  production).
-- **SeaweedFS** `nisaba-*` buckets: `aws s3 sync` (versioned) to a local dir. The
-  sync runs inside the `amazon/aws-cli` image via `--entrypoint /bin/sh`. **A
-  failed sync aborts the backup** — since 2026-08-09 a snapshot without object
-  storage is reported as INCOMPLETE and `backup.sh` exits non-zero instead of
-  printing a warning and continuing, so a silently-empty `seaweedfs/` directory
-  can never be mistaken for a good backup.
-- **sync CRDT history** lives in the `nisaba-oplog` bucket itself (the
-  `oplog/` and `snapshot/` key prefixes): since the sync service moved its
-  durable stores onto S3, the bucket sync above covers it — there is no
-  separate sync data volume to archive any more (the compose `sync-data`
-  volume is gone; the filesystem store remains available for bare-metal runs
-  via `NISABA_SYNC_STORE_BACKEND=fs`).
+
+- The `nisaba` PostgreSQL database, as a gzipped logical dump. Back up the
+  Keycloak database separately.
+- Current objects in the `nisaba-*` S3 buckets, copied with `aws s3 sync`. This
+  includes sync history under `oplog/` and `snapshot/` in `nisaba-oplog`.
+  Bucket version history is not copied.
+
+A failed database dump or bucket copy aborts the backup and reports it as
+incomplete. Filesystem-backed sync deployments must also back up
+`NISABA_SYNC_DATA_DIR`; the scripts cover the Compose S3 backend.
 
 ### Local rotation
 `BACKUP_RETENTION_DAYS` (default 7) prunes local snapshots older than N days.
@@ -191,13 +150,16 @@ Keycloak, upgrade/rollback) in [`deployment.md`](deployment.md):
 Behind a single TLS fronted hostname (e.g. `https://nisaba.example`) the reverse
 proxy routes `/realms/nisaba` to Keycloak internally and the browser uses the
 same hostname externally. `NISABA_OIDC_ISSUER` and
-`NISABA_OIDC_DISCOVERY_URL` then collapse to one value, eliminating the local-dev
-split (`architecture.md` §6).
+`VITE_OIDC_ISSUER` must match that URL. Sync validates the same issuer but
+may fetch JWKS through an internal URL. `NISABA_OIDC_DISCOVERY_URL` is reserved
+and has no effect.
 
-### Compile worker sizing (do not pre-engineer)
-Start one warm worker per active project and **instrument**
-memory, and only add eviction/caps when data shows it is needed. The failure
-mode is gradual and visible, not sudden.
+### Compile worker sizing
+
+The server bounds its worker cache and concurrent compiles, with idle and LRU
+eviction. Adjust the [compile limits](../services/compile/README.md#runtime-configuration)
+using measured memory and latency for representative projects. An HTTP timeout
+does not stop a running Typst compile.
 
 ---
 
@@ -219,16 +181,3 @@ mode is gradual and visible, not sudden.
 | Verify a backup       | `just verify-backup <dir>`                 |
 | Full app smoke        | `just e2e`                                 |
 | Build one service img | `just image nisaba-compile`                |
-
----
-
-## 7. Things deliberately deferred (do not regress into building them)
-
-The complexity budget goes to references, review and templates — **not** to these:
-
-- Cached cross-reference index + staleness flag for document previews.
-- Local WASM browser preview (a latency optimisation against Word, the baseline).
-- Compile-pool eviction / warm-project caps (instrument memory first).
-- DOCX import/export, billing, multi-tenancy, SSO/SAML, mobile.
-
-If an ops change risks reintroducing any of these as accidental scope, push back.

@@ -85,12 +85,14 @@ async fn spawn_server_with(access: Arc<dyn nisaba_sync::AccessResolver>) -> std:
 #[derive(Clone)]
 struct MutableAccessResolver {
     role: Arc<Mutex<Option<Role>>>,
+    denial: &'static str,
 }
 
 impl MutableAccessResolver {
     fn new(role: Role) -> Self {
         Self {
             role: Arc::new(Mutex::new(Some(role))),
+            denial: "membership removed",
         }
     }
 
@@ -105,7 +107,7 @@ impl AccessResolver for MutableAccessResolver {
         self.role
             .lock()
             .unwrap()
-            .ok_or_else(|| AuthError::Unauthenticated("membership removed".to_string()))
+            .ok_or_else(|| AuthError::Unauthenticated(self.denial.to_string()))
     }
 }
 
@@ -393,7 +395,7 @@ async fn revoking_membership_terminates_an_existing_author_session() {
             denied,
             Frame::Error { code, ref msg }
                 if code == nisaba_sync::session::codes::FORBIDDEN
-                    && msg.contains("access was revoked")
+                    && msg.contains("membership removed")
         ),
         "expected an explicit access-revoked denial, got {denied:?}"
     );
@@ -404,34 +406,37 @@ async fn revoking_membership_terminates_an_existing_author_session() {
 }
 
 #[tokio::test]
-async fn heartbeat_detects_revocation_before_the_user_edits() {
-    let access = MutableAccessResolver::new(Role::Author);
-    let addr = spawn_server_with(Arc::new(access.clone())).await;
-    let mut client = Client::connect(addr, "idle-revoked-session", 1).await;
+async fn heartbeat_reports_the_access_failure_before_the_user_edits() {
+    for reason in ["membership removed", "token expired"] {
+        let mut access = MutableAccessResolver::new(Role::Author);
+        access.denial = reason;
+        let addr = spawn_server_with(Arc::new(access.clone())).await;
+        let mut client = Client::connect(addr, "idle-revoked-session", 1).await;
 
-    access.revoke();
-    send(&mut client.ws, Frame::Heartbeat).await;
+        access.revoke();
+        send(&mut client.ws, Frame::Heartbeat).await;
 
-    let denied = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            match client.recv_frame().await {
-                Some(frame @ Frame::Error { .. }) => break frame,
-                Some(_) => {}
-                None => panic!("relay closed before sending the revocation error"),
+        let denied = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                match client.recv_frame().await {
+                    Some(frame @ Frame::Error { .. }) => break frame,
+                    Some(_) => {}
+                    None => panic!("relay closed before sending the revocation error"),
+                }
             }
-        }
-    })
-    .await
-    .expect("heartbeat should detect revoked access promptly");
-    assert!(
-        matches!(
-            denied,
-            Frame::Error { code, ref msg }
-                if code == nisaba_sync::session::codes::FORBIDDEN
-                    && msg.contains("access was revoked")
-        ),
-        "expected an explicit access-revoked denial, got {denied:?}"
-    );
+        })
+        .await
+        .expect("heartbeat should detect revoked access promptly");
+        assert!(
+            matches!(
+                denied,
+                Frame::Error { code, ref msg }
+                    if code == nisaba_sync::session::codes::FORBIDDEN
+                        && msg.contains(reason)
+            ),
+            "expected an explicit access-revoked denial, got {denied:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -530,4 +535,103 @@ async fn readiness_passes_when_probes_pass() {
     let body = http_get(addr, "/health/ready").await;
     assert!(body.contains("200"), "{body}");
     assert!(body.contains("\"status\":\"ready\""), "{body}");
+}
+
+#[tokio::test]
+async fn protocol_two_receipts_confirm_persistence_and_duplicate_retries() {
+    use nisaba_sync::{OpLogStore, SyncError, SyncResult};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct FailOnceLog {
+        inner: MemoryOpLogStore,
+        fail: AtomicBool,
+    }
+    #[async_trait::async_trait]
+    impl OpLogStore for FailOnceLog {
+        async fn append(&self, doc: &DocId, update: &[u8]) -> SyncResult<()> {
+            if self.fail.swap(false, Ordering::SeqCst) {
+                return Err(SyncError::Internal("test storage failure".into()));
+            }
+            self.inner.append(doc, update).await
+        }
+        async fn read_all(&self, doc: &DocId) -> SyncResult<Vec<Vec<u8>>> {
+            self.inner.read_all(doc).await
+        }
+        async fn len(&self, doc: &DocId) -> SyncResult<u64> {
+            self.inner.len(doc).await
+        }
+    }
+    let log = Arc::new(FailOnceLog {
+        inner: MemoryOpLogStore::default(),
+        fail: AtomicBool::new(true),
+    });
+    let access = Arc::new(StaticAccessResolver::allow_all(Role::Author));
+    let config = Arc::new(Config::default());
+    let registry = DocRegistry::new(
+        log.clone(),
+        Arc::new(MemorySnapshotStore::default()),
+        config.clone(),
+        Arc::new(SystemClock),
+        access,
+    );
+    let router = nisaba_sync::server::build(registry, config);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let mut ws = dial(addr, "receipt").await;
+    send(
+        &mut ws,
+        Frame::Hello {
+            proto: 2,
+            doc_id: "receipt".into(),
+            peer: 5,
+            token: "author".into(),
+            last_vv: vec![],
+        },
+    )
+    .await;
+    let doc = LoroDoc::new();
+    doc.set_peer_id(5).unwrap();
+    doc.get_text("text").insert(0, "durable").unwrap();
+    doc.commit();
+    let bytes = doc.export(loro::ExportMode::Snapshot).unwrap();
+    send(&mut ws, Frame::Update(bytes.clone())).await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Message::Binary(raw) = ws.next().await.unwrap().unwrap() {
+                match Frame::decode(&raw, 1 << 24).unwrap() {
+                    Frame::Update(_) => panic!("failed persistence must not produce a receipt"),
+                    Frame::Error { code, .. } => {
+                        assert_eq!(code, nisaba_sync::session::codes::INTERNAL);
+                        assert!(log.is_empty(&DocId::new("receipt").unwrap()).await.unwrap());
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        send(&mut ws, Frame::Update(bytes.clone())).await;
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let message = ws.next().await.unwrap().unwrap();
+                if let Message::Binary(raw) = message
+                    && let Frame::Update(receipt) = Frame::decode(&raw, 1 << 24).unwrap()
+                {
+                    assert_eq!(receipt, bytes);
+                    assert_eq!(
+                        log.read_all(&DocId::new("receipt").unwrap()).await.unwrap(),
+                        vec![bytes.clone()]
+                    );
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
 }

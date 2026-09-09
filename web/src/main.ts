@@ -16,8 +16,8 @@ import { Decoration, EditorView, keymap, placeholder, type DecorationSet, type V
 import { LoroExtensions, loroSyncAnnotation, redo as loroRedo } from "loro-codemirror"
 import { LoroDoc, LoroText, UndoManager } from "loro-crdt"
 import { Effect, Layer } from "effect"
-import { findConstructs, type Construct } from "./model"
-import { hybridEditorField, revealConstruct, reviewEditorField, setReviewItems, type ReferenceDisplay } from "./decorations"
+import { type Construct } from "./model"
+import { hybridEditorField, reviewEditorField, setReviewItems, type ReferenceDisplay } from "./decorations"
 import { downloadBase64 } from "./effects"
 import { connectSync, isImportingRemote, type SyncConnection, type SyncStatus } from "./sync"
 import { filterAndSortProjects, type ProjectSort } from "./projects-list"
@@ -46,6 +46,8 @@ import { createPalette, type PaletteItem } from "./palette"
 import { fuzzyScore } from "./fuzzy"
 import {
   clearPreview,
+  downloadPreview,
+  markPreviewStale,
   compileCurrent,
   compileForDiagnostics,
   initCompile,
@@ -58,6 +60,16 @@ import {
   type CompileDiagnostic
 } from "./compile"
 import "./styles.css"
+// Bundle the faces used by the CSS font stacks so typeface settings work without local fonts.
+import "@fontsource/dm-mono/400.css"
+import "@fontsource/dm-mono/500.css"
+import "@fontsource/dm-sans/400.css"
+import "@fontsource/dm-sans/500.css"
+import "@fontsource/dm-sans/600.css"
+import "@fontsource/dm-sans/700.css"
+import "@fontsource/source-serif-4/400.css"
+import "@fontsource/source-serif-4/400-italic.css"
+import "@fontsource/source-serif-4/600.css"
 
 const root = document.querySelector<HTMLDivElement>("#app")
 if (!root) throw new Error("Application root missing")
@@ -66,15 +78,11 @@ if (!root) throw new Error("Application root missing")
 // State
 // ---------------------------------------------------------------------------
 
-interface OutlineEntry {
-  readonly document: NisabaDocument
-}
-
 interface Workspace {
   projects: readonly Project[]
   project?: Project
-  outline: readonly OutlineEntry[]
-  selected?: OutlineEntry
+  outline: readonly NisabaDocument[]
+  selected?: NisabaDocument
   document?: NisabaDocument
   references: readonly Reference[]
   fulltexts: ReadonlyMap<string, Fulltext>
@@ -82,8 +90,7 @@ interface Workspace {
   view: CompileView
   signedIn: boolean
   diagnostics: readonly CompileDiagnostic[]
-  /** Caller's project-scoped role (owner/author/reviewer/read-only). Undefined
-   *  until getMembership resolves on openProject; gates reviewer UX (H1/M4). */
+  /** Project role, unknown until the membership request resolves. */
   role?: MembershipRole
 }
 
@@ -98,60 +105,30 @@ const state: Workspace = {
   diagnostics: []
 }
 
-/**
- * The active document's Loro replica.
- *
- * A replica is created fresh per document (never reused across documents): a reused
- * doc carries a stale version vector that makes the relay believe the peer is
- * already current, so `$body` edits are never pushed and a second collaborator
- * joins an empty document. A fresh doc also gives each document a clean, correctly
- * scoped undo stack (seeded with the body under an origin the undo manager
- * excludes, so Ctrl+Z cannot collapse the whole document back to empty).
- *
- * The editor's Loro extensions are rebound to the new replica via a compartment
- * every time a document loads.
- */
+// The rebindable app chords. Declared early — the editor's extension set
+// (below) consumes the compile chord at construction time.
+let bindings: Keybindings = loadBindings()
+
+// Create a fresh replica per document to isolate its version vector and undo history.
+// Rebind the editor through the compartment when the document loads.
 const loroCompartment = new Compartment()
 /** Controls whether the editor accepts input (disabled for read-only roles). */
 const editableComp = new Compartment()
-/** A fresh replica with a UNIQUE CRDT peer id. */
-function newReplica(): LoroDoc {
-  const doc = new LoroDoc()
-  // CRDT peers MUST have distinct ids: every client previously used Loro's
-  // default peer id, so a second collaborator's ops collided with the first
-  // client's and the relay silently dropped them — reviewer suggestions never
-  // reached the relay once another session had the document open (2026-08-09
-  // collaboration finding, reproduced e2e).
-  const buf = new Uint32Array(2)
-  crypto.getRandomValues(buf)
-  const hi = buf[0] ?? 0
-  const lo = buf[1] ?? 0
-  doc.setPeerId((BigInt(hi) << 32n) | BigInt(lo))
-  return doc
+// Claim the compile chord before CodeMirror inserts text or runs another command.
+// The event still bubbles to the global handler, which performs the compile.
+// Reconfigure this keymap when the chord changes.
+const compileChordCompartment = new Compartment()
+const compileChordKeymap = (chord: string) => Prec.highest(keymap.of([{ key: chord.replace(/\+/g, "-"), run: () => true }]))
+const syncCompileChord = (): void => {
+  editor.dispatch({ effects: compileChordCompartment.reconfigure(compileChordKeymap(bindings.compile)) })
 }
+let activeLoro = new LoroDoc()
 
-let activeLoro = newReplica()
-
-/**
- * Resolves the Loro text container the editor is bound to.
- *
- * The container key MUST be "text": the sync authority snapshots, exports, and
- * imports the `"text"` container (see services/sync), and `loadIntoEditor` seeds
- * the body into the same key. loro-codemirror defaults to a container named
- * "codemirror"; if the editor read that one, the plugin's initial async sync would
- * compare the seeded CodeMirror doc against an empty "codemirror" container and
- * *blank* the view on every (re)load, and remote imports targeting "text" would be
- * dropped by the plugin's `target !== text.id` guard. Passing this override makes
- * the editor, the seed, and the relay all read and write the same container.
- */
+// Use the same "text" container as the sync authority. The loro-codemirror
+// default is "codemirror", which would leave seeded and remote text invisible.
 const getTextFromDoc = (doc: LoroDoc): LoroText => doc.getText("text")
 
-/**
- * Diagnostic underline decorations live in their own compartment (not
- * decorations.ts, which owns comment anchors). Diagnostics
- * carry 0-based char offsets from typst; we clamp to the current doc length so a
- * stale range from a previous source never draws past the end.
- */
+// Diagnostic ranges are clamped to the current document length.
 const diagnosticCompartment = new Compartment()
 const setDiagnostics = StateEffect.define<readonly CompileDiagnostic[]>()
 
@@ -185,17 +162,8 @@ function diagnosticField(): StateField<DecorationSet> {
   })
 }
 
-/**
- * Accept/Reject are authoritative: the text mutations they perform must never be
- * re-tracked as new suggestions (otherwise "Reject all" with suggesting on churns
- * forever — reject creates a delete, rejecting that creates an insert, …). Two
- * independent guards mark these transactions so `updateReviewItems` skips them:
- *   * `resolveAnnotation` — carried on the dispatch itself;
- *   * `resolvingSuggestions` — a transient flag (mirroring the relay's
- *     `isImportingRemote`) set around the whole resolution, in case the editor
- *     extension re-dispatches the change as a separate transaction that would
- *     not carry the annotation.
- */
+// Accept/reject transactions must not create new suggestions. The annotation
+// marks the dispatch; the flag also covers synchronous redispatches by extensions.
 const resolveAnnotation = Annotation.define<boolean>()
 let resolvingSuggestions = false
 
@@ -232,20 +200,17 @@ const pdfViewer = new VirtualPdfViewer(root.querySelector<HTMLElement>("#pdf-vie
 const el = <T extends HTMLElement>(selector: string): T | null => root.querySelector<T>(selector)
 const setText = (selector: string, value: string): void => { const node = el(selector); if (node) node.textContent = value }
 const escapeHtml = (value: string): string => {
-  // Use the browser's built-in escaping via a temporary element's
-  // textContent → innerHTML round-trip. This correctly escapes ALL characters
-  // that have special meaning in HTML, including ones the hand-rolled version
-  // missed (e.g., single quotes, non-breaking spaces).
+  // Escape element text through the DOM. Attribute values need escapeAttr below.
   const div = document.createElement("div")
   div.textContent = value
   return div.innerHTML
 }
+/** Attribute-context escaping: escapeHtml's round-trip leaves double quotes
+ *  intact, so a quoted value (font stacks like "Iosevka", monospace) would
+ *  terminate the attribute early. */
+const escapeAttr = (value: string): string => escapeHtml(value).replaceAll('"', "&quot;")
 
-/**
- * Compact relative timestamp ("just now", "2 min ago", "1 h ago", "3 d ago", then a
- * date). Same shape Google Docs/Overleaf use so review cards read naturally. Used for
- * both createdAt ("2 min ago") and resolvedAt ("resolved 1 h ago").
- */
+// Relative timestamps for review cards.
 function timeAgo(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
   if (seconds < 45) return "just now"
@@ -258,12 +223,7 @@ function timeAgo(timestamp: number): string {
   try { return new Date(timestamp).toLocaleDateString() } catch { return "" }
 }
 
-/**
- * Deterministic hue (0-359) for an author, so the same name always gets the same
- * colour across sessions and peers. Hashes the name (djb2) and maps to the hue
- * circle. Two distinct names rarely collide, and when they do the cards are still
- * distinguished by the name text itself.
- */
+// Keep each author’s hue stable across sessions and peers.
 function authorHue(name: string): number {
   let hash = 5381
   for (let i = 0; i < name.length; i++) hash = ((hash << 5) + hash + name.charCodeAt(i)) | 0
@@ -276,12 +236,8 @@ function status(message: string): void { setText("#save-status", message) }
 // Workspace columns: drag-resize gutters, hide/show, dock, focus mode
 // ---------------------------------------------------------------------------
 
-/**
- * Per-column widths in pixels. `-1` means "flex" (rendered as 1fr): the document
- * and preview absorb the leftover space, while the navigator and the dock keep a
- * fixed pixel size. The widths persist for the session, which is enough for a
- * writing tool where one layout is kept for hours.
- */
+// Column widths in pixels; -1 means a flexible 1fr track.
+// Widths persist for this session.
 interface ColumnWidths {
   navigator: number
   doc: number
@@ -315,13 +271,8 @@ const DOCK_TITLES: Record<DockTool, string> = {
 /** Which tool is docked, or undefined when the dock is closed. */
 let dockTool: DockTool | undefined
 
-/**
- * Below this width the navigator, the text, the dock, and the preview cannot all
- * be useful at once — each ends up too narrow to read. Opening a dock on a narrow
- * window therefore takes the preview's place, and closing it gives the preview
- * back. Only an automatic collapse is undone; a preview the writer hid on purpose
- * stays hidden.
- */
+// On narrow windows, opening the dock hides the preview. Closing it restores
+// only a preview hidden automatically; an explicit user choice stays in effect.
 const FOUR_COLUMN_MIN_WIDTH = 1320
 let previewCollapsedForDock = false
 
@@ -337,11 +288,6 @@ function restorePreviewAfterDock(): void {
   hiddenPanes.preview = false
 }
 
-/**
- * Re-applies the same rule when the window is resized rather than only when the
- * dock opens, so dragging a window narrower (or working on a laptop after a
- * desktop session) does not leave four unusable columns.
- */
 function reflowForWidth(): void {
   if (dockTool === undefined) return
   if (window.innerWidth < FOUR_COLUMN_MIN_WIDTH) makeRoomForDock()
@@ -363,29 +309,15 @@ const GUTTER = 4
 
 const workspaceEl = root.querySelector<HTMLElement>(".workspace")!
 
-/**
- * Writes the grid template from the current widths + hidden/visible flags.
- *
- * Tracks are: navigator · gutter · document · gutter · dock · gutter · preview.
- * The dock sits between the text and the page so a reviewer reads threads next to
- * the source with the artefact beyond them. A hidden pane and its adjacent gutter
- * both collapse to 0px (and the gutter is also `hidden`), which removes the column
- * without disturbing the others. When the dock is closed its two tracks are left
- * out of the template entirely — `display:none` would pull the remaining children
- * into the wrong tracks.
- */
+// Build the grid from visible panes and their gutters. A closed dock must be
+// removed from the template because display:none removes it from grid flow.
 function applyWorkspaceGrid(): void {
   const px = (value: number): string => (value === -1 ? "1fr" : `${value}px`)
   const g = (visible: boolean): string => (visible ? `${GUTTER}px` : "0px")
   const navigatorWidth = hiddenPanes.navigator ? "0px" : px(columnWidths.navigator)
-  // A hidden pane's track must be 0px, not 1fr: the pane itself is display:none,
-  // so a flexible track would simply hold dead space beside the text.
+  // A hidden pane must not retain flexible space.
   const previewWidth = hiddenPanes.preview ? "0px" : px(columnWidths.preview)
   const dockOpen = dockTool !== undefined
-  // A hidden pane is `display:none`, which removes it from grid flow entirely —
-  // so a closed dock must not merely get a 0px track, or every child after it
-  // would slide one track to the left and the preview would end up 0px wide.
-  // Switch templates instead: 7 tracks with the dock, 5 without.
   workspaceEl.style.gridTemplateColumns = dockOpen
     ? `${navigatorWidth} ${g(!hiddenPanes.navigator)} ${px(columnWidths.doc)} ${g(true)} ${px(columnWidths.dock)} ${g(!hiddenPanes.preview)} ${previewWidth}`
     : `${navigatorWidth} ${g(!hiddenPanes.navigator)} ${px(columnWidths.doc)} ${g(!hiddenPanes.preview)} ${previewWidth}`
@@ -401,20 +333,13 @@ function applyWorkspaceGrid(): void {
       : key === "dock" ? !dockOpen
         : hiddenPanes.preview
   }
-  // A collapsed pane leaves an edge tab on the side it lives on, so the way back
-  // is where the user would reach for it.
   const showNavigatorTab = el<HTMLButtonElement>("#show-navigator-tab")
   if (showNavigatorTab) showNavigatorTab.hidden = !hiddenPanes.navigator
   const showPreviewTab = el<HTMLButtonElement>("#show-preview-tab")
   if (showPreviewTab) showPreviewTab.hidden = !hiddenPanes.preview
 }
 
-/**
- * Which pane a gutter resizes. The document is always a 1fr track, so a drag only
- * ever assigns a concrete width to the fixed pane on the other side; the document
- * flexes into whatever is left. Minimums keep a pane readable (navigator ≥ 150px,
- * dock/preview ≥ 260px).
- */
+// Resize the fixed pane beside the gutter; the document takes the remaining space.
 function gutterPane(gutter: string): keyof ColumnWidths | undefined {
   if (gutter === "navigator") return "navigator"
   if (gutter === "dock") return "dock"
@@ -422,15 +347,7 @@ function gutterPane(gutter: string): keyof ColumnWidths | undefined {
   return undefined
 }
 
-/**
- * Starts a column-resize drag on mousedown of a gutter.
- *
- * The handler measures the gutter's own bounding box (its left edge is the drag
- * origin) and tracks mousemove on `document` so the cursor can leave the 4px bar
- * without losing the grab. Each move rewrites the fixed pane's width and calls
- * applyWorkspaceGrid, which redraws the template synchronously. A `.dragging`
- * class on the workspace disables text selection during the gesture.
- */
+// Track the pointer on document so dragging continues outside the narrow gutter.
 function startGutterDrag(event: MouseEvent): void {
   const bar = event.currentTarget as HTMLElement
   const key = bar.dataset.gutter
@@ -579,7 +496,7 @@ function renderCrumbs(): void {
   const file = document.createElement("button")
   file.type = "button"
   file.className = "current"
-  file.textContent = selected.document.path
+  file.textContent = selected.path
   file.title = "Reveal in the sidebar"
   file.addEventListener("click", () => {
     hiddenPanes.navigator = false
@@ -895,7 +812,7 @@ function projectTimestamp(project: Project): string {
 
 /** Leaves the open project and returns to the projects screen. */
 function leaveProject(): void {
-  if (failedSave?.projectId === state.project?.id && failedSave?.context.documentId === state.selected?.document.id) {
+  if (failedSave?.projectId === state.project?.id && failedSave?.context.documentId === state.selected?.id) {
     status("Unsaved offline changes — reconnect before leaving this project")
     return
   }
@@ -951,15 +868,7 @@ function closeOpenDocument(): void {
 // Navigator: file tree + section outline
 // ---------------------------------------------------------------------------
 
-/**
- * The file tree.
- *
- * Folders are derived from the documents' paths (see outline.ts) because that is
- * what the project model actually is — a flat set of path-addressed files. The
- * previous flat list with a truncated path suffix hid the structure authors put
- * there. The entrypoint carries a MAIN tag: it is the file the preview builds
- * from, and that is the only question the tag needs to answer.
- */
+/** Render folders from project-relative document paths. */
 function renderFileTree(): void {
   const host = el<HTMLElement>("#file-tree")
   if (!host || !state.project) return
@@ -970,7 +879,7 @@ function renderFileTree(): void {
     applyRoleGates()
     return
   }
-  const tree = buildFileTree(state.outline.map((entry) => ({ path: entry.document.path, item: entry })))
+  const tree = buildFileTree(state.outline.map((entry) => ({ path: entry.path, item: entry })))
   host.replaceChildren(...renderTreeNodes(tree, 0))
   applyRoleGates()
 }
@@ -978,7 +887,7 @@ function renderFileTree(): void {
 /** Folders the user has collapsed; everything is expanded until they say otherwise. */
 const collapsedFolders = new Set<string>()
 
-function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number): HTMLElement[] {
+function renderTreeNodes(nodes: readonly TreeNode<NisabaDocument>[], depth: number): HTMLElement[] {
   const out: HTMLElement[] = []
   for (const node of nodes) {
     const item = document.createElement("div")
@@ -1013,27 +922,20 @@ function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number
     const row = document.createElement("button")
     row.type = "button"
     row.className = "tree-row"
-    if (state.selected?.document.id === entry.document.id) row.classList.add("active")
-    row.dataset.document = entry.document.id
-    row.title = `${entry.document.path} — double-click to rename`
+    if (state.selected?.id === entry.id) row.classList.add("active")
+    row.dataset.document = entry.id
+    row.title = `${entry.path} — double-click to rename`
     row.innerHTML = `<span class="twist" aria-hidden="true"></span><span class="label"></span>`
     const label = row.querySelector<HTMLElement>(".label")
     if (label) label.textContent = node.name
-    if (isEntrypoint(entry.document.path)) {
-      const tag = document.createElement("span")
-      tag.className = "tag"
-      tag.textContent = "MAIN"
-      tag.title = "The preview is built from this file"
-      row.append(tag)
-    }
     row.addEventListener("click", () => openDocument(entry))
     row.addEventListener("dblclick", () => renameDocument(entry))
     const remove = document.createElement("button")
     remove.type = "button"
     remove.className = "btn-icon btn-danger"
-    remove.dataset.deleteDocument = entry.document.id
+    remove.dataset.deleteDocument = entry.id
     remove.title = "Delete this file"
-    remove.setAttribute("aria-label", `Delete ${entry.document.path}`)
+    remove.setAttribute("aria-label", `Delete ${entry.path}`)
     remove.textContent = "×"
     remove.addEventListener("click", (event) => { event.stopPropagation(); deleteDocument(entry) })
     wrap.append(row, remove)
@@ -1043,46 +945,31 @@ function renderTreeNodes(nodes: readonly TreeNode<OutlineEntry>[], depth: number
   return out
 }
 
-/**
- * Which file the preview builds from. The project model has no explicit
- * entrypoint field yet, so the convention is `main.typ` at the root, falling back
- * to the first file — the same choice compileCurrent makes, kept in one place so
- * the tag and the build can never disagree.
- */
-function entrypointPath(): string | undefined {
-  const paths = state.outline.map((entry) => entry.document.path)
-  return paths.find((path) => path === "main.typ") ?? paths[0]
-}
-
-function isEntrypoint(path: string): boolean {
-  return entrypointPath() === path
-}
-
-function renameDocument(entry: OutlineEntry): void {
+function renameDocument(entry: NisabaDocument): void {
   const project = state.project
   if (!project) return
   promptInPanel("File", "Rename file", "New name", (title) => {
-    run(api.updateDocument(project.id, entry.document.id, { title }), () => {
+    run(api.updateDocument(project.id, entry.id, { title }), () => {
       status("File renamed")
       loadOutline()
     })
-  }, { placeholder: entry.document.title })
+  }, { placeholder: entry.title })
 }
 
-function deleteDocument(entry: OutlineEntry): void {
+function deleteDocument(entry: NisabaDocument): void {
   const project = state.project
   if (!project) return
-  promptInPanel("File", "Delete file", `This cannot be undone. Type "${entry.document.title}" to confirm.`, (confirmText) => {
-    if (confirmText.trim() !== entry.document.title.trim()) {
+  promptInPanel("File", "Delete file", `This cannot be undone. Type "${entry.title}" to confirm.`, (confirmText) => {
+    if (confirmText.trim() !== entry.title.trim()) {
       status("That did not match the file name — nothing was deleted")
       return
     }
     const reconcileDeletedDocument = (): void => {
       status("File deleted")
-      if (state.selected?.document.id === entry.document.id) closeOpenDocument()
+      if (state.selected?.id === entry.id) closeOpenDocument()
       loadOutline()
     }
-    run(api.deleteDocument(project.id, entry.document.id), reconcileDeletedDocument, (error) => {
+    run(api.deleteDocument(project.id, entry.id), reconcileDeletedDocument, (error) => {
       // Deletes are idempotent from the editor's point of view. Another tab or
       // collaborator may win the race; a 404 then confirms the desired final
       // state and must close the stale document/relay instead of leaving a
@@ -1093,7 +980,7 @@ function deleteDocument(entry: OutlineEntry): void {
       }
       status(error instanceof Error ? error.message : "The API request failed")
     })
-  }, { placeholder: entry.document.title })
+  }, { placeholder: entry.title })
 }
 
 /** Kept for callers that still speak in terms of "the outline of the project". */
@@ -1102,13 +989,7 @@ function renderOutline(): void {
   renderCrumbs()
 }
 
-/**
- * The section outline: the open document's headings, live.
- *
- * This is the navigation writers actually use in a long text, and it did not
- * exist before. It is rebuilt from the source on every edit (the parse is
- * memoised) and highlights the heading the caret is under.
- */
+// Rebuild the section outline from the open document and highlight the current heading.
 let currentHeadings: readonly Heading[] = []
 
 function renderSectionOutline(): void {
@@ -1148,11 +1029,7 @@ function revealPosition(position: number): void {
   editor.focus()
 }
 
-/**
- * The sticky heading: which section you are inside, pinned above the text.
- * Borrowed from VS Code's sticky scroll; in a long section it answers "where am
- * I?" without a glance at the sidebar.
- */
+// Keep the current section heading visible above the editor.
 function renderStickyHeading(): void {
   const host = el<HTMLElement>("#sticky-heading")
   if (!host) return
@@ -1194,33 +1071,15 @@ function createProject(): void {
   }, { placeholder: "Project name" })
 }
 
-/**
- * Persist/restore the last-open project + document (M5). Tab-away/return
- * previously dropped the user back on the project list with "No document
- * selected", losing their place. Two storage tiers keep that convenience
- * without collapsing multi-tab sessions into one project (live-session
- * finding: two tabs on two projects both reloaded into whichever tab wrote
- * last):
- *
- * - sessionStorage — THIS tab's restore target. Not shared between tabs, so
- *   each tab reloads into the project it actually had open.
- * - localStorage — the most recent project-bearing entry anywhere, used only
- *   when a tab has no session record of its own (a brand-new tab), so it
- *   still lands in the last project instead of the project list.
- *
- * The restore runs after the project list loads, reopening the project and
- * (if its outline still contains it) the document.
- */
+// Restore this tab from sessionStorage. Use localStorage only as the default
+// for a new tab, so tabs open to different projects keep their own place.
 const LAST_OPEN_KEY = "nisaba.lastOpen"
 interface LastOpen { readonly projectId?: string; readonly documentId?: string }
 
 function persistLastOpen(entry: LastOpen): void {
   try {
     const encoded = JSON.stringify(entry)
-    // This tab's record always reflects the write; the global record only
-    // gains project-bearing entries — clearing it is a separate, guarded
-    // operation (clearGlobalLastOpen) so one tab leaving a project cannot
-    // wipe another tab's more recent project.
+    // Leaving a project must not erase another tab’s newer global restore target.
     sessionStorage.setItem(LAST_OPEN_KEY, encoded)
     if (entry.projectId) localStorage.setItem(LAST_OPEN_KEY, encoded)
   } catch { /* storage may be unavailable */ }
@@ -1242,12 +1101,8 @@ function readLastOpen(): LastOpen {
   } catch { return {} }
 }
 
-/**
- * Reopen the last project + document if they still exist. Called after the boot
- * project list + outline load so the entries are present to match against. A
- * missing project/document (deleted, or membership revoked) falls through to the
- * project list silently — never an error.
- */
+// Restore the last project and document after loading the project list.
+// Ignore entries that were deleted or are no longer accessible.
 function restoreLastOpen(): void {
   const last = readLastOpen()
   if (!last.projectId) return
@@ -1259,14 +1114,10 @@ function restoreLastOpen(): void {
   if (!last.documentId) return
   // openProject loads the outline asynchronously; wait for it, then open the document.
   const tryOpen = (attempts: number): void => {
-    // Abort if the user has already manually opened a document during the
-    // polling window — don't override their choice. (Same still-open guard
-    // as the default-file poller: ids are globally unique so a stale
-    // outline from a previous project can't produce a false match here,
-    // but a switch away must stop the polling.)
+    // A manual selection or project switch takes precedence over restoration.
     if (state.project?.id !== last.projectId) return
     if (state.selected) return
-    const entry = state.outline.find((e) => e.document.id === last.documentId)
+    const entry = state.outline.find((e) => e.id === last.documentId)
     if (entry) { openDocument(entry); return }
     if (attempts > 0) setTimeout(() => tryOpen(attempts - 1), 200)
   }
@@ -1275,47 +1126,35 @@ function restoreLastOpen(): void {
 
 function openProject(project: Project, options: { readonly fromLastOpen?: boolean } = {}): void {
   state.project = project
+  resetBuildSummary()
   state.selected = undefined
   state.document = undefined
-  // Drop the outgoing project's outline immediately: until loadOutline's
-  // fetch resolves, any consumer reading state.outline (file tree, the
-  // default-file poller below) would otherwise see the previous project's
-  // entries — and paths like main.typ collide across projects.
+  // Clear the outgoing outline before the fetch; paths can repeat across projects.
   state.outline = []
   // Role is unknown until the membership fetch resolves; reset so a stale role
   // from a previous project can't leak into the reviewer UX gates.
   state.role = undefined
-  // M5: remember which project is open so a tab-away/return restores it instead
-  // of dropping the user back on the project list.
   persistLastOpen({ projectId: project.id })
   renderWorkspaceState()
   renderFileTree()
   loadOutline()
-  // The per-project default file (Settings dock) opens only when this entry
-  // carries no more specific target of its own — a restore WITH a last-open
-  // document arms its own poller instead, so exactly one poller runs. A
-  // manual pick during the window overrides either (abort-if-selected).
+  // A remembered document takes precedence over the project default.
+  // A manual selection cancels either poller.
   if (!options.fromLastOpen) {
     const defaultPath = loadDefaultFile(project.id)
     if (defaultPath !== undefined) {
       const tryDefault = (attempts: number): void => {
         if (state.project?.id !== project.id) return
         if (state.selected) return
-        // Match by path AND owning project: the outline is per-project by
-        // construction, but this guard keeps the poller correct even if the
-        // outline is ever populated cross-project again.
-        const entry = state.outline.find((e) => e.document.project_id === project.id && e.document.path === defaultPath)
+        // Require the path to belong to this project.
+        const entry = state.outline.find((e) => e.project_id === project.id && e.path === defaultPath)
         if (entry) { openDocument(entry); return }
         if (attempts > 0) setTimeout(() => tryDefault(attempts - 1), 200)
       }
       setTimeout(() => tryDefault(20), 200) // same ~4s outline window as restoreLastOpen
     }
   }
-  // Each of these callbacks writes project-scoped state (references, fulltexts,
-  // role). Rapidly opening project A then B delivers responses out of order, so
-  // without the same still-open guard loadOutline uses, a late response for A
-  // would hand B the wrong citation completer entries or — worse for the
-  // reviewer UX — the wrong role.
+  // Ignore late responses from a project the user has left.
   run(api.listReferences(project.id), (references) => {
     if (state.project?.id !== project.id) return
     state.references = references
@@ -1326,12 +1165,8 @@ function openProject(project: Project, options: { readonly fromLastOpen?: boolea
     state.fulltexts = new Map(fulltexts.map((item) => [item.reference_id, item]))
     renderProjectFacts()
   })
-  // Fetch the caller's project-scoped role to gate reviewer UX: a reviewer is
-  // locked into suggesting mode (H1) and has Export hidden (M4). On failure,
-  // default to read-only (least privilege) so a transient error does not grant
-  // author-level UI powers to non-authors. The failure path needs the guard
-  // too: A's failed membership resolving after B opened would lock B's UI to
-  // read-only on A's behalf.
+  // Unknown membership defaults to read-only. Guard failures against project
+  // switches too, so a late failure cannot change the new project’s role.
   run(api.getMembership(project.id), (membership) => {
     if (state.project?.id !== project.id) return
     state.role = membership.role
@@ -1341,9 +1176,6 @@ function openProject(project: Project, options: { readonly fromLastOpen?: boolea
     state.role = "read-only"
     applyRoleGates()
   })
-  // The app-bar roster shows everyone with access — members were previously
-  // visible only inside the Share/Invite dock, which non-managing members
-  // (and new users) had no reason to open. Any member may read the list.
   run(api.listMembers(project.id), (members) => {
     if (state.project?.id !== project.id) return
     renderPeopleStrip(members)
@@ -1377,24 +1209,18 @@ function loadOutline(): void {
     if (state.project?.id !== projectId) return
     state.outline = [...documents]
       .sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }))
-      .map((document) => ({ document }))
     renderOutline()
     renderProjectFacts()
   })
 }
 
-/**
- * The navigator's footer: the project's standing facts, as facts rather than
- * buttons. Files, how many references still lack an attached PDF (which is what
- * blocks an export), and which file the preview builds from.
- */
+/** Show file and reference counts in the navigator footer. */
 function renderProjectFacts(): void {
   const host = el<HTMLElement>("#nav-foot")
   if (!host) return
   const files = state.outline.length
   const references = state.references.length
   const withFulltext = state.references.filter((reference) => state.fulltexts.has(reference.id)).length
-  const entry = entrypointPath()
   host.replaceChildren()
   const line = (label: string, value: string): void => {
     const row = document.createElement("div")
@@ -1404,9 +1230,34 @@ function renderProjectFacts(): void {
     row.append(strong)
     host.append(row)
   }
+  const buildLabel = document.createElement("label")
+  buildLabel.className = "build-entry-field"
+  buildLabel.textContent = "Build from"
+  const selector = document.createElement("select")
+  selector.id = "project-entrypoint"
+  selector.setAttribute("aria-label", "Compilation entrypoint")
+  const chosen = state.project?.entry_document_id ?? state.outline.find((entry) => entry.path === "main.typ")?.id ?? [...state.outline].sort((a, b) => a.path.localeCompare(b.path))[0]?.id
+  for (const entry of state.outline) {
+    const option = new Option(entry.path, entry.id, false, entry.id === chosen)
+    selector.add(option)
+  }
+  selector.disabled = state.role !== "owner" && state.role !== "author"
+  selector.addEventListener("change", () => {
+    const project = state.project
+    if (!project) return
+    selector.disabled = true
+    run(api.setProjectEntrypoint(project.id, selector.value), (updated) => {
+      if (state.project?.id !== project.id) return
+      state.project = updated
+      markPreviewStale()
+      renderProjectFacts()
+      compileCurrent()
+    }, (error) => { renderProjectFacts(); status(error instanceof Error ? error.message : "Could not change the entrypoint") })
+  })
+  buildLabel.append(selector)
+  host.append(buildLabel)
   line("files", `${files}`)
   line("references", references === 0 ? "none yet" : `${withFulltext} of ${references} with a PDF`)
-  if (entry !== undefined) line("preview builds", entry)
 }
 
 function addDocument(): void {
@@ -1423,12 +1274,7 @@ function addDocument(): void {
   }, { placeholder: "chapters/introduction.typ" })
 }
 
-/**
- * Adds a demo document with substantial Typst content. The seeded references
- * and the generated body live in ./demo-content, pulled via dynamic import()
- * so ~250 lines of demo material stay out of the critical bundle and load only
- * when the (role-gated) button is clicked.
- */
+// Load demo content on demand to keep it out of the initial bundle.
 function addDemoFile(): void {
   const project = state.project
   if (!project) return
@@ -1470,30 +1316,20 @@ function addDemoFile(): void {
 
 let syncConnection: SyncConnection | undefined
 let documentAccessRevoked = false
-// Reviewer changes have no REST baseline fallback: they are durable only after
-// the CRDT binding is live. Authors can keep working through relay outages
-// because autosave persists their baseline, but a reviewer must stay locked
-// until the initial welcome succeeds (and after a fatal protocol/auth failure).
+// Reviewers need a working sync binding: their proposals have no REST fallback.
+// Authors can still save baseline text while the relay is unavailable.
 let reviewerSyncReady = false
 
-function openDocument(entry: OutlineEntry): void {
+function openDocument(entry: NisabaDocument, onReady?: () => void): void {
   const project = state.project
   if (!project) return
-  if (entry.document.id !== state.selected?.document.id && failedSave?.projectId === project.id && failedSave.context.documentId === state.selected?.document.id) {
+  if (entry.id !== state.selected?.id && failedSave?.projectId === project.id && failedSave.context.documentId === state.selected?.id) {
     status("Unsaved offline changes — reconnect before switching files")
     return
   }
-  // CRITICAL #1: Capture the document id at call time so the async getDocument
-  // callback can verify the response still matches the document the user has
-  // selected. Rapid document switching can deliver responses out of order; without
-  // this guard a late response for a previously-clicked document would load the
-  // wrong document into the editor and corrupt the open document's state.
-  const documentId = entry.document.id
-  // Flush a pending autosave for the document we are LEAVING instead of discarding
-  // it. The SaveContext already captured the correct document/revision/body,
-  // so firing it now persists the just-typed text to the right place. Previously
-  // this dropped the timer and silently lost any edits made inside the 1200 ms
-  // debounce window — a real data-loss path when switching documents mid-thought.
+  // Capture the ID to reject responses that arrive after a document switch.
+  const documentId = entry.id
+  // Flush the outgoing document’s captured save before switching.
   flushPendingSave()
   // Drop a pending background diagnostics compile so a timer captured for the
   // document we are leaving never fires a build for the one we are loading.
@@ -1504,104 +1340,69 @@ function openDocument(entry: OutlineEntry): void {
   // binding before any clear/load transaction so rapid file switches cannot
   // write the next editor state into the previous document's replica.
   editor.dispatch({ effects: loroCompartment.reconfigure([]) })
-  // MEDIUM #8: Capture the document currently in the editor BEFORE reassigning
-  // state.selected, so we can tell whether this open is a real switch.
-  const previousDocumentId = state.selected?.document.id
+  const previousDocumentId = state.selected?.id
   state.selected = entry
-  // Clear the stale document reference BEFORE the editor-clear dispatch below.
-  // The clear is a docChanged transaction; without this guard the update listener
-  // sees state.document (the OLD document's doc) still set and calls scheduleSave(),
-  // arming a 1.2 s timer whose captured SaveContext has the NEW document's id, the
-  // OLD doc's revision, and an empty body. When that timer fires it PATCHes the
-  // new document with empty text — a data-loss / corruption path. With document
-  // undefined, captureSaveContext() returns undefined and scheduleSave is skipped.
+  // Clear the old document before dispatching changes. Otherwise the save
+  // listener could pair the new document ID with the old revision and empty text.
   state.document = undefined
   documentAccessRevoked = false
   reviewerSyncReady = false
   editor.dispatch({ effects: editableComp.reconfigure(EditorView.editable.of(false)) })
-  // MEDIUM #8: When switching to a DIFFERENT document, clear stale editor content
-  // before the async getDocument resolves. Without this the previous document's text
-  // stays editable during the load gap; a user can type into it and those "gap
-  // edits" are then unconditionally overwritten by loadIntoEditor. Clearing now
-  // leaves nothing to lose (and is skipped on a re-open of the same document).
+  // Clear a different document’s content while loading so it cannot be edited
+  // and then overwritten by the response.
   if (editor.state.doc.length > 0 && previousDocumentId !== documentId) {
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: "" } })
   }
-  // M5: remember the open document so tab-away/return restores it. Persist after
-  // state.selected is set so the restore path can find the matching entry.
-  persistLastOpen({ projectId: project.id, documentId: entry.document.id })
+  persistLastOpen({ projectId: project.id, documentId: entry.id })
   renderOutline()
-  setText("#document-name", entry.document.title)
-  setText("#document-path", entry.document.path)
+  setText("#document-name", entry.title)
+  setText("#document-path", entry.path)
   status("Opening…")
   run(
     api.getDocument(project.id, documentId),
     (document) => {
-      // CRITICAL #1: Bail out if the user has switched to a different document
-      // while this document was loading — a stale response must not overwrite the
-      // now-current editor content.
-      if (state.selected?.document.id !== documentId) return
+      // Ignore responses for a document the user has left.
+      if (state.selected?.id !== documentId) return
       state.review = emptyReviewState
       editor.dispatch({ effects: setReviewItems.of([]) })
       closeReviewPopover()
       state.document = document
-      // Re-apply the role gate after the review reset: openDocument wipes review
-      // state (including a reviewer's forced-suggesting) so the lock must be
-      // re-established here, not only in openProject (H1).
+      // Resetting review state clears forced suggesting mode; restore the role gate.
       applyRoleGates()
       renderWorkspaceState()
-      // The replica starts empty; loadIntoEditor seeds the persisted body into both
-      // the replica and CodeMirror (so the user sees content immediately AND the
-      // loro-codemirror binding's init reconcile does not blank the editor). On
-      // connect, connectSync resolves this seeded body to a single authoritative
-      // origin to avoid CRDT duplication (bug N1): the first client to reach an
-      // empty relay pushes its seed; later clients CLEAR their local seed and adopt
-      // the relay's snapshot.
-      const replica = newReplica()
+      // Show the saved body immediately. The replica stays empty until the relay
+      // welcome imports existing state or establishes the first seed.
+      const replica = new LoroDoc()
       activeLoro = replica
-      // Subscribe BEFORE seeding/connecting so the listener catches the relay's
-      // welcome snapshot (which arrives inside connectSync's importRemote and may
-      // carry a prior session's review container) as well as live peer updates.
+      // Subscribe before connecting so the welcome snapshot also restores review items.
       subscribeReviewSync(replica)
       loadIntoEditor(document.body)
-      // A snapshot from a previous session (or a just-imported peer update) may have
-      // populated the "review" container before the editor was bound — pull it into
-      // state.review now. Local-only items already in state.review are preserved
-      // (applyRemoteReview/loadPersistedReview diff against the current set).
+      // Restore review records received before the editor was bound; preserve local items.
       const persisted = loadPersistedReview()
       if (persisted && persisted.length > 0) applyRemoteReview(persisted)
       setText("#revision-label", `v${document.revision}`)
       status("Ready")
-      // Everything derived from the text: outline, sticky heading, word count,
-      // breadcrumb, and the review surfaces for the document just opened.
       refreshDocumentStructure()
       renderCrumbs()
       renderReviewBanner()
       renderReviewDock()
-      // A newly opened document has no build yet; the compile module owns
-      // lastBuild and this is the one write it accepts from outside.
-      resetBuildSummary()
-      // History is document-scoped. If the dock stayed open while switching
-      // files, replace its pending/previous request with the newly-opened file's
-      // timeline. The response guard in openHistory still discards the old one.
+      renderBuildLabel()
+      // Refresh an open history dock for the new document.
       if (dockTool === "history") openHistory()
       connectDocument(document, replica)
-      // A reload can race a keepalive PATCH from the page being replaced: this
-      // GET may return the old revision even though that save commits moments
-      // later. Recheck once after the unload-save window. Only adopt a newer
-      // revision while the new page is still pristine; local or peer edits make
-      // the editor diverge from its loaded REST baseline and must never be
-      // overwritten by this recovery path.
+      onReady?.()
+      // An unload PATCH may commit after this GET. Recheck once, adopting a newer
+      // revision only if no local or remote edits have changed the loaded baseline.
       setTimeout(() => {
         void Effect.runPromise(api.getDocument(project.id, documentId)).then((latest) => {
           const current = state.document
-          if (state.selected?.document.id !== documentId || !current) return
+          if (state.selected?.id !== documentId || !current) return
           if (latest.revision <= current.revision) return
           if (pendingSave || saveTimer !== undefined || saveInFlight) return
           if (editor.state.doc.toString() !== current.body) return
           state.document = latest
-          state.selected = { document: latest }
-          state.outline = state.outline.map((item) => item.document.id === documentId ? { document: latest } : item)
+          state.selected = latest
+          state.outline = state.outline.map((item) => item.id === documentId ? latest : item)
           loadIntoEditor(latest.body)
           setText("#revision-label", `v${latest.revision}`)
           refreshDocumentStructure()
@@ -1615,17 +1416,8 @@ function openDocument(entry: OutlineEntry): void {
 }
 
 function loadIntoEditor(body: string): void {
-  // Seed ONLY the CodeMirror doc with the persisted body for immediate display.
-  // The Loro replica is NOT seeded here — it stays empty until connectSync's
-  // WELCOME handler either imports the relay's snapshot or seeds it as the
-  // origin. This prevents the 2026-08-09 collaboration bug where a locally-
-  // seeded private text container made delta exports arrive as "pending" ops
-  // at the relay (the container's creation was below the syncFrom baseline).
-  //
-  // The CRDT binding (LoroExtensions) is also NOT attached here — it is
-  // attached in the onReady callback after the WELCOME, when the replica has
-  // its definitive content. The editor is a plain CodeMirror instance until
-  // then; this is fine because the WELCOME arrives in milliseconds.
+  // Display the saved body without seeding Loro. The welcome handler chooses
+  // the seed or remote snapshot, then onReady attaches the CRDT binding.
   isLoadingDocument = true
   try {
     editor.dispatch({
@@ -1654,22 +1446,11 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
     documentId: document.id,
     token,
     seedBody: document.body,
-    // Called after the WELCOME handler has given the replica its definitive
-    // content (either imported from the relay or seeded as the origin). The
-    // CRDT binding is attached HERE so the replica never carries a stale local
-    // seed whose container creation would sit below the export baseline (the
-    // 2026-08-09 "pending ops" collaboration bug). At this point CM and the
-    // replica already agree (both have the same body), so the binding's init
-    // reconcile is a no-op (no editor blank).
+    // Bind only after the welcome has established the replica’s content.
     onReady: () => {
-      // Attach the CRDT binding AND sync CM to the replica's text in one guarded
-      // transaction. Without the explicit CM sync, the binding's init-reconcile
-      // (a microtask) would detect a mismatch (CM has the REST body, the replica
-      // has the relay-imported body — they can differ by whitespace) and dispatch
-      // a CM replacement. That replacement flows through the binding into the
-      // replica as a text-touching local update, which the relay's reviewer gate
-      // rejects (4003). By syncing CM here (under isLoadingDocument so no
-      // listener fires), the init-reconcile sees CM == replica and is a no-op.
+      // Load the replica text and attach the binding in one guarded transaction.
+      // Otherwise the adapter could reconcile a REST/CRDT mismatch as a local edit,
+      // which the reviewer gate would reject.
       isLoadingDocument = true
       try {
         const replicaText = getTextFromDoc(activeLoro).toString()
@@ -1698,10 +1479,7 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
       setSyncStatus(value, detail)
     },
     onAccessRevoked: (message) => {
-      // Stop edits immediately when a membership/project disappears underneath
-      // an open socket. Keeping the stale binding editable accepted local text
-      // that could never be persisted and often surfaced an unrelated review
-      // policy error instead.
+      // Disable editing immediately when access is lost; these edits cannot be saved.
       documentAccessRevoked = true
       if (saveTimer !== undefined) clearTimeout(saveTimer)
       saveTimer = undefined
@@ -1730,27 +1508,15 @@ function connectDocument(document: NisabaDocument, replica: LoroDoc): void {
   })
 }
 
-// The browser's navigator.onLine / online-offline events fire the instant the
-// network drops — far sooner than the sync relay's WebSocket close, which can
-// hang on a TCP timeout for tens of seconds. Tracking it separately lets the
-// connection label turn honest immediately on network loss, instead of leaving a
-// green "Online · Collaborating" light burning while the user is actually
-// offline (H3). It is a one-way dimmer: going offline forces the label offline
-// regardless of the last WS status; coming back online does NOT claim connected
-// — it lets the next WS status (re)paint the truth.
+// Browser offline events can precede a WebSocket timeout. They force the
+// indicator offline; returning online still requires a connected relay status.
 let browserOffline = false
 // Last relay-reported status/detail, replayed when the browser comes back online
 // so the label returns to the relay's truth rather than staying stuck offline.
 let lastSyncStatus: SyncStatus | undefined
 let lastSyncDetail: string | undefined
 
-/**
- * The short status word for the sync cell. One mapping shared by setSyncStatus
- * and renderPresence — the two previously re-derived it independently and their
- * fallbacks drifted ("Local" vs "No document"). `status` is undefined before the
- * first relay callback: with no document open the label stays "No document"
- * (the shell's initial text); with one open, the editor works locally.
- */
+// Shared status word for the sync indicator and presence roster.
 function syncShortLabel(status: SyncStatus | undefined): string {
   if (browserOffline) return "Offline"
   if (status === "connected") return "Live"
@@ -1768,12 +1534,9 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
   const dot = el<HTMLElement>("#status-dot")
   const effective: SyncStatus = browserOffline ? "disconnected" : value
   if (dot) dot.dataset.state = effective
-  // The short word is the state; the sentence is the explanation, and it goes in
-  // the tooltip so the bar stays scannable. "Live" is only ever claimed when the
-  // relay says so — going offline dims it immediately, without waiting for the
-  // WebSocket to notice.
+  // Keep the explanation in the tooltip and the short state in the status bar.
   const short = syncShortLabel(value)
-  const explanation = browserOffline ? "You are offline — your work is still saved to this device and syncs when you reconnect"
+  const explanation = browserOffline ? "You are offline. Keep this tab open until you reconnect; recent edits may not be saved."
     : value === "connected" ? "Connected: other people see your edits as you type"
       : value === "connecting" ? "Reconnecting to the collaboration server…"
         : value === "unsupported" ? `Collaboration unavailable${detail ? ` · ${detail}` : ""}`
@@ -1784,10 +1547,6 @@ function setSyncStatus(value: SyncStatus, detail?: string): void {
 
 // ---------------------------------------------------------------------------
 // Presence: who else is here, and where
-//
-// The relay has always kept a roster with heartbeats; the client never read it,
-// so the UI could only say "2 collaborators online". Now every peer publishes
-// their name, file, section, and line, and the header shows them as avatars.
 // ---------------------------------------------------------------------------
 
 let presencePeers: readonly PresencePeer[] = []
@@ -1802,7 +1561,7 @@ let presencePeers: readonly PresencePeer[] = []
 function applyPresenceRoster(peers: readonly PresencePeer[]): void {
   presencePeers = peers
   renderPresence()
-  const openPath = state.selected?.document.path
+  const openPath = state.selected?.path
   const cursors: RemoteCursor[] = []
   for (const peer of peers) {
     if (peer.line === undefined) continue
@@ -1857,7 +1616,7 @@ function renderPresence(): void {
  */
 function publishPresence(): void {
   const connection = syncConnection
-  const document_ = state.selected?.document
+  const document_ = state.selected
   if (!connection || !document_) return
   const head = editor.state.selection.main.head
   const caretLine = editor.state.doc.lineAt(Math.min(head, editor.state.doc.length))
@@ -1891,10 +1650,7 @@ interface SaveContext {
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let pendingSave: SaveContext | undefined
-// Tracks whether a PATCH is currently over the wire. saveTimer/pendingSave only
-// cover the debounce window; once the request fires they are cleared, so the
-// beforeunload guard must look at this flag to detect an in-flight save that
-// would lose data if the tab closes mid-request.
+// Track in-flight writes separately from the debounce timer for the unload guard.
 let saveInFlight = false
 /** Completion of the currently-running baseline PATCH, used by dependent actions. */
 let saveCompletion: Promise<void> | undefined
@@ -1905,7 +1661,7 @@ function captureSaveContext(): SaveContext | undefined {
   const { selected, document } = state
   if (!selected || !document) return undefined
   return {
-    documentId: selected.document.id,
+    documentId: selected.id,
     revision: document.revision,
     body: editor.state.doc.toString()
   }
@@ -1914,9 +1670,7 @@ function captureSaveContext(): SaveContext | undefined {
 function scheduleSave(): void {
   const context = captureSaveContext()
   if (!context) return
-  // Reviewers/read-only viewers have no baseline to persist (the server 403s
-  // their PATCH); their edits are synced through the review layer instead, so
-  // the "Unsaved changes" autosave dance would only produce a stuck error.
+  // Only authors can PATCH the baseline; reviewer proposals travel through sync.
   if (state.role !== undefined && state.role !== "owner" && state.role !== "author") {
     if (state.role === "reviewer") status("Suggestion tracked")
     return
@@ -1939,16 +1693,11 @@ function saveNow(): void {
   if (!context) return
   // Selection-drift guard: a timer captured for another document or a stale
   // document reference must not write to the document now open.
-  if (context.documentId !== selected.document.id) return
+  if (context.documentId !== selected.id) return
   runSave(project.id, context)
 }
 
-/**
- * Immediately fires a pending autosave (if any) for its captured document,
- * independent of which document is currently selected. Used when leaving a
- * document (openDocument) or closing the tab (beforeunload) so edits made inside
- * the debounce window are not lost.
- */
+// Flush the captured save when leaving a document or closing the tab.
 function flushPendingSave(): void {
   if (saveTimer !== undefined) {
     clearTimeout(saveTimer)
@@ -1963,17 +1712,14 @@ function flushPendingSave(): void {
 
 /** Performs the PATCH for a specific save context and handles the 409 recovery. */
 function runSave(projectId: string, context: SaveContext): void {
-  // Reviewers and read-only viewers have no baseline to save: the server
-  // rejects their PATCH (403), which used to leave the status bar permanently
-  // stuck on the permission error after every suggestion. Their edits live in
-  // the shared review layer (synced via the relay), not in the app database.
+  // Reviewer proposals are stored through sync; their baseline PATCH would be rejected.
   if (state.role !== undefined && state.role !== "owner" && state.role !== "author") {
     if (context.body !== state.document?.body) {
       status(state.role === "reviewer" ? "Suggestion tracked (synced via review)" : "View-only")
     }
     return
   }
-  if (context.body === state.document?.body && state.selected?.document.id === context.documentId) { status("Saved"); return }
+  if (context.body === state.document?.body && state.selected?.id === context.documentId) { status("Saved"); return }
   status("Saving…")
   // Mark the request as in-flight so the beforeunload guard can warn about an
   // unsaved PATCH — saveTimer/pendingSave are already cleared by this point.
@@ -1990,15 +1736,12 @@ function runSave(projectId: string, context: SaveContext): void {
       saveInFlight = false
       const recoveringFailedSave = failedSave?.projectId === projectId && failedSave.context.documentId === context.documentId
       if (failedSave?.context.documentId === context.documentId) failedSave = undefined
-      // The PATCH body is an immutable snapshot captured when local typing was
-      // scheduled. Peer suggestions may arrive while that request is in flight;
-      // never promote the then-current CRDT/editor text to the REST baseline.
-      // Keep `state.document.body` aligned with exactly what this PATCH wrote,
-      // while preserving server-owned metadata/revision from the response.
+      // Keep the baseline equal to what this PATCH wrote. Peer suggestions may have
+      // changed the editor while the request was in flight.
       const persisted = { ...saved, body: context.body }
       // Only update the open document if we are still editing the document this
       // save was for.
-      if (state.selected?.document.id === context.documentId) {
+      if (state.selected?.id === context.documentId) {
         state.document = persisted
         setText("#revision-label", `v${persisted.revision}`)
       }
@@ -2010,7 +1753,7 @@ function runSave(projectId: string, context: SaveContext): void {
       // non-empty editor, which may already include legitimate peer edits.
       if (recoveringFailedSave && persisted.body.length > 0) {
         setTimeout(() => {
-          if (state.selected?.document.id !== context.documentId || editor.state.doc.length !== 0) return
+          if (state.selected?.id !== context.documentId || editor.state.doc.length !== 0) return
           loadIntoEditor(persisted.body)
           refreshDocumentStructure()
           status("Saved")
@@ -2026,7 +1769,7 @@ function runSave(projectId: string, context: SaveContext): void {
       // replica has usually already merged the other author's edits, so the retry
       // then lands.
       if (error instanceof api.ApiError && error.status === 409) {
-        if (state.selected?.document.id !== context.documentId) {
+        if (state.selected?.id !== context.documentId) {
           status("Save conflicted; the document changed")
           completeSave()
           return
@@ -2035,7 +1778,7 @@ function runSave(projectId: string, context: SaveContext): void {
           api.getDocument(projectId, context.documentId)
         ).then(
           (latest) => {
-            if (state.selected?.document.id !== context.documentId) { status("Saved elsewhere"); completeSave(); return }
+            if (state.selected?.id !== context.documentId) { status("Saved elsewhere"); completeSave(); return }
             state.document = latest
             setText("#revision-label", `v${latest.revision}`)
             const localBody = editor.state.doc.toString()
@@ -2045,14 +1788,8 @@ function runSave(projectId: string, context: SaveContext): void {
               completeSave()
               return
             }
-            // H2 (data loss): the old recovery unconditionally re-scheduled the
-            // save, which overwrote the server edit whenever the local editor
-            // hadn't learned about it (a peer REST edit, or a CRDT update this
-            // replica never received). Only auto-resave when the sync relay is
-            // connected — then the CRDT is the merged truth and local text is a
-            // superset of the server's. When disconnected, the divergence is real
-            // and silently overwriting would lose the other author's work; surface
-            // it as a conflict so the user decides.
+            // This retry assumes connected sync has merged the server revision.
+            // REST-only or delayed writes can violate that assumption; see #76.
             if (lastSyncStatus === "connected") {
               status("Resaving the merged revision…")
               scheduleSave()
@@ -2095,7 +1832,7 @@ async function saveBeforeServerSnapshot(): Promise<void> {
     const saved = await Effect.runPromise(
       api.saveDocument(project.id, context.documentId, context.body, context.revision)
     )
-    if (state.selected?.document.id === context.documentId) {
+    if (state.selected?.id === context.documentId) {
       state.document = saved
       setText("#revision-label", `v${saved.revision}`)
     }
@@ -2108,17 +1845,8 @@ async function saveBeforeServerSnapshot(): Promise<void> {
   }
 }
 
-/**
- * Debounced background compile for live error checking.
- *
- * After the user stops typing for a couple of seconds we recompile in the
- * background and refresh the diagnostic underlines/list — but NOT the PDF
- * preview, so the canvas does not flash on every pause. It shares the
- * `compiling` guard with `compileCurrent` so a manual compile and a debounce
- * fire never run two server builds at once. The timer is cleared on every new
- * keystroke (so a burst of edits is one compile) and on document switch (so a
- * timer captured for one document never compiles another's text).
- */
+// Debounce background builds. The compile module serializes them; document
+// switches cancel this timer.
 let diagnosticsTimer: ReturnType<typeof setTimeout> | undefined
 const DIAGNOSTICS_DEBOUNCE_MS = 2000
 
@@ -2154,18 +1882,8 @@ function openConstruct(construct: Construct): void {
 // Autocomplete: Typst commands + reference/citation keys
 // ---------------------------------------------------------------------------
 
-/**
- * Typst command completions triggered by `#`.
- *
- * The `#\w*` matchBefore returns the `#` plus any letters typed after it (e.g.
- * `#fig`). We report `from` as the position right after the `#` so CodeMirror's
- * filter scores the bare command name (`fig` vs `figure`), and the replace
- * range never touches the already-typed `#`. Each option's `apply` carries the
- * opening bracket/brace, so selecting `figure` inserts `figure(` (the user's
- * `#` stays in front). `validFor` keeps the popup open while the user keeps
- * typing word characters after the `#`. The `cite` command's `apply` includes
- * `<` so selecting it immediately triggers reference-key completions.
- */
+// Complete the command after #, preserving the prefix. The cite completion
+// includes < to trigger reference completion next.
 const typstCommands: readonly Completion[] = [
   { label: "figure", type: "function", detail: "figure(body, caption: ...)", apply: "figure(" },
   { label: "table", type: "function", detail: "table(columns: ..., ...rows)", apply: "table(" },
@@ -2195,9 +1913,6 @@ const typstCommands: readonly Completion[] = [
 
 const typstCompletions: CompletionSource = (context: CompletionContext): CompletionResult | null => {
   const word = context.matchBefore(/#\w*/)
-  // Only trigger when a `#` is directly before the cursor (optionally followed
-  // by word chars). matchBefore already covers the bare-`#` case (it matches the
-  // `#` with zero trailing word chars), so no explicit fallback is needed.
   if (!word) return null
   // Start the replace range right after the `#` so the already-typed `#` is
   // preserved and the filter scores against the bare command name.
@@ -2208,27 +1923,9 @@ const typstCompletions: CompletionSource = (context: CompletionContext): Complet
   }
 }
 
-/**
- * Reference/citation completions with fuzzy search across keys, titles, authors.
- *
- * Two trigger shapes:
- *   * `@key`      — Typst's reference shorthand. The `@\w*` matchBefore matches
- *     the `@` plus any letters; `from` is set right after the `@` so the filter
- *     scores against the typed fragment, and the `@` is preserved.
- *   * `#cite(<key` — the explicit form. The `#cite\(<[\w-]*` matchBefore matches
- *     from `#cite(<` through any UUID-ish chars; `from` is set right after the
- *     `<` so the filter scores against the typed key fragment, and the
- *     `#cite(<` prefix is preserved. Selecting `cite` from the `#` menu inserts
- *     `cite(<` (with the `<`), so reference completions fire immediately without
- *     the user needing to know the angle-bracket syntax.
- *
- * The typed fragment is matched fuzzily against each reference's key, title, and
- * authors. Results are ranked by fuzzy score and returned with `filter: false`
- * so CodeMirror does not re-filter (it would only match the label prefix).
- * Selecting a reference inserts its UUID; the closing `>` is left for the user.
- * The list is read from `state.references` at completion time, so it always
- * reflects the latest loaded project references without a compartment reconfigure.
- */
+// Complete @key and #cite(<key using keys, titles, and authors. Preserve the
+// prefix and insert the reference key. Read the current project references
+// on each request; disable CodeMirror filtering to preserve the fuzzy ranking.
 const referenceCompletions: CompletionSource = (context: CompletionContext): CompletionResult | null => {
   const at = context.matchBefore(/@\w*/)
   const cite = !at ? context.matchBefore(/#cite\(<[\w-]*/) : null
@@ -2276,12 +1973,6 @@ const referenceCompletions: CompletionSource = (context: CompletionContext): Com
   }
 }
 
-// Cache of parsed constructs for the current doc, refreshed only on doc-change
-// transactions. findConstructs re-parses the ENTIRE document; calling it on every
-// cursor move (selectionSet) made large documents laggy, so we parse once per edit
-// and reuse the result for the selection listener's chip-reveal lookup.
-let cachedConstructs: Construct[] = []
-
 const editor = new EditorView({
   state: EditorState.create({
     doc: "",
@@ -2291,6 +1982,7 @@ const editor = new EditorView({
       // presence-roster entry, hue-matched to the avatar chips. The cursor set
       // is driven by applyPresenceRoster; it is empty until a roster arrives.
       ...remoteCursors,
+      compileChordCompartment.of(compileChordKeymap(bindings.compile)),
       // Typst command + reference/citation completions. Placed after basicSetup
       // (which already pulls in default autocompletion) so these sources augment
       // the defaults rather than replacing them.
@@ -2347,15 +2039,6 @@ const editor = new EditorView({
           const head = update.state.selection.main.head
           const line = update.state.doc.lineAt(head)
           setText("#cursor-position", `Ln ${line.number}, Col ${head - line.from + 1}`)
-          // Use the cached parse instead of re-parsing on every cursor move.
-          // The cache is refreshed below whenever the doc actually changes, so the
-          // offsets stay valid between edits (selection-only updates don't move text).
-          const construct = cachedConstructs.find((item) => head >= item.from && head <= item.to)
-          // Entering a chip (figure/table/…) reveals its raw source; leaving must
-          // re-chip it again. The reveal set is rebuilt from effects on each update,
-          // so dispatching a sentinel that matches no construct empties the set and
-          // returns every still-chipped construct to its button form.
-          update.view.dispatch({ effects: revealConstruct.of(construct ? { from: construct.from, to: construct.to } : { from: -1, to: -1 }) })
           // Where the caret is drives four surfaces: the sticky heading, the
           // outline highlight, the breadcrumb's section, and what peers see of us.
           renderStickyHeading()
@@ -2364,34 +2047,15 @@ const editor = new EditorView({
           publishPresence()
         }
         if (update.docChanged) {
-          // Re-parse the document only when text actually changed, then reuse the
-          // result for all subsequent cursor moves until the next edit.
-          cachedConstructs = findConstructs(update.state.doc.toString())
-          // The outline, sticky heading, and word count are all functions of the
-          // text, so they refresh here and nowhere else.
+          if (!isLoadingDocument) markPreviewStale()
           refreshDocumentStructure()
           renderCrumbs()
         }
         if (update.docChanged && state.document) {
-          // Two kinds of change are not user edits and must not trigger a PATCH:
-          //   * the load transaction (isLoadingDocument) — the seed/reconfigure
-          //     dispatch in loadIntoEditor;
-          //   * remote imports (isImportingRemote) — the relay snapshot that
-          //     populates the editor on open, plus live peer edits. These originate
-          //     FROM the authority, so re-PATCHing them is redundant AND a data-loss
-          //     vector: a snapshot whose body differs from the REST body would
-          //     otherwise be written back over the server head, bumping the revision
-          //     with the editor's text. The snapshot import runs the plugin's
-          //     synchronous dispatch inside doc.import(), which fires long after
-          //     isLoadingDocument has reset, so the flag alone does not cover it.
-          // The review tracker still runs for remote changes so peer edits remap
-          // existing accept/reject anchors; it classifies remote edits itself.
-          // `isImportingRemote()` covers synchronous Loro callbacks, while the
-          // adapter annotation survives if Loro delivers its subscriber on a
-          // later microtask. The annotation is therefore the durable source of
-          // truth for peer text. Missing it caused an author's browser to treat
-          // an imported reviewer proposal as local typing and PATCH that still-
-          // open suggestion into the agreed REST baseline.
+          // Do not autosave loads or remote imports as local edits. A remote proposal
+          // must not become the REST baseline. The import flag covers synchronous
+          // callbacks; the adapter annotation also survives deferred delivery.
+          // The review tracker still remaps anchors through remote changes.
           const remote = isImportingRemote() || update.transactions.some((transaction) =>
             transaction.annotation(loroSyncAnnotation) !== undefined)
           const resolution = resolvingSuggestions || update.transactions.some((transaction) =>
@@ -2417,7 +2081,7 @@ const editor = new EditorView({
             if (!remote && localIntent && !recordedSuggestion && !resolution) {
               scheduleSave()
               // Live error checking: after the typing pause, recompile in the
-              // background for fresh diagnostic underlines (no PDF update). Same
+              // background for fresh diagnostics and a preview on successful builds. Same
               // remote/load exclusions as save — peer imports and the load seed
               // are not user typing, so they must not trigger a diagnostics build.
               scheduleDiagnosticsCompile()
@@ -2962,7 +2626,6 @@ const ROLE_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 let settings: Settings = loadSettings()
-let bindings: Keybindings = loadBindings()
 // The armed chord capture (Settings → Keyboard), if one is listening. Kept
 // module-level so arming a second capture disarms the first, and so any
 // capture whose button left the DOM (dock closed, settings re-rendered,
@@ -2981,7 +2644,7 @@ function refreshChordDisplays(): void {
 }
 
 function openSettings(): void {
-  const typefaces: readonly TypefaceId[] = ["mono", "serif", "sans"]
+  const typefaces = Object.keys(TYPEFACE_LABELS) as readonly TypefaceId[]
   const project = state.project
   const defaultFile = project ? loadDefaultFile(project.id) : undefined
   const defaultFileRow = project
@@ -2990,32 +2653,36 @@ function openSettings(): void {
         <select id="settings-default-file" aria-labelledby="settings-default-file-label">
           <option value="" ${defaultFile === undefined ? "selected" : ""}>Last file you had open</option>
           ${state.outline
-            .map((entry) => `<option value="${escapeHtml(entry.document.path)}" ${entry.document.path === defaultFile ? "selected" : ""}>${escapeHtml(entry.document.path)}</option>`)
+            .map((entry) => `<option value="${escapeHtml(entry.path)}" ${entry.path === defaultFile ? "selected" : ""}>${escapeHtml(entry.path)}</option>`)
             .join("")}
-          ${defaultFile !== undefined && !state.outline.some((e) => e.document.path === defaultFile)
+          ${defaultFile !== undefined && !state.outline.some((e) => e.path === defaultFile)
             ? `<option value="${escapeHtml(defaultFile)}" selected disabled>${escapeHtml(defaultFile)} — not in this project</option>`
             : ""}
         </select>
       </div>
-      <p class="settings-note">“Opening file” applies when this project is entered without a more recent file in this tab. It is this browser's choice, not the project's.</p>`
+      <p class="settings-note">This browser uses the opening file when this tab has no recent file for the project.</p>`
     : ""
-  const keyboardRows = `<p class="settings-note">Keyboard — click a chord, then press its replacement. Esc cancels; browser-owned chords are refused.</p>
+  const keyboardRows = `<p class="settings-note">To change a shortcut, click it and press the new keys. Esc cancels. Browser shortcuts stay reserved.</p>
       ${BINDING_ACTIONS
         .map((action) => `<div class="settings-row"><label>${bindingLabel(action)}</label><button type="button" class="btn keybind-btn" data-rebind="${action}" style="margin-left:auto">${prettyChord(bindings[action])}</button></div>`)
         .join("")}
-      <div class="settings-row"><label></label><button type="button" class="btn" id="keybinds-reset" style="margin-left:auto">Reset chords</button></div>`
-  showPanel(
-    "settings",
-    `<div class="settings-body">
+      <div class="settings-row"><label></label><button type="button" class="btn" id="keybinds-reset" style="margin-left:auto">Reset shortcuts</button></div>`
+  const body = `<div class="settings-body">
       ${defaultFileRow}
       <div class="settings-row">
         <label id="settings-typeface-label">Typeface</label>
-        <div class="segmented" role="group" aria-labelledby="settings-typeface-label" id="settings-typeface">
+        <select id="settings-typeface" aria-labelledby="settings-typeface-label">
           ${typefaces
-            .map((id) => `<button class="seg" type="button" data-typeface="${id}" aria-pressed="${settings.typeface === id}">${TYPEFACE_LABELS[id]}</button>`)
+            .map((id) => `<option value="${id}" ${settings.typeface === id ? "selected" : ""}>${TYPEFACE_LABELS[id]}</option>`)
             .join("")}
-        </div>
+        </select>
       </div>
+      ${settings.typeface === "custom"
+        ? `<div class="settings-row">
+             <label id="settings-custom-font-label">Font stack</label>
+             <input id="settings-custom-font" type="text" placeholder="e.g. Iosevka, JetBrains Mono, monospace" value="${escapeAttr(settings.customFont ?? "")}" aria-labelledby="settings-custom-font-label" autocomplete="off" spellcheck="false">
+           </div>`
+        : ""}
       <div class="settings-row">
         <label for="settings-font-size">Font size</label>
         <input id="settings-font-size" type="range" min="12" max="24" step="1" value="${settings.fontSize}" aria-label="Editor font size">
@@ -3026,21 +2693,33 @@ function openSettings(): void {
         <input id="settings-line-height" type="range" min="1.2" max="2.2" step="0.05" value="${settings.lineHeight}" aria-label="Editor line spacing">
         <output id="settings-line-height-out" for="settings-line-height">${settings.lineHeight.toFixed(2)}</output>
       </div>
-      <p class="settings-note">Editor look only — your choices live in this browser and never affect collaborators or compiled output. <button type="button" class="btn" id="settings-reset">Reset to defaults</button></p>
+      <p class="settings-note">These settings change the editor appearance in this browser. Collaborators and compiled output are unaffected. <button type="button" class="btn" id="settings-reset">Reset to defaults</button></p>
       ${keyboardRows}
     </div>`
-  )
+  // On a project screen the settings live in the dock like every standing
+  // tool; on the landing page there is no workspace to host a dock, so the
+  // same body renders in the modal panel instead.
+  if (project) showPanel("settings", body)
+  else showModal("Settings", "Editor settings", body)
   const commit = (next: Settings): void => {
     settings = next
     saveSettings(settings)
     applySettings(settings)
   }
-  for (const button of document.querySelectorAll<HTMLButtonElement>("#settings-typeface [data-typeface]")) {
-    button.addEventListener("click", () => {
-      commit(clampSettings({ ...settings, typeface: button.dataset.typeface as TypefaceId }))
-      openSettings()
-    })
-  }
+  const typefaceSelect = el<HTMLSelectElement>("#settings-typeface")
+  typefaceSelect?.addEventListener("change", () => {
+    commit(clampSettings({ ...settings, typeface: typefaceSelect.value as TypefaceId }))
+    openSettings()
+  })
+  const customFontInput = el<HTMLInputElement>("#settings-custom-font")
+  customFontInput?.addEventListener("change", () => {
+    const cleaned = clampSettings({ ...settings, customFont: customFontInput.value }).customFont
+    if (cleaned === undefined && customFontInput.value.trim() !== "") {
+      status("That font stack cannot be used — plain font names, quotes and commas only")
+      return
+    }
+    commit({ ...settings, customFont: cleaned })
+  })
   const fontSize = el<HTMLInputElement>("#settings-font-size")
   fontSize?.addEventListener("input", () => {
     const size = clampSettings({ ...settings, fontSize: Number(fontSize.value) }).fontSize
@@ -3101,6 +2780,7 @@ function openSettings(): void {
         if (refusal !== undefined) { status(`${prettyChord(chord)}: ${refusal}`); finish(); return }
         bindings = { ...bindings, [action]: chord }
         commitBindings(bindings)
+        syncCompileChord()
         refreshChordDisplays()
         status(`${bindingLabel(action)} is now ${prettyChord(chord)}`)
         finish()
@@ -3112,6 +2792,7 @@ function openSettings(): void {
   el("#keybinds-reset")?.addEventListener("click", () => {
     bindings = { ...DEFAULT_BINDINGS }
     commitBindings(bindings)
+    syncCompileChord()
     refreshChordDisplays()
     openSettings()
   })
@@ -3325,15 +3006,15 @@ function lineDiff(oldText: string, newText: string): { type: "added" | "removed"
 function openHistory(): void {
   const { project, selected } = state
   if (!project || !selected) { showPanel("history", `<p class="empty-note">Open a document first.</p>`); return }
-  const documentId = selected.document.id
+  const documentId = selected.id
   showPanel("history", `<p class="dock-note">Loading earlier versions…</p>`)
   run(
-    api.listDocumentHistory(project.id, selected.document.id),
+    api.listDocumentHistory(project.id, selected.id),
     (revisions) => {
       // A history response belongs to the document that requested it. Switching
       // files while the request is in flight must not populate the dock with a
       // stale timeline under the newly-selected document.
-      if (state.selected?.document.id !== documentId || dockTool !== "history") return
+      if (state.selected?.id !== documentId || dockTool !== "history") return
       const host = el<HTMLElement>("#dock-content")
       if (!host) return
       if (revisions.length === 0) {
@@ -3398,7 +3079,7 @@ function openHistory(): void {
       })
     },
     (error: unknown) => {
-      if (state.selected?.document.id !== documentId || dockTool !== "history") return
+      if (state.selected?.id !== documentId || dockTool !== "history") return
       const host = el<HTMLElement>("#dock-content")
       if (host) host.innerHTML = `<p class="empty-note">Couldn't load history: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
     }
@@ -3408,10 +3089,11 @@ function openHistory(): void {
 function openExport(): void {
   const project = state.project
   if (!project) { showPanel("export", `<p class="empty-note">Open a project first.</p>`); return }
-  const entries = state.outline.map(({ document }) => `<option value="${escapeHtml(document.path)}">${escapeHtml(document.title)} — ${escapeHtml(document.path)}</option>`).join("")
+  const buildEntry = state.outline.find((document) => document.id === project.entry_document_id)?.path ?? "main.typ"
+  const entries = state.outline.map((document) => `<option value="${escapeHtml(document.path)}" ${document.path === buildEntry ? "selected" : ""}>${escapeHtml(document.title)} — ${escapeHtml(document.path)}</option>`).join("")
   showPanel("export", `
     <label class="field">Which document<select id="export-entry">${entries}</select></label>
-    <p class="dock-note">Exports the <b>${escapeHtml(VIEW_LABELS[state.view])}</b> version — the one the preview is showing — as a PDF, together with the reference files it cites.</p>
+    <p class="dock-note">Builds the <b>${escapeHtml(VIEW_LABELS[state.view])}</b> version from current project files. To download the PDF already on screen, use Download PDF above the preview.</p>
     <button id="run-export" class="btn btn-primary" type="button" ${entries ? "" : "disabled"}>Prepare download</button>
     <div id="export-result" class="dock-note"></div>`)
   el("#run-export")?.addEventListener("click", () => {
@@ -3444,6 +3126,11 @@ function openExport(): void {
       }
       }, (error) => {
         if (exportButton) exportButton.disabled = false
+        if (state.project?.id !== project.id) return
+        if (error instanceof api.ApiError && error.diagnostics?.length) {
+          renderDiagnostics(error.diagnostics)
+          setDrawerOpen(true, "problems")
+        }
         const host = el<HTMLElement>("#export-result")
         if (host) host.innerHTML = `<p class="state-warn">Export failed: ${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`
       })
@@ -3510,20 +3197,12 @@ function toggleSuggesting(): void {
   renderReviewDock()
 }
 
-/**
- * Apply project-role UI gates. Called when the membership fetch resolves
- * (openProject) and whenever role-dependent chrome may need re-rendering.
- *
- * - H1: a reviewer is forced into suggesting mode and cannot turn it off, so
- *   every body edit they make is recorded as a suggestion rather than a silent
- *   overwrite. The lock is enforced here (UI) and relies on the server already
- *   permitting reviewer document writes (needed for suggestion-mode edits).
- * - M4: read-only viewers cannot export (the server returns 403), so the
- *   Export button is hidden up-front rather than failing on click. Reviewers
- *   CAN export (the server grants them Permission::Document for review
- *   copies), so the button is shown to them.
- */
+// Reapply project-role gates after membership loads or the review state resets.
+// Reviewers must suggest changes; read-only viewers cannot export.
 function applyRoleGates(): void {
+  const entrypoint = el<HTMLSelectElement>("#project-entrypoint")
+  if (entrypoint) entrypoint.disabled = state.role !== "owner" && state.role !== "author"
+
   // Outside a project the membership role is unknown; gate the project list
   // (＋, row deletes) on the IdP roles claim from the token instead — the same
   // source the server authorizes. Inside a project, the membership role wins.
@@ -4059,7 +3738,7 @@ function actionButton(label: string, className: string, onClick: () => void): HT
 
 /** `main.typ · line 12` — where the item is, in the writer's terms. */
 function reviewLocation(item: ReviewItem): string {
-  const path = state.selected?.document.path ?? ""
+  const path = state.selected?.path ?? ""
   const line = editor.state.doc.lineAt(Math.min(item.from, editor.state.doc.length)).number
   return path === "" ? `line ${line}` : `${path} · line ${line}`
 }
@@ -4390,15 +4069,10 @@ function setDrawerOpen(open: boolean, tab?: DrawerTab): void {
   el<HTMLElement>("#drawer-tab-log")?.setAttribute("aria-selected", String(drawerTab === "log"))
 }
 
-/**
- * Renders the problems list, the counts on the tab and the status bar, and the
- * editor's underline decorations. Each problem is clickable: it selects the
- * offending span in the source, which is the only thing anyone wants to do with
- * a compile error.
- */
+// Render the problems list, counts, and editor underlines.
 function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
   state.diagnostics = diagnostics
-  editor.dispatch({ effects: setDiagnostics.of(diagnostics) })
+  editor.dispatch({ effects: setDiagnostics.of(diagnostics.filter((item) => !item.path || item.path.replace(/^\/+/, "") === state.selected?.path)) })
   const host = el<HTMLElement>("#diagnostics-list")
   const errors = diagnostics.filter((item) => item.severity !== "warning").length
   const warnings = diagnostics.length - errors
@@ -4417,8 +4091,8 @@ function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
     if (drawerOpen && drawerTab === "problems") setDrawerOpen(false)
     return
   }
-  const entry = state.selected ? state.selected.document.path : ""
-  host.replaceChildren(...diagnostics.map((item, index) => {
+  const entry = state.selected?.path ?? ""
+  host.replaceChildren(...[...diagnostics].sort((a, b) => Number(a.severity === "warning") - Number(b.severity === "warning")).map((item, index) => {
     const severity = item.severity === "warning" ? "warning" : "error"
     const row = document.createElement("button")
     row.type = "button"
@@ -4440,13 +4114,21 @@ function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
     }
     row.append(badge, body)
     row.addEventListener("click", () => {
-      const length = editor.state.doc.length
-      const from = Math.min(item.start ?? 0, length)
-      const to = Math.min(item.end ?? from, length)
-      // A zero-width selection still scrolls the spot into view; a real range also
-      // highlights the underlined span.
-      editor.dispatch({ selection: { anchor: from, head: Math.max(to, from) }, scrollIntoView: true })
-      editor.focus()
+      const target = (item.path ?? entry).replace(/^\/+/, "")
+      const select = (): void => {
+        if (state.selected?.path !== target) return
+        const length = editor.state.doc.length
+        const from = Math.min(Math.max(item.start ?? 0, 0), length)
+        const to = Math.min(Math.max(item.end ?? from, from), length)
+        editor.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true })
+        editor.focus()
+      }
+      if (target === state.selected?.path) select()
+      else {
+        const document = state.outline.find((document) => document.path === target)
+        if (document) openDocument(document, select)
+        else status(`The problem is in ${target || "a generated source"}`)
+      }
     })
     return row
   }))
@@ -4455,6 +4137,7 @@ function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
 /** `main.typ · line 12` — the writer's coordinates, not a character offset. */
 function locationLabel(item: CompileDiagnostic, entry: string): string {
   const file = item.path ?? entry
+  if (file.replace(/^\/+/, "") !== entry) return file
   if (item.start === null || item.start === undefined) return file
   const line = editor.state.doc.lineAt(Math.min(item.start, editor.state.doc.length)).number
   return file === "" ? `line ${line}` : `${file} · line ${line}`
@@ -4569,7 +4252,13 @@ el("#add-demo")?.addEventListener("click", addDemoFile)
 el("#references-button")?.addEventListener("click", () => toggleDock("references", openReferences))
 el("#history-button")?.addEventListener("click", () => toggleDock("history", openHistory))
 el("#share-button")?.addEventListener("click", () => toggleDock("share", openShare))
-el("#settings-button")?.addEventListener("click", () => toggleDock("settings", openSettings))
+el("#settings-button")?.addEventListener("click", () => {
+  // Inside a project the settings dock alongside the other standing tools;
+  // on the landing page there is no workspace to host a dock, so openSettings
+  // renders into the modal instead — bypass the dock machinery entirely.
+  if (state.project) toggleDock("settings", openSettings)
+  else openSettings()
+})
 
 // Projects screen: search-as-you-type and the Recent/Name sort toggle. The
 // sort choice persists; both re-render the list through the pure shaper.
@@ -4600,6 +4289,7 @@ el("#review-button")?.addEventListener("click", toggleReviewSidebar)
 el("#dock-close")?.addEventListener("click", closeDock)
 el("#go-projects")?.addEventListener("click", () => { if (state.project) leaveProject() })
 el("#compile-button")?.addEventListener("click", compileCurrent)
+el("#download-preview")?.addEventListener("click", downloadPreview)
 el("#suggesting-button")?.addEventListener("click", toggleSuggesting)
 el("#open-palette")?.addEventListener("click", () => palette.open())
 
@@ -4630,12 +4320,12 @@ const palette = createPalette((): readonly PaletteItem[] => {
   const items: PaletteItem[] = []
   for (const entry of state.outline) {
     items.push({
-      id: `file:${entry.document.id}`,
+      id: `file:${entry.id}`,
       group: "Files",
       kind: "file",
-      label: entry.document.title,
-      hint: entry.document.path,
-      search: entry.document.path,
+      label: entry.title,
+      hint: entry.path,
+      search: entry.path,
       run: () => openDocument(entry)
     })
   }
@@ -4742,21 +4432,11 @@ document.addEventListener("keydown", (event) => {
 })
 
 window.addEventListener("beforeunload", (event) => {
-  // Snapshot whether the debounce timer is still armed BEFORE flushing, because
-  // flushPendingSave() clears saveTimer/pendingSave — checking them afterwards
-  // (the old code) was always false, making the guard dead code. We also check
-  // saveInFlight for a PATCH already over the wire that would be lost on close.
+  // Capture the debounce state before flushing clears it.
   const timerPending = saveTimer !== undefined
-  // HIGH #5b: flushPendingSave() fires an async fetch() PATCH, but the browser
-  // aborts in-flight requests during teardown — so the pending edit is lost.
-  // A last-chance save must survive the unload. navigator.sendBeacon can't be
-  // used here because it sends an unauthenticated POST (no Authorization header,
-  // wrong method) — the save endpoint requires PATCH + Bearer token. Instead use
-  // fetch with keepalive:true, which survives page teardown AND allows custom
-  // headers and method. Only fire when there is actually pending data (a
-  // debounced save or an armed timer). We still call flushPendingSave()
-  // afterwards for its timer-cleanup side effects, but clear pendingSave first so
-  // it does not ALSO fire the doomed async fetch.
+  // keepalive allows an authenticated PATCH to outlive this page. sendBeacon
+  // cannot set the required method or Authorization header. Clear pendingSave
+  // before flushing below so it does not send a second, non-keepalive request.
   if (pendingSave || saveTimer) {
     const context = pendingSave ?? captureSaveContext()
     const beaconToken = readStoredAccessToken()
@@ -4778,33 +4458,18 @@ window.addEventListener("beforeunload", (event) => {
     event.preventDefault()
     event.returnValue = ""
   }
-  // HIGH #4: Do NOT destroy the editor or close the sync connection here.
-  // beforeunload can fire and then the user clicks "Stay on page", which
-  // would leave the editor permanently destroyed with no recovery path. The
-  // destructive teardown now runs on "pagehide", which only fires on a real unload.
+  // The user can cancel beforeunload. Keep the editor and sync alive until pagehide.
 })
-// HIGH #4: Real teardown belongs here. "pagehide" fires only when the document is
-// genuinely being unloaded (navigation/close), unlike "beforeunload" which the
-// user can cancel — so destroying the editor here can never strand a staying user.
 window.addEventListener("pagehide", (event) => {
-  // bfcache freeze: the browser snapshots the page for back-forward cache
-  // and restores it without reloading when the user navigates back. Destroying
-  // the editor or closing sync here would leave a
-  // visually-intact but completely dead page. Skip teardown on persisted freeze;
-  // the handlers run only on a genuine unload.
+  // A page stored in the back-forward cache must remain usable when restored.
   if (event.persisted) return
   syncConnection?.close()
   editor.destroy()
 })
-// Honest connectivity indicator (H3): the browser fires offline/online the moment
-// the network changes, whereas the sync WebSocket can keep a half-open socket for
-// tens of seconds before its close event. Listening here makes the connection
-// label reflect a real network drop immediately. `setSyncStatus` treats
-// browserOffline as a one-way dimmer (offline overrides; online just re-shows the
-// last relay status, it never falsely claims connected).
+// Browser offline status overrides the last relay status.
 window.addEventListener("offline", () => {
   browserOffline = true
-  setSyncStatus(lastSyncStatus ?? "disconnected", "Network offline · changes saved locally")
+  setSyncStatus(lastSyncStatus ?? "disconnected", "Offline · keep this tab open until you reconnect")
 })
 window.addEventListener("online", () => {
   browserOffline = false
@@ -4900,7 +4565,6 @@ void completeSignIn().then(() => {
         status(error instanceof Error ? error.message : "Share link could not be redeemed")
       })
     } else if (projects.length > 0) {
-      // M5: reopen the project/document the user last had open before tab-away.
       restoreLastOpen()
     }
   })

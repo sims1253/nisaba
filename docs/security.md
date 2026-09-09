@@ -111,8 +111,8 @@ token) before leaving a shared computer.
 - NUL bytes and control characters are rejected (400) in project names,
   document paths/titles, member subjects, and reference metadata; document
   bodies reject NUL only (tabs/newlines are legitimate prose).
-- Document paths must be safe project-relative paths (no `/`-prefix, no `\`,
-  no `.`/`..` segments, no control characters, no surrounding whitespace).
+- Document paths must be safe project-relative paths (no `/`-prefix, no `\` or `:`,
+  no empty or `.`/`..` segments, no control characters, no surrounding whitespace).
 - Reference DOIs are unique per project (409 on duplicates); metadata fields
   are length-capped so a single bad record cannot bloat every compile's
   injected `refs.yml`.
@@ -254,15 +254,8 @@ as a hardening task; not MVP-blocking.
 
 ---
 
-## 8. CI gating (what blocks a merge)
+## 8. CI checks
 
-See `.github/workflows/`. The intended gates:
-
-- `rust`: `cargo fmt --check`, `cargo clippy --workspace`, `cargo test --workspace`,
-  `cargo deny check`.
-- `web`: build + test + lint (once the web workspace provides lint configs).
-- `security`: `cargo audit` on schedule and on PRs.
-- `tools`: `tools/verify.sh` when present.
-
-These are real gates for Rust today; the web/tools gates are tolerant until the
-respective streams land their artifacts.
+[GitHub Actions](../.github/workflows/) runs Rust formatting, lint, tests, and
+dependency checks; web lint, tests, and build; and tools lint, type checks, and
+tests. See [testing](testing.md) for coverage and local commands.

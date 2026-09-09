@@ -17,7 +17,6 @@ import {
   MalformedDocxError,
   MissingToolError,
   ToolFailedError,
-  UnsafePathError,
 } from "../errors.js";
 import { UsageError } from "./args.js";
 
@@ -62,9 +61,6 @@ export function renderError(e: unknown): ErrEnvelope["error"] {
   }
   if (e instanceof InvalidInputError) {
     return { kind: "InvalidInputError", message: e.reason, path: e.path };
-  }
-  if (e instanceof UnsafePathError) {
-    return { kind: "UnsafePathError", message: e.reason, path: e.path };
   }
   if (e instanceof FsError) {
     return { kind: "FsError", message: e.message, path: e.path, code: e.code };

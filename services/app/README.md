@@ -12,6 +12,14 @@ the key is the stable reference identity and never a citation number. PostgreSQL
 fulltext metadata and blob reference. The exporter fetches bytes from the blob store when it
 builds the reference export.
 
-`TEST_DATABASE_URL` is reserved for optional PostgreSQL adapter integration tests. Without it,
-unit tests remain pure in-memory tests and the migration file remains inspectable without a
-running database.
+Database-backed tests are ignored by default. Run `just test-live` against the
+local Compose database, or set `DATABASE_URL` and run:
+
+```bash
+cargo test -p nisaba-app --test live_api --locked -- --ignored
+```
+
+For the repository adapter test, set `TEST_DATABASE_URL` and run
+`cargo test -p nisaba-app --lib --locked -- --ignored`. Invoked database tests
+fail on missing configuration, connection errors, or migration failures. CI
+runs both suites against a temporary PostgreSQL service.

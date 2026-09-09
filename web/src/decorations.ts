@@ -1,9 +1,7 @@
-import { StateField, StateEffect, RangeSet, type Range } from "@codemirror/state"
+import { StateField, StateEffect, RangeSet, type EditorState, type Range } from "@codemirror/state"
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view"
 import { findConstructs, type Construct } from "./model"
 import type { ReviewItem } from "./review"
-
-export const revealConstruct = StateEffect.define<{ readonly from: number; readonly to: number }>()
 
 /**
  * Reference metadata for citation display. Passed from main.ts so the
@@ -408,43 +406,28 @@ class ListMarkerWidget extends WidgetType {
   override ignoreEvent(): boolean { return true }
 }
 
-/**
- * Carries the hybrid editor's decoration set together with the set of
- * construct ranges the user has "revealed" (cursor-entered) so that editing
- * inside a revealed construct does not cause a one-frame flicker where the
- * widget reappears before the selection listener re-dispatches `revealConstruct`.
- */
-interface HybridEditorValue {
-  readonly decorations: DecorationSet
-  readonly revealed: readonly { from: number; to: number }[]
-}
-
+/** Derives source visibility from the current cursor and document together. */
 export function hybridEditorField(
   onOpen: (construct: Construct) => void,
   references: () => readonly ReferenceDisplay[]
-): StateField<HybridEditorValue> {
-  return StateField.define<HybridEditorValue>({
-    create: (state) => {
-      const source = state.doc.toString()
-      return { decorations: hybridDecorations(findConstructs(source), source, onOpen, references()), revealed: [] }
-    },
+): StateField<DecorationSet> {
+  const decorate = (state: EditorState): DecorationSet => {
+    const source = state.doc.toString()
+    const constructs = findConstructs(source)
+    const head = state.selection.main.head
+    const active = constructs.find((item) => head >= item.from && head <= item.to)
+    return hybridDecorations(constructs, source, onOpen, references(), active ? [active] : [])
+  }
+  return StateField.define<DecorationSet>({
+    create: decorate,
     update: (value, transaction) => {
-      if (!transaction.docChanged && transaction.effects.length === 0) return value
-      const revealEffects = transaction.effects.filter((effect) => effect.is(revealConstruct))
-      // When a revealConstruct effect is present it fully replaces the
-      // revealed set. Otherwise carry forward the previous set, mapping
-      // positions through the document change so the widget stays hidden
-      // while the user edits inside the construct.
-      const revealed: readonly { from: number; to: number }[] = revealEffects.length > 0
-        ? revealEffects.map((effect) => ({ ...effect.value }))
-        : value.revealed.map((r) => ({ from: transaction.changes.mapPos(r.from), to: transaction.changes.mapPos(r.to) }))
-      const source = transaction.state.doc.toString()
-      return { decorations: hybridDecorations(findConstructs(source), source, onOpen, references(), revealed), revealed }
+      if (!transaction.docChanged && !transaction.selection && transaction.effects.length === 0) return value
+      return decorate(transaction.state)
     },
     provide: (field) => [
-      EditorView.decorations.from(field, (value) => value.decorations),
+      EditorView.decorations.from(field),
       EditorView.atomicRanges.of((view) => {
-        const decorations = view.state.field(field).decorations
+        const decorations = view.state.field(field)
         const replaceStamps: Range<Decoration>[] = []
         decorations.between(0, view.state.doc.length, (from, to, value) => {
           if (value.spec.widget && !(value.spec.widget instanceof ListMarkerWidget)) {

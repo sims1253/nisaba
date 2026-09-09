@@ -1,168 +1,154 @@
 # Nisaba user guide
 
-A plain-language guide to using Nisaba as an author, reviewer, or reader. It
-covers the web app at the URL your administrator gives you (local dev:
-http://127.0.0.1:8103). Operator concerns (backups, health, deployment) live in
-[`operations.md`](operations.md); the domain vocabulary is in
-[`CONTEXT.md`](../CONTEXT.md).
+## Write your first document
 
-## Signing in
+1. Open the URL your administrator gives you and click **Sign in**.
+   For a local installation, follow [setup](operations.md#1-quick-start), then
+   open http://127.0.0.1:8103 and use `demo` / `demo`.
+2. Choose **New project** and give it a name. Nisaba creates `main.typ`.
+   If you are a reviewer or read-only user, open a project shared with you.
+3. Open the file and write some Typst:
 
-Click **Sign in** and complete the login at your identity provider (local dev
-uses Keycloak with the demo accounts `demo`/`demo`, `reviewer`/`reviewer`,
-`reader`/`reader`). You are signed in when the top bar shows **Sign out**.
+   ```typst
+   = Introduction
 
-> Sessions: access tokens are short-lived (5 minutes in the local dev realm).
-> The app refreshes them in the background; if an API call fails with a 401,
-> reload the page. You may be prompted to sign in again.
+   Our first shared document.
+   ```
 
-## The workspace
+4. Choose **Build from** in the sidebar, then click **Update preview**. Opening another file keeps the same compilation entrypoint.
+5. Check the save status in the top bar before leaving.
 
-Opening a project gives you five regions:
+Keep a disconnected tab open and copy unsaved text somewhere safe. Unsaved edits
+can be lost on reload or close ([#67](https://github.com/sims1253/nisaba/issues/67)).
 
-- the **top bar** — where you are (the breadcrumb `project › file › §section`,
-  each part clickable), who else is here (avatars; hover one to see the file and
-  section they are in), whether your work is saved, and the project actions
-  (References, History, Share, Export);
-- the **sidebar** — **Files** as a folder tree derived from the document paths,
-  and below it the **Outline** of the open file's headings. Click a heading to
-  jump to it; the section you are in stays pinned above the text as you scroll;
-- the **text** in the middle;
-- the **panel** on the right — one tool at a time (Review, References, History,
-  Share, Export); close it with its × or `Esc` to give the text more room;
-- the **preview** — the rendered pages, with a switch for which version to show;
-- the **status bar** along the bottom — connection, cursor, word count, whether
-  the preview is up to date, and **Update preview**.
+## Find your way around
 
-## Projects and documents
+```text
+Top bar: project / file / section · tools · save status
+┌───────────┬─────────────┬──────────────┬─────────────┐
+│ Files and │ Editor      │ Tool panel   │ PDF preview │
+│ headings  │             │ (when open)  │             │
+└───────────┴─────────────┴──────────────┴─────────────┘
+Problems and build log (when open)
+Status bar: connection · cursor · word count · Update preview
+```
 
-- **Projects** hold the files, references, and history of one document. Create
-  one with **New project** on the projects screen (owners and authors only —
-  reviewers and read-only members see the projects they are invited or linked
-  into).
-- Inside a project, **Files** lists the documents at their paths
-  (`chapters/01-intro.typ`). Folders come from the paths, so creating a document
-  with a nested path organizes it. The file the preview builds from carries a
-  **MAIN** tag.
-- **＋** in the Files header adds a file; click a file to open it; double-click
-  it to rename it.
-- **Update preview** (`⌘⏎` / `Ctrl+Enter`) builds the pages. Problems appear in
-  the panel at the bottom with file, line, and message; clicking one jumps to
-  the place in the text. The status bar says whether the preview is up to date.
-- **Press `⌘K` / `Ctrl+K`** to search files, sections, and references, or to run
-  any action by name — including everything described below.
+Click a heading or breadcrumb to navigate. Hover a collaborator's avatar to
+see their file and section. Close a tool panel with **×**, or press `Esc`
+while it has focus.
 
-## Roles
+In **Files**, click **＋** to add a file or double-click its name to rename it.
+Paths such as `chapters/intro.typ` appear as folders.
 
-What you can do depends on two things: your **identity-provider role**
-(`author`, `reviewer`, or `read-only`, from your sign-in) and your **project
-role** (set by the owner in the Share panel) — both must allow an action. The
-table below is the plain-language summary; [`architecture.md`](architecture.md)
-§6.1 is the normative role model.
+Press `⌘K` / `Ctrl+K` to find files, headings, references, or actions.
+Use `⌘F` / `Ctrl+F` to search text in the open file. Project-wide text search
+is not available yet ([#63](https://github.com/sims1253/nisaba/issues/63)).
 
-| Action | Owner | Author | Reviewer | Read-only |
-|--------|:-----:|:------:|:--------:|:---------:|
-| Read (documents, history, audit, members) and compile | ✓ | ✓ | ✓ | ✓ |
-| Edit the text directly | ✓ | ✓ | — (suggest only) | — |
-| Accept / reject / comment on suggestions | ✓ | ✓ | ✓ | — |
-| Create / rename / delete documents | ✓ | ✓ | — | — |
-| Export the project | ✓ | ✓ | ✓ | — |
-| Invite / remove members, share links, delete project | ✓ | ✓ | — | — |
+## Review changes
 
-If an action is not available to your role it is hidden; if you call it through
-the API you get a 403 with the message "You don't have permission to do that".
+1. Turn on **Track changes** above the text. Reviewers always have it on.
+   Insertions are underlined; deletions are struck through.
+2. Open **Review** to **Accept** or **Reject** suggestions, individually or all
+   at once. Accepting keeps a change; rejecting undoes it.
+3. Select text and choose **Comment**, or use **Add a comment here** in the
+   panel. Reply to a thread or **Resolve** it when the discussion is complete.
 
-## Reviewing (track changes)
+Suggestions and comments sync to collaborators. Wait for sync before closing.
+**needs re-anchoring** means the surrounding text changed. A deletion labeled
+**Already removed from the text — Reject puts it back** restores its text when rejected.
 
-Reviewers are always in **suggesting mode** (`Track changes: on`).
+With the review queue focused, use `↑`/`↓` to move, `Enter` to show an item,
+`A` to accept, `R` to reject, `C` to comment, and `Esc` to return to writing.
 
-1. Turn on **Track changes** in the bar above the text (reviewers are always on
-   and cannot turn it off). Then type: your edit becomes a **suggestion**
-   instead of changing the document.
-2. The **Review** button shows the number of open items; open it for the queue.
-   Every item has **Accept** / **Reject** (plus **Accept all** / **Reject all**
-   at the bottom). Suggestions also show in the text itself — an insertion is
-   underlined, a deletion struck through, a commented passage marked.
-3. With the queue focused you can work through it without the mouse: `↑`/`↓`
-   move, `Enter` shows the item in the text, `A` accepts, `R` rejects, `C`
-   comments, `Esc` returns to writing.
-4. Select text and choose **Comment**, or use **Add a comment here** in the
-   panel, to leave an anchored comment. Comments appear in the same queue for
-   everyone, and
-   anyone can add further comments (or **Resolve** a thread once it is done).
-5. Accepting/rejecting applies or discards the suggestion; the baseline text
-   changes only then. Suggestions are synced to collaborators in real time and
-   survive reloads (they are stored in the shared document state, not in the
-   plain text).
+## Choose a preview version
 
-> Suggestions never modify the underlying text directly — that is what makes
-> accept/reject possible. If an item shows **needs re-anchoring** or **Already
-> removed from the text — Reject puts it back**, the surrounding text changed
-> underneath it; accepting/rejecting still works and the label tells you what
-> will happen.
+The preview switch selects the view for the next build. **Edited since preview** means the document has changed since that PDF was built. **Download PDF** above the preview downloads the displayed PDF without building it again. If an update fails, the last successful PDF stays visible while you fix the problems.
 
-## Which version the preview shows
+| Version | What you see |
+|---------|--------------|
+| Final | All suggestions applied |
+| Original | All suggestions undone |
+| All markup | Insertions and deletions marked |
+| Public copy | Final, with redacted passages removed |
 
-The switch on the preview bar chooses what gets rendered — and what an export
-contains:
+## Share a project
 
-| Switch | What you see |
-|--------|--------------|
-| **Final** | Every suggested change applied — what the document becomes |
-| **Original** | No suggested changes applied — the last agreed text |
-| **All markup** | The text with insertions and deletions marked |
-| **Public copy** | Final, with redacted passages removed |
+Open **Share**, enter a username, choose a role, and click **Invite**.
+**Create link** lets signed-in users join with the chosen role. Copy the link
+when it appears; its secret is shown once.
 
-Changing the switch rebuilds the preview straight away.
+**Revoke** stops future use of a link. To withdraw an existing member's access,
+use **Remove**. The owner cannot be removed.
 
-## Sharing
+Your sign-in role and project role must both allow the action:
 
-- **Share** (owner/author only) opens the invite panel: type a username, pick a
-  role, click **Invite**. Members appear in the list with a **Remove** button
-  (the owner row cannot be removed).
-- **Create link** makes a shareable URL that grants access at a chosen role to
-  anyone who opens it while signed in. **Revoke** invalidates a link
-  immediately; revoked links no longer grant access.
+| Action | Owner / author | Reviewer | Read-only |
+|--------|:--------------:|:--------:|:---------:|
+| Read files, history, audit, and members; preview | Yes | Yes | Yes |
+| Edit text | Yes | Suggestions only | No |
+| Accept, reject, and comment | Yes | Yes | No |
+| Add, rename, or delete files; manage references | Yes | No | No |
+| Export | Yes | Yes | No |
+| Manage access or delete the project | Yes | No | No |
 
-## References
+Local test accounts are `demo` / `demo`, `reviewer` / `reviewer`, and
+`reader` / `reader`. See the [role model](architecture.md#61-role-model) for details.
 
-- **References** (owner/author) opens the library panel, where you add structured
-  citation metadata
-  (title, authors, year, DOI, journal). DOIs must be unique per project.
-- Export requires every cited reference to have an uploaded full-text PDF; the
-  portable archive contains the PDF, the document sources, and per-document
-  RIS bibliographies with full-text attachments.
+## Cite references and export
 
-## Troubleshooting
+In **References**, add the title, authors, year, DOI, and journal. Each DOI
+must be unique within the project. Use **Insert citation** to cite an entry
+at the cursor and **Attach PDF** to add its full text.
 
-| Symptom | Meaning / what to do |
-|---------|----------------------|
-| "Sync unavailable · Sync server error 4003: …" | The real-time relay could not connect (usually a key/issuer mismatch on the server). Your local edits are still saved on close; ask your administrator to check the sync service logs. Reload to retry. |
-| "You don't have permission…" | Your role does not allow the action. Ask the project owner to change your role in the Share panel. If you are a reviewer, this message should not appear while suggesting — your edits are synced as suggestions, not saved as baseline text. |
-| Save conflict — another author edited this document | Another collaborator's saved version conflicts with yours; reload to merge (your unsaved text is preserved in the editor). |
-| "N problems stopped the preview" | The Typst source has errors; the Problems panel at the bottom shows file, line, and message, and clicking one jumps there. Headings use `=` (`= Introduction`), not `#`. |
-| Page doesn't react after signing in | Reload the page; the token refresh may have been interrupted. |
+Use **Download PDF** above the preview to download the PDF on screen. It remains
+that version even if someone has edited the document since the build.
 
-## History
+Open **Export**, choose an entry document, and click **Prepare download** to build
+a new PDF and source archive from current collaborative project files. The archive
+includes the projected Typst sources and generated bibliography needed by that build.
+Cited references do not need full-text attachments for this ordinary export.
+Source paths and extensions stay intact under `documents/`. To compile the extracted
+project locally, run `typst compile --root . main.typ` from that directory, replacing
+`main.typ` with your chosen entrypoint.
 
-**History** lists the saved versions of the open file, newest first. Pick one to
-read it; pick a second to see what changed between them.
+API clients can request `include_fulltexts: true` on an export to add the reference
+evidence bundle. This option requires a PDF for every cited reference.
+
+## History and settings
+
+**History** lists saved versions of the open file. Pick one to read it; pick a
+second to compare them.
+
+**Settings** changes editor typeface, size, spacing, and app shortcuts in this
+browser. These preferences do not change the PDF. **Opening file** sets a
+local preference for a project; a more recent file in the current tab takes precedence.
+
+## When something goes wrong
+
+| Symptom | Next step |
+|---------|-----------|
+| Disconnected, save conflict, or sign-in failure | Keep the tab open and copy unsaved text before reloading or signing in again. Compare it with the saved version before reapplying edits. |
+| Permission denied or sync error 4003 | Ask the owner to check membership and your administrator to check sign-in access. Token expiry can also cause 4003 ([#61](https://github.com/sims1253/nisaba/issues/61)). |
+| Preview or export fails to compile | Read the Problems panel. Click a problem to open the named project file. Generated sources may need to be checked in the downloaded archive. |
+
+For a bug report, include the error message and the steps that led to it.
+The [issue tracker](https://github.com/sims1253/nisaba/issues) lists known problems.
 
 ## Keyboard shortcuts
 
+These are the defaults; app shortcuts can be changed in **Settings**.
+
 | Key | Action |
 |-----|--------|
-| `⌘K` / `Ctrl+K` | Search files, sections, references — or run any action |
-| `⌘⏎` / `Ctrl+Enter` | Update the preview |
-| `⌘S` / `Ctrl+S` | Save, then update the preview |
-| `⌘⇧F` / `Ctrl+Shift+F` | Focus mode — hide everything but the text |
-| `⌘B` / `Ctrl+B` | Show or hide the sidebar |
-| `⌘=` / `⌘−` | Zoom the preview in and out (while the pointer is over the preview) |
-| `↑` `↓` `Enter` `A` `R` `C` `Esc` | Work through the review queue (while it has focus) |
+| `⌘K` / `Ctrl+K` | Find files, headings, references, and actions |
+| `⌘F` / `Ctrl+F` | Find text in the open file |
+| `⌘D` / `Ctrl+D` | Add the next occurrence to the selection |
+| `⌘⏎` / `Ctrl+Enter` | Update preview |
+| `⌘S` / `Ctrl+S` | Save, then update preview |
+| `⌘⇧F` / `Ctrl+Shift+F` | Toggle focus mode |
+| `⌘\` / `Ctrl+\` | Show or hide the sidebar |
+| `⌘=` / `⌘−` | Zoom while the pointer is over the preview |
 
-The review queue opens from the Review button or the `⌘K` palette. Browser
-shortcuts are never taken over: reload (`⌘R`, `⌘⇧R`, `F5`), zoom outside the
-preview, and devtools all do what your browser normally does.
-
-Standard editing keys (undo/redo, find, multi-cursor) work as they do anywhere,
-and autocompletion offers Typst constructs and your references as you type.
+Undo/redo and multi-cursor editing use CodeMirror's standard shortcuts.
+Autocomplete suggests Typst constructs and references. Browser reload, developer
+tools, and zoom outside the preview keep their usual shortcuts.

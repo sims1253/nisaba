@@ -1,23 +1,9 @@
-//! Role-aware access seam.
+//! Resolve document access and transport permissions.
 //!
-//! The supported roles are `author`, `reviewer`, and `read-only` (the vocabulary
-//! lives in the shared `nisaba-auth` crate so both services parse the same
-//! spellings);
-//! "Do not build auth" — OIDC integration is the `app` service's job. This component
-//! therefore defines only the **seam**: how the sync transport learns a peer's
-//! role for a document, and what that role permits at the transport layer.
-//!
-//! The transport policy is intentionally narrow and explicit (see [`CapabilitySet`]):
-//! the only thing the *sync* layer restricts is mutation (pushing CRDT updates).
-//! Everything about suggesting-vs-editing, accept/reject, and marks lives in the
-//! review logic of the projection layer and is **not** the sync
-//! service's concern — sync transports opaque Loro state.
-//!
-//! Concrete OIDC/JWT resolution is injected via [`AccessResolver`]: a static,
-//! in-process resolver ([`StaticAccessResolver`]) stands in for it in local dev
-//! and tests; the production [`crate::oidc::OidcAccessResolver`] validates a
-//! JWT against JWKS and delegates per-document authorization to a narrow
-//! [`crate::oidc::DocumentAuthorizer`] (HTTP verifier). See [`crate::oidc`].
+//! The production resolver validates JWTs and asks the app for document access.
+//! Authors and reviewers can push updates; the room checks reviewer mutations
+//! against the review policy. Read-only peers can receive state and presence.
+//! Tests use [`StaticAccessResolver`] to grant roles without an identity provider.
 
 use std::collections::HashSet;
 
@@ -92,8 +78,7 @@ impl RoleCapabilities for Role {
 }
 
 bitflags::bitflags! {
-    /// Transport-layer capabilities. Kept as a bitflags so new capabilities
-    /// (e.g. `MANAGE_PRESENCE`) compose without touching call sites.
+    /// Transport-layer capabilities.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct CapabilitySet: u8 {
         /// Receive CRDT updates and snapshots.

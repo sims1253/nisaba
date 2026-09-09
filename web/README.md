@@ -5,8 +5,8 @@ Browser editor and paginated preview for the Nisaba app service.
 ## Interface
 
 The workspace layout, the vocabulary it uses, and the reasoning behind each
-surface are documented in [`docs/ui-design.md`](../docs/ui-design.md). In source
-terms:
+surface are documented in [`docs/ui-design.md`](../docs/ui-design.md).
+See the [user guide](../docs/user-guide.md) for editing and review instructions.
 
 | Module | Owns |
 |--------|------|
@@ -19,29 +19,11 @@ terms:
 | `decorations.ts` | In-editor review marks and Typst construct styling |
 | `pdf-viewer.ts` | The virtualised page preview |
 
-## Resource model
+## API
 
-The client uses a flat project-to-document model. A document is available at
-`/projects/{project_id}/documents/{document_id}` and has these wire fields:
-
-- `id`
-- `project_id`
-- `path`
-- `title`
-- `body`
-- `data`
-- `revision`
-- `updated_at`
-
-List and create documents with `GET` and `POST /projects/{project_id}/documents`.
-Read, update, and delete one document with `GET`, `PATCH`, and `DELETE` on its
-resource URL. Conditional saves send `expected_revision` to prevent stale edits
-from overwriting concurrent changes.
-
-References, full-text attachments, membership, sharing, history, review, and
-collaborative sync are available. Project export remains the generic
-`POST /projects/{project_id}/exports` endpoint. Compile requests use `document`
-for a single document or `full` for a full project build.
+The client uses the app service's [project and document APIs](../docs/architecture.md#43-app--rest-under-api).
+Conditional saves send `expected_revision` to prevent stale edits from
+overwriting concurrent changes.
 
 ## Development
 
@@ -64,14 +46,10 @@ tunnel (and so is listed in `VITE_ALLOWED_HOSTS`), the browser cannot address
 the developer's localhost Keycloak; setting `VITE_OIDC_PROXY_TARGET` (for
 example `http://127.0.0.1:8090`) adds a dev-only `/realms` proxy through Vite
 so the issuer can be the tunnelled origin. The proxy is off unless the target
-is set — nothing in the repo serves a default, and production has no
-equivalent.
+is set. It is unavailable in production.
 
 Sync connects to `GET /sync/{doc_id}` with the stored access token and the
-versioned binary framing documented in `fixtures/sync/PROTOCOL.md`. PDF bytes
-are decoded straight into a `Uint8Array` and handed to pdf.js — no Blob URL is
-involved (object URLs are only created transiently for downloads, and revoked
-on the next tick).
+[versioned binary framing](../fixtures/sync/PROTOCOL.md).
 
 Run checks with:
 
