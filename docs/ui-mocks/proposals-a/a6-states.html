@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal A — Empty and signed-out states · Nisaba</title>
+<!--
+  PROPOSAL A · empty states and the signed-out screen.
+
+  The skill's copy principle: "Failures and empty states give direction, not
+  mood; an empty screen is an invitation to act."
+    P4  first run: two paths — create a project, or add the demo document
+        (the demo affordance moved here from the Files header, N1)
+    V2  no preview: the placeholder teaches the chord, like the editor's
+        placeholder teaches ⌘K
+    U1  signed out: a stated welcome — what Nisaba is, one primary action,
+        and the honest note that projects appear after sign-in
+    E   no files: the shipped invitation, kept
+-->
+<style>
+:root{
+  --paper:#fdfcf9; --chrome:#f2f3f0; --chrome-raised:#f8f8f6; --shell:#e9eae6; --overlay:#ffffff;
+  --ink:#1b1e1c; --ink-soft:#3d443e; --muted:#6a706a; --faint:#8d938c;
+  --rule:#e2e3dd; --rule-strong:#c8cac2;
+  --accent:#23508a; --accent-strong:#1b3f6e; --accent-soft:#e8eef6; --accent-line:#b9cbe1;
+  --sans:"DM Sans",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+  --mono:"DM Mono","IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --serif:"Source Serif 4",Charter,Georgia,"Times New Roman",serif;
+  --appbar-h:46px; --statusbar-h:30px; --radius:3px;
+}
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.45 var(--sans);color:var(--ink);background:var(--shell);padding:34px 24px 60px}
+button{font:inherit;color:inherit}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,700px);gap:44px;justify-content:center}
+.caption{font:600 9.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 10px 2px}
+.caption span{color:var(--faint);font-weight:400;letter-spacing:.04em;text-transform:none}
+
+.window{height:520px;border:1px solid var(--rule-strong);border-radius:4px;overflow:hidden;display:grid;grid-template-rows:var(--appbar-h) minmax(0,1fr) auto;box-shadow:0 10px 30px #1b1e1c1e;background:var(--rule)}
+.window.nostatus{grid-template-rows:var(--appbar-h) minmax(0,1fr)}
+
+.appbar{display:flex;align-items:center;gap:14px;padding:0 12px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule-strong)}
+.brand{display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:4px 6px}
+.brand .mark{width:21px;height:21px;display:grid;place-items:center;background:var(--accent);color:#fff;border-radius:2px;font:700 12px/1 var(--mono)}
+.brand .wordmark{font:600 14.5px/1 var(--serif);font-variant:small-caps;letter-spacing:.09em}
+.appbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;border:1px solid var(--rule-strong);background:var(--chrome-raised);color:var(--ink-soft);padding:5px 10px;border-radius:var(--radius);cursor:pointer;white-space:nowrap}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--muted)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-primary:hover{background:var(--accent-strong);border-color:var(--accent-strong)}
+kbd{font:500 9.5px/1 var(--mono);border:1px solid var(--rule-strong);border-radius:2px;padding:2px 4px;color:var(--muted);background:var(--chrome-raised)}
+.btn-primary kbd{border-color:#ffffff59;background:transparent;color:#ffffffb3}
+
+.screen{overflow:auto;background:var(--chrome);padding:34px 24px 40px}
+.screen-inner{max-width:640px;margin:0 auto}
+.screen-head{display:flex;align-items:baseline;gap:16px;margin-bottom:6px}
+.screen-head h2{margin:0;font-size:21px;font-weight:600;letter-spacing:-.01em}
+.screen-head .btn{margin-left:auto}
+.screen-lede{color:var(--muted);font-size:12.5px;margin:0 0 20px}
+
+/* P4: the invitation — two paths, not a dead end */
+.empty-note{padding:26px 6px;color:var(--muted);font-size:12.5px;line-height:1.7}
+.empty-note p{margin:0 0 14px}
+.empty-actions{display:flex;gap:10px;flex-wrap:wrap}
+
+/* U1: the stated welcome */
+.signedout{padding:58px 6px 0;text-align:left;max-width:44ch}
+.signedout .eyebrow{display:block;font:600 9.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-bottom:14px}
+.signedout h2{font:400 26px/1.25 var(--serif);margin:0 0 12px;color:var(--ink)}
+.signedout p{font-size:12.5px;color:var(--muted);line-height:1.65;margin:0 0 22px}
+
+/* workspace pieces for windows 2–3 */
+.workspace{display:grid;grid-template-columns:210px 4px minmax(0,1fr) 4px minmax(220px,.8fr);min-height:0;background:var(--rule)}
+.pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.navigator{background:var(--chrome);border-right:1px solid var(--rule-strong)}
+.nav-head{display:flex;align-items:center;gap:6px;margin:0;padding:10px 6px 6px 12px;font:600 9.5px/1.4 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.nav-head-actions{margin-left:auto;display:flex;gap:2px}
+.btn-icon{border:0;background:transparent;color:var(--faint);width:20px;height:20px;display:grid;place-items:center;border-radius:var(--radius);cursor:pointer;font-size:13px;padding:0}
+.nav-empty{padding:12px;color:var(--faint);font-size:11.5px;line-height:1.6}
+.doc-pane{background:var(--paper)}
+.pane-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;background:var(--chrome);border-bottom:1px solid var(--rule)}
+.doc-id{display:flex;align-items:baseline;gap:8px}
+.doc-id strong{font-size:13px;font-weight:600}
+.doc-id code{font:10px var(--mono);color:var(--faint)}
+.pane-empty{flex:1;display:grid;place-content:center;text-align:center;padding:30px;color:var(--muted);gap:6px}
+.pane-empty h3{margin:0;font-size:14px;font-weight:600;color:var(--ink-soft)}
+.pane-empty p{margin:0;font-size:12px;max-width:34ch;line-height:1.6}
+.preview-pane{background:var(--shell)}
+.ed-col{flex:1;display:flex;justify-content:center;padding-top:26px;font-family:var(--mono);font-size:13px;line-height:1.75;color:var(--ink-soft)}
+.ed-inner{max-width:64ch;width:100%;padding:0 16px}
+.statusbar{display:flex;align-items:center;height:var(--statusbar-h);background:var(--chrome);border-top:1px solid var(--rule-strong);font:11px var(--mono);color:var(--muted);padding:0 11px;gap:22px}
+
+.tag{position:fixed;right:14px;top:14px;z-index:99;font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:var(--overlay);border:1px solid var(--rule-strong);padding:6px 9px;box-shadow:0 4px 14px #1b1e1c1a}
+</style>
+</head>
+<body>
+<div class="grid">
+
+  <!-- ═══ 1 · first run ═══ -->
+  <div>
+    <p class="caption">1 — First run, signed in <span>· an invitation with two paths (P4)</span></p>
+    <div class="window nostatus">
+      <header class="appbar">
+        <button class="brand"><span class="mark">N</span><span class="wordmark">Nisaba</span></button>
+        <div class="appbar-right">
+          <button class="btn btn-quiet">Settings</button>
+          <button class="btn btn-quiet">Sign out</button>
+        </div>
+      </header>
+      <main class="screen"><div class="screen-inner">
+        <div class="screen-head"><h2>Projects</h2><button class="btn btn-primary">New project</button></div>
+        <p class="screen-lede">A project holds the files, references, and history of one document.</p>
+        <div class="empty-note">
+          <p>No projects yet. A project holds the files, references, and history of one document — start one, or drop in the demo paper and take the editor for a spin.</p>
+          <div class="empty-actions">
+            <button class="btn btn-primary">Create your first project</button>
+            <button class="btn">Add the demo document</button>
+          </div>
+        </div>
+      </div></main>
+    </div>
+  </div>
+
+  <!-- ═══ 2 · no files, no document ═══ -->
+  <div>
+    <p class="caption">2 — Project with no files <span>· the shipped invitation, kept (E)</span></p>
+    <div class="window">
+      <header class="appbar">
+        <button class="brand"><span class="mark">N</span><span class="wordmark">Nisaba</span></button>
+        <div class="appbar-right"><span style="font-size:11.5px;color:var(--muted)">Saved</span><button class="btn btn-quiet">Settings</button><button class="btn btn-quiet">Sign out</button></div>
+      </header>
+      <div class="workspace">
+        <aside class="pane navigator">
+          <h2 class="nav-head"><span>Files</span>
+            <span class="nav-head-actions"><button class="btn-icon" title="New file">＋</button><button class="btn-icon" title="Hide the sidebar (⌘B)">‹</button></span>
+          </h2>
+          <div class="nav-empty">No files yet.<br><br><button class="btn btn-primary" style="font-size:11px;padding:4px 9px">Add a file</button></div>
+        </aside>
+        <div></div>
+        <section class="pane doc-pane">
+          <div class="pane-bar"><div class="doc-id"><strong>No document open</strong></div></div>
+          <div class="pane-empty">
+            <h3>No document open</h3>
+            <p>Pick a file on the left, or press <kbd>⌘K</kbd> to search for one.</p>
+          </div>
+        </section>
+        <div></div>
+        <section class="pane preview-pane">
+          <div class="pane-bar"></div>
+          <div class="pane-empty"><h3>No preview yet</h3><p>Open a document and choose Update preview.</p></div>
+        </section>
+      </div>
+      <footer class="statusbar"><span>No document</span><span style="margin-left:auto">No preview yet</span></footer>
+    </div>
+  </div>
+
+  <!-- ═══ 3 · document open, no preview (V2) ═══ -->
+  <div>
+    <p class="caption">3 — Writing, preview not built <span>· the placeholder teaches the chord (V2)</span></p>
+    <div class="window">
+      <header class="appbar">
+        <button class="brand"><span class="mark">N</span><span class="wordmark">Nisaba</span></button>
+        <div class="appbar-right"><span style="font-size:11.5px;color:var(--muted)">Saving…</span><button class="btn btn-quiet">Settings</button><button class="btn btn-quiet">Sign out</button></div>
+      </header>
+      <div class="workspace">
+        <aside class="pane navigator">
+          <h2 class="nav-head"><span>Files</span><span class="count num" style="color:var(--rule-strong);font-weight:400">1</span>
+            <span class="nav-head-actions"><button class="btn-icon" title="New file">＋</button><button class="btn-icon" title="Hide the sidebar (⌘B)">‹</button></span>
+          </h2>
+          <div style="padding:2px 12px;font-size:12px;color:var(--accent-strong);background:var(--accent-soft);border-left:2px solid var(--accent);font-weight:600;margin-right:4px">main.typ</div>
+        </aside>
+        <div></div>
+        <section class="pane doc-pane">
+          <div class="pane-bar"><div class="doc-id"><strong>Honey Badgers at Fairy Raves</strong><code>main.typ</code></div></div>
+          <div class="ed-col"><div class="ed-inner">
+            <div style="font-weight:700">= Honey Badgers at Fairy Raves</div>
+            <div style="height:1.75em"></div>
+            <div>We document seventeen months of field observations…</div>
+          </div></div>
+        </section>
+        <div></div>
+        <section class="pane preview-pane">
+          <div class="pane-bar"><span style="font:10px var(--mono);color:var(--faint)">No preview yet</span></div>
+          <div class="pane-empty">
+            <h3>No preview yet</h3>
+            <p>Choose Update preview to render the pages — <kbd>⌘↵</kbd> does it without leaving the text.</p>
+          </div>
+        </section>
+      </div>
+      <footer class="statusbar"><span>Local</span><span>Ln 3, Col 1</span><span>9 words</span><span style="margin-left:auto">No preview yet</span></footer>
+    </div>
+  </div>
+
+  <!-- ═══ 4 · signed out (U1) ═══ -->
+  <div>
+    <p class="caption">4 — Signed out <span>· a stated welcome, one action, no fake content (U1)</span></p>
+    <div class="window nostatus">
+      <header class="appbar">
+        <button class="brand"><span class="mark">N</span><span class="wordmark">Nisaba</span></button>
+        <div class="appbar-right"><button class="btn btn-quiet">Settings</button></div>
+      </header>
+      <main class="screen"><div class="screen-inner">
+        <div class="signedout">
+          <span class="eyebrow">Nisaba</span>
+          <h2>A quiet place to write documents together.</h2>
+          <p>Track changes, comments, references, and the rendered page — yours to host, yours to keep. Sign in to see your projects; they will appear exactly where you left them.</p>
+          <button class="btn btn-primary" style="font-size:13px;padding:8px 16px">Sign in <kbd style="margin-left:4px">↵</kbd></button>
+        </div>
+      </div></main>
+    </div>
+  </div>
+</div>
+
+<span class="tag">PROPOSAL A · STATES</span>
+</body>
+</html>
