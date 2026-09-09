@@ -86,6 +86,7 @@ fn role_name(value: &MembershipRole) -> &'static str {
 }
 fn row_project(row: &PgRow) -> Result<Project, RepoError> {
     Ok(Project {
+        entry_document_id: row.try_get("entry_document_id").map_err(db_error)?,
         id: row.try_get("id").map_err(db_error)?,
         name: row.try_get("name").map_err(db_error)?,
         created_at: row.try_get("created_at").map_err(db_error)?,
@@ -229,7 +230,7 @@ impl Repository for PostgresRepository {
     }
     async fn get_project(&self, id: Uuid) -> Result<Project, RepoError> {
         required(
-            sqlx::query("SELECT id, name, created_at, updated_at FROM projects WHERE id=$1")
+            sqlx::query("SELECT id, name, created_at, updated_at, entry_document_id FROM projects WHERE id=$1")
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await
@@ -243,7 +244,7 @@ impl Repository for PostgresRepository {
         // Most recently touched first (document create/update/delete bump
         // projects.updated_at); id as the deterministic tiebreaker.
         sqlx::query(
-            "SELECT id, name, created_at, updated_at FROM projects ORDER BY updated_at DESC, id",
+            "SELECT id, name, created_at, updated_at, entry_document_id FROM projects ORDER BY updated_at DESC, id",
         )
         .fetch_all(&self.pool)
         .await
@@ -362,14 +363,17 @@ impl Repository for PostgresRepository {
         audit: Option<AuditEvent>,
     ) -> Result<Project, RepoError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
-        let n = sqlx::query("UPDATE projects SET name=$2,updated_at=$3 WHERE id=$1")
-            .bind(v.id)
-            .bind(&v.name)
-            .bind(v.updated_at)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_error)?
-            .rows_affected();
+        let n = sqlx::query(
+            "UPDATE projects SET name=$2,updated_at=$3,entry_document_id=$4 WHERE id=$1",
+        )
+        .bind(v.id)
+        .bind(&v.name)
+        .bind(v.updated_at)
+        .bind(v.entry_document_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .rows_affected();
         if n == 0 {
             return Err(RepoError::NotFound);
         }
@@ -897,10 +901,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires PostgreSQL and TEST_DATABASE_URL"]
     async fn postgres_round_trip_when_database_is_configured() {
-        let Some(url) = std::env::var_os("TEST_DATABASE_URL") else {
-            return;
-        };
+        let url = std::env::var_os("TEST_DATABASE_URL").expect("set TEST_DATABASE_URL");
         let repo = PostgresRepository::connect(&url.to_string_lossy())
             .await
             .expect("TEST_DATABASE_URL must point at a migrated PostgreSQL database");
@@ -908,6 +911,7 @@ mod tests {
         let project = repo
             .create_project(
                 Project {
+                    entry_document_id: None,
                     id: Uuid::new_v4(),
                     name: format!("integration-{}", Uuid::new_v4()),
                     created_at: now,
@@ -954,12 +958,39 @@ mod tests {
                 Document {
                     id: Uuid::new_v4(),
                     path: "main.typ".into(),
-                    ..doc
+                    ..doc.clone()
                 },
                 None,
             )
             .await,
             Err(RepoError::Conflict(_))
         ));
+        let mut selected = project;
+        selected.entry_document_id = Some(doc.id);
+        repo.update_project(selected.clone(), None)
+            .await
+            .expect("set entrypoint");
+        let mut renamed = doc.clone();
+        renamed.path = "report.typ".into();
+        repo.update_document(renamed, doc.revision, None)
+            .await
+            .expect("rename entrypoint");
+        assert_eq!(
+            repo.get_project(selected.id)
+                .await
+                .unwrap()
+                .entry_document_id,
+            Some(doc.id)
+        );
+        repo.delete_document(doc.id, None)
+            .await
+            .expect("delete entrypoint");
+        assert_eq!(
+            repo.get_project(selected.id)
+                .await
+                .unwrap()
+                .entry_document_id,
+            None
+        );
     }
 }

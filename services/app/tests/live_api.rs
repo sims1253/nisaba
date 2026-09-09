@@ -1,17 +1,10 @@
-//! Live integration tests: the real axum router + `PostgresRepository` + the
-//! actual migrations, exercised through HTTP.
+//! HTTP integration tests against `PostgreSQL` and the real repository migrations.
 //!
-//! These are the systematic integration complement to the in-memory unit
-//! tests: they prove the fixed behaviors against real `PostgreSQL` and real SQL
-//! (the in-memory repository cannot reproduce e.g. the audit-FK ordering bug
-//! in `delete_project` or the token-hash share-link semantics).
-//!
-//! They require a reachable, migrated Postgres. The test derives the DSN from
-//! `DATABASE_URL`, or builds one from this repo's `.env` (`NISABA_DB_USER` /
-//! `NISABA_DB_PASSWORD` / `NISABA_DB_NAME` / `POSTGRES_HOST_PORT`). When no database
-//! is reachable the tests print `SKIPPED` and pass, so plain `cargo test`
-//! stays green in environments without a database; run them deliberately with
-//! `just test-live` (stack up) or in CI with a `DATABASE_URL` set.
+//! Ignored by default. Run `just test-live` against the local stack, or set
+//! `DATABASE_URL` and run `cargo test -p nisaba-app --test live_api -- --ignored`.
+//! Without `DATABASE_URL`, the helper reads the local stack settings from `.env`.
+//! Once invoked, missing configuration, connection errors, and migration failures
+//! fail the tests.
 
 use axum::{body::Body, http::Request, response::Response};
 use base64::Engine as _;
@@ -132,30 +125,20 @@ fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", uuid::Uuid::new_v4().simple())
 }
 
-async fn live_app() -> Option<axum::Router> {
-    let url = database_url()?;
-    let repo = match PostgresRepository::connect(&url).await {
-        Ok(repo) => repo,
-        Err(error) => {
-            eprintln!("SKIPPED live integration tests (no reachable database): {error}");
-            return None;
-        }
-    };
-    // Idempotent: sqlx applies only unapplied migrations.
-    let migrations = sqlx::migrate!("../../migrations");
-    let pool = repo.pool.clone();
-    if let Err(error) = migrations.run(&pool).await {
-        eprintln!("SKIPPED live integration tests (migrations failed): {error}");
-        return None;
-    }
+async fn live_app() -> axum::Router {
+    let url = database_url().expect("set DATABASE_URL or configure the local stack in .env");
+    let repo = PostgresRepository::connect(&url)
+        .await
+        .expect("live tests require a reachable PostgreSQL database with valid migrations");
     let state =
         AppState::new(Arc::new(repo), auth()).with_blob_store(Arc::new(MemoryBlobStore::default()));
-    Some(router(state))
+    router(state)
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_project_deletion_actually_deletes() {
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-del");
     let created: Value = response_body(
         request(
@@ -209,8 +192,9 @@ async fn live_project_deletion_actually_deletes() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_share_link_revocation_revokes() {
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-share");
     let created: Value = response_body(
         request(
@@ -262,8 +246,9 @@ async fn live_share_link_revocation_revokes() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_reviewer_permissions_and_member_management() {
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-perms");
     let created: Value = response_body(
         request(
@@ -357,8 +342,9 @@ async fn live_reviewer_permissions_and_member_management() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_validation_rejects_nul_and_duplicate_doi() {
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let nul = request(
         app.clone(),
         "POST",
@@ -414,10 +400,11 @@ async fn live_validation_rejects_nul_and_duplicate_doi() {
 // ===========================================================================
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_delete_project_with_references_succeeds() {
     // QA F-3: DELETE /projects/{id} returned 404 whenever the project had a
     // reference (reference_entries.project_id was ON DELETE RESTRICT).
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-delref");
     let created: Value = response_body(
         request(
@@ -462,10 +449,11 @@ async fn live_delete_project_with_references_succeeds() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_concurrent_document_patches_return_conflict_not_500() {
     // QA F-4: concurrent PATCHes raced into a 500 (SELECT 1 decoded as i64
     // while Postgres returns int4). Losers must get a clean 409.
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-race");
     let created: Value = response_body(
         request(
@@ -528,9 +516,10 @@ async fn live_concurrent_document_patches_return_conflict_not_500() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_read_only_member_can_compile() {
     // QA F-5 / reviewer F-4: docs promise "Read and compile" for every role.
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-compile-ro");
     let created: Value = response_body(
         request(
@@ -600,10 +589,11 @@ async fn live_read_only_member_can_compile() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_forbidden_message_matches_documented_string() {
     // QA F-6: user-guide quotes the API 403 message as "You don't have
     // permission to do that"; the API used to return bare "forbidden".
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let forbidden = request(
         app.clone(),
         "POST",
@@ -622,9 +612,10 @@ async fn live_forbidden_message_matches_documented_string() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_doi_uniqueness_is_case_insensitive() {
     // QA F-9: 10.1000/QA and 10.1000/qa both used to be accepted per project.
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-doi");
     let created: Value = response_body(
         request(
@@ -668,9 +659,10 @@ async fn live_doi_uniqueness_is_case_insensitive() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_redeem_upgrades_existing_membership_role() {
     // QA F-13: redeeming a link never changed the role of an existing member.
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-redeem");
     let created: Value = response_body(
         request(
@@ -739,9 +731,10 @@ async fn live_redeem_upgrades_existing_membership_role() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_export_rejects_unknown_entry() {
     // QA F-12: ExportRequest.entry was silently ignored (any value → 200).
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-export");
     let created: Value = response_body(
         request(
@@ -782,9 +775,10 @@ async fn live_export_rejects_unknown_entry() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_document_path_length_is_capped() {
     // QA F-15: 10,000-char paths were accepted.
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-pathcap");
     let created: Value = response_body(
         request(
@@ -817,9 +811,10 @@ async fn live_document_path_length_is_capped() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_fulltext_rejects_non_pdf_magic() {
     // QA F-10: a 1-byte file declared as application/pdf was accepted.
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-pdfmagic");
     let created: Value = response_body(
         request(
@@ -870,9 +865,10 @@ async fn live_fulltext_rejects_non_pdf_magic() {
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; run just test-live"]
 async fn live_reference_patch_is_partial() {
     // QA F-11: PATCH with only {"title": ...} used to 422.
-    let Some(app) = live_app().await else { return };
+    let app = live_app().await;
     let name = unique("live-patchref");
     let created: Value = response_body(
         request(

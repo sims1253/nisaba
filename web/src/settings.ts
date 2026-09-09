@@ -12,11 +12,16 @@
  * never wedge the editor — worst case is the default look.
  */
 
-export type TypefaceId = "mono" | "serif" | "sans"
+export type TypefaceId =
+  | "mono" | "serif" | "sans"
+  | "system-mono" | "system-serif" | "system-sans"
+  | "custom"
 
 export interface Settings {
-  /** Editor typeface; the stacks themselves are the stylesheet's variables. */
+  /** Editor typeface preset (see TYPEFACE_STACKS), or "custom". */
   readonly typeface: TypefaceId
+  /** Custom CSS font-family stack; used only when typeface is "custom". */
+  readonly customFont?: string
   /** Editor font size in px. */
   readonly fontSize: number
   /** Editor line height (unitless). */
@@ -34,17 +39,24 @@ export const MAX_FONT_SIZE = 24
 export const MIN_LINE_HEIGHT = 1.2
 export const MAX_LINE_HEIGHT = 2.2
 
-/** The CSS font stack each typeface maps to (kept in sync with styles.css). */
-export const TYPEFACE_STACKS: Readonly<Record<TypefaceId, string>> = {
+/** The CSS font stack each preset maps to (bundled faces + common system stacks). */
+export const TYPEFACE_STACKS: Readonly<Record<Exclude<TypefaceId, "custom">, string>> = {
   mono: "var(--mono)",
   serif: "var(--serif)",
   sans: "var(--sans)",
+  "system-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
+  "system-serif": "Charter, Georgia, Cambria, \"Times New Roman\", serif",
+  "system-sans": "system-ui, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif",
 }
 
 export const TYPEFACE_LABELS: Readonly<Record<TypefaceId, string>> = {
-  mono: "Mono",
-  serif: "Serif",
-  sans: "Sans",
+  mono: "Mono (DM Mono)",
+  serif: "Serif (Source Serif 4)",
+  sans: "Sans (DM Sans)",
+  "system-mono": "System mono",
+  "system-serif": "System serif",
+  "system-sans": "System sans",
+  custom: "Custom…",
 }
 
 const SETTINGS_KEY = "nisaba.settings"
@@ -54,12 +66,33 @@ const clampNumber = (value: unknown, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, n))
 }
 
+const TYPEFACE_IDS: readonly string[] = Object.keys(TYPEFACE_LABELS)
+
+/**
+ * Sanitizes a custom font-family stack: it becomes a CSS property value, so
+ * strip everything that could escape the font-family context ({ } ; < >
+ * backslash, url(), expression-like shapes) and cap the length. Local-only
+ * setting, but it is still injected into the DOM — keep it a plain name list.
+ */
+export function sanitizeCustomFont(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined
+  const cleaned = raw
+    .replace(/\burl\s*\(/gi, "")
+    .replace(/[{};<>\\()]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120)
+  return cleaned === "" ? undefined : cleaned
+}
+
 /** Validates an unknown parsed record into safe settings, field by field. */
 export function clampSettings(raw: unknown): Settings {
   const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {}
   const typeface = record["typeface"]
+  const customFont = sanitizeCustomFont(record["customFont"])
   return {
-    typeface: typeface === "serif" || typeface === "sans" || typeface === "mono" ? typeface : DEFAULT_SETTINGS.typeface,
+    typeface: TYPEFACE_IDS.includes(typeface as string) ? (typeface as TypefaceId) : DEFAULT_SETTINGS.typeface,
+    customFont,
     fontSize: clampNumber(record["fontSize"], MIN_FONT_SIZE, MAX_FONT_SIZE, DEFAULT_SETTINGS.fontSize),
     lineHeight: clampNumber(record["lineHeight"], MIN_LINE_HEIGHT, MAX_LINE_HEIGHT, DEFAULT_SETTINGS.lineHeight),
   }
@@ -88,7 +121,10 @@ export function saveSettings(settings: Settings): void {
  */
 export function applySettings(settings: Settings): void {
   const root = document.documentElement
-  root.style.setProperty("--ed-font", TYPEFACE_STACKS[settings.typeface])
+  const stack = settings.typeface === "custom"
+    ? (settings.customFont ?? TYPEFACE_STACKS.mono)
+    : (TYPEFACE_STACKS[settings.typeface] ?? TYPEFACE_STACKS.mono)
+  root.style.setProperty("--ed-font", stack)
   root.style.setProperty("--ed-size", `${settings.fontSize}px`)
   root.style.setProperty("--ed-line", String(settings.lineHeight))
 }

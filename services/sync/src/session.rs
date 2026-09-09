@@ -1,10 +1,7 @@
 //! Per-connection WebSocket session.
 //!
 //! One async task per connected peer. It runs a `select!` loop that concurrently
-//! reads inbound [`Frame`]s from the socket and drains the outbound channel the
-//! [`crate::room::DocRoom`] fans frames onto. axum 0.8's `WebSocket` has no
-//! `split()`, so a single task multiplexes both directions — there is no `.await`
-//! held across a room mutation (those are synchronous), so this never stalls.
+//! reads inbound [`Frame`]s and drains the room's outbound channel.
 //!
 //! The session enforces the protocol contract:
 //!
@@ -104,7 +101,7 @@ pub async fn run_socket(mut socket: WebSocket, state: SessionState, doc_id: DocI
         ),
     )
     .await;
-    let (peer, role, token, room, generation) = match outcome {
+    let (peer, role, token, room, generation, acknowledge_updates) = match outcome {
         Ok(Some(v)) => v,
         Ok(None) => return,
         Err(_) => {
@@ -134,6 +131,7 @@ pub async fn run_socket(mut socket: WebSocket, state: SessionState, doc_id: DocI
         token: &token,
         state: &state,
         doc_id: &doc_id,
+        acknowledge_updates,
     };
     loop {
         tokio::select! {
@@ -246,7 +244,7 @@ async fn handshake(
     hello_bytes: &[u8],
     tx: mpsc::Sender<Frame>,
     close: CloseSignal,
-) -> Option<(PeerId, Role, String, Arc<DocRoom>, u64)> {
+) -> Option<(PeerId, Role, String, Arc<DocRoom>, u64, bool)> {
     let frame = match Frame::decode(hello_bytes, state.config.max_update_bytes) {
         Ok(f) => f,
         Err(e) => {
@@ -266,7 +264,7 @@ async fn handshake(
         return None;
     };
 
-    if proto != PROTOCOL_VERSION {
+    if proto != 1 && proto != PROTOCOL_VERSION {
         let _ = send_error(
             socket,
             codes::PROTOCOL,
@@ -324,7 +322,7 @@ async fn handshake(
     };
     let initial_state = Vec::new();
     match room.join(peer, role, &last_vv, initial_state, tx, close) {
-        Ok(outcome) => Some((peer, role, token, room, outcome.generation)),
+        Ok(outcome) => Some((peer, role, token, room, outcome.generation, proto >= 2)),
         Err(e) => {
             let code = match &e {
                 crate::error::SyncError::Limit(_) => codes::LIMIT,
@@ -344,6 +342,7 @@ struct InboundSession<'a> {
     token: &'a str,
     state: &'a SessionState,
     doc_id: &'a DocId,
+    acknowledge_updates: bool,
 }
 
 /// Handle one inbound WebSocket message. Returns `false` to terminate the session.
@@ -414,6 +413,13 @@ async fn handle_message(
                     _ => codes::INTERNAL,
                 };
                 let _ = send_error(socket, code, &e.to_string()).await;
+            } else if session.acknowledge_updates {
+                // Echo the exact batch only after handle_update made it durable.
+                // Legacy clients retain the original no-echo contract.
+                return socket
+                    .send(Message::Binary(Frame::Update(b).encode().into()))
+                    .await
+                    .is_ok();
             }
             true
         }
@@ -480,8 +486,13 @@ async fn refresh_access(
             .await;
             None
         }
-        Err(_) => {
-            let _ = send_error(socket, codes::FORBIDDEN, "project access was revoked").await;
+        Err(error) => {
+            let _ = send_error(
+                socket,
+                codes::FORBIDDEN,
+                &format!("project access could not be verified: {error}"),
+            )
+            .await;
             None
         }
     }

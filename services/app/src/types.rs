@@ -16,6 +16,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
+    #[serde(default)]
+    pub entry_document_id: Option<Uuid>,
     pub id: Uuid,
     pub name: String,
     pub created_at: DateTime<Utc>,
@@ -135,6 +137,7 @@ pub struct ProjectCreate {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectPatch {
+    pub entry_document_id: Option<Uuid>,
     pub name: Option<String>,
 }
 
@@ -210,6 +213,28 @@ pub struct CompileRequest {
     pub view: CompileView,
 }
 
+/// Captures the project, with an optional open-document draft for preview.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewRequest {
+    pub view: CompileView,
+    pub draft: Option<PreviewDraft>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewDraft {
+    pub document_id: Uuid,
+    pub body: String,
+    #[serde(default)]
+    pub marks: Vec<MarkInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectPreview {
+    pub entry: String,
+    pub view: CompileView,
+    pub compile: CompileResponse,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkInput {
     #[serde(default)]
@@ -252,6 +277,8 @@ pub struct ExportFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportRequest {
+    #[serde(default)]
+    pub include_fulltexts: bool,
     pub entry: String,
     pub view: CompileView,
 }
@@ -314,6 +341,8 @@ pub enum AppError {
     NotFound,
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("compile produced no PDF")]
+    CompileFailed(Vec<Value>),
     #[error("dependency unavailable: {0}")]
     Dependency(String),
     #[error("internal error")]
@@ -345,6 +374,7 @@ impl IntoResponse for AppError {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, "bad_request", message.clone()),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", self.to_string()),
             Self::Conflict(message) => (StatusCode::CONFLICT, "conflict", message.clone()),
+            Self::CompileFailed(_) => (StatusCode::CONFLICT, "conflict", self.to_string()),
             Self::Dependency(message) => (
                 StatusCode::BAD_GATEWAY,
                 "dependency_unavailable",
@@ -356,10 +386,10 @@ impl IntoResponse for AppError {
                 self.to_string(),
             ),
         };
-        (
-            status,
-            Json(json!({"error": {"code": code, "message": message}})),
-        )
-            .into_response()
+        let mut error = json!({"code": code, "message": message});
+        if let Self::CompileFailed(diagnostics) = self {
+            error["diagnostics"] = json!(diagnostics);
+        }
+        (status, Json(json!({"error": error}))).into_response()
     }
 }

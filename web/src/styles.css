@@ -318,6 +318,10 @@ body:not(.has-project) .appbar-tools { display: none }
   flex: 1; border: 1px solid var(--rule-strong); border-radius: var(--radius);
   padding: 6px 7px; font: 12px var(--sans); background: var(--overlay); color: var(--ink);
 }
+.settings-row input[type="text"] {
+  flex: 1; border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  padding: 6px 8px; font: 12px var(--mono); background: var(--overlay); color: var(--ink);
+}
 .keybind-btn { font: 12px var(--mono); min-width: 120px; text-align: center }
 .keybind-btn.capturing { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft) }
 .settings-note { color: var(--muted); font-size: 11px; margin: 12px 0 0 }
@@ -437,12 +441,6 @@ body:not(.has-project) .appbar-tools { display: none }
   flex: 0 0 auto; width: 13px; text-align: center; color: var(--faint); font-size: 9px;
 }
 .tree-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.tree-row .tag {
-  margin-left: auto; flex: 0 0 auto;
-  font: 600 8.5px/1 var(--mono); letter-spacing: .1em;
-  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-line);
-  padding: 2px 4px; border-radius: 2px;
-}
 .tree-row.folder { color: var(--muted); font-weight: 500 }
 /* Indent guides make a nested path readable without drawing a full tree. */
 .tree-item { display: flex; align-items: stretch }
@@ -539,7 +537,11 @@ body:not(.has-project) .appbar-tools { display: none }
 .cm-scroller {
   font-family: var(--ed-font, var(--mono)) !important;
   font-size: var(--ed-size, 14px);
-  line-height: var(--ed-line, 1.75);
+  /* !important for the same reason as font-family: CodeMirror's injected
+     base theme sets lineHeight 1.4 on .cm-scroller AFTER this stylesheet —
+     equal specificity, later cascade wins, and the setting silently does
+     nothing without this. */
+  line-height: var(--ed-line, 1.75) !important;
   padding: 22px 0 45vh;              /* deep bottom padding: the last line can sit mid-screen */
 }
 /* The measure. Long monospace prose at full window width is unreadable, so the
@@ -1188,3 +1190,11 @@ body.focus-mode .cm-scroller { padding-top: 40px }
   .appbar-tools .btn { padding-inline: 6px }
   #compile-button { padding-inline: 10px }
 }
+
+/* The file being edited and the project being built have separate labels. */
+.build-entry-field { display: grid; gap: 6px; margin-bottom: 12px; color: var(--ink); font: 13px var(--sans); }
+.build-entry-field select { min-width: 0; width: 100%; font: 13px var(--mono); padding: 6px; }
+.editing-label { color: var(--muted); font: 12px var(--sans); }
+.doc-id strong { font-family: var(--serif); font-size: 16px; }
+.preview-stale { color: var(--comment, #a4761b); }
+.preview-pane .pane-bar { flex-wrap: wrap; }

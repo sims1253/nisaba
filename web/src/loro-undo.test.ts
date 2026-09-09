@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, beforeAll, describe, expect, it } from "vitest"
 import { EditorState } from "@codemirror/state"
 import { EditorView } from "@codemirror/view"
 import { LoroExtensions, redo, undo } from "loro-codemirror"
 import { LoroDoc, LoroText, UndoManager } from "loro-crdt"
+
+// jsdom has no layout engine, but CodeMirror schedules range measurements.
+beforeAll(() => {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList
+  Range.prototype.getBoundingClientRect = () => new DOMRect()
+})
 
 const views: EditorView[] = []
 afterEach(() => {

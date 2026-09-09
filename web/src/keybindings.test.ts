@@ -88,14 +88,14 @@ describe("persistence", () => {
   it("drops essential, duplicate, malformed, and modifierless entries on load", () => {
     localStorage.setItem("nisaba.keybindings", JSON.stringify({
       palette: "Mod+Shift+R", // browser-essential
-      save: "Mod+B",          // collides with navigator's RETAINED default…
+      save: "Mod+\\",         // collides with navigator's RETAINED default…
       compile: "!!",          // malformed
       focus: "B",             // modifierless — untypeable app-wide
-      navigator: "Mod+Shift+L", // …but navigator is rebound here, so Mod+B is free
+      navigator: "Mod+Shift+L", // …but navigator is rebound here, so Mod+\ is free
     }))
     expect(loadBindings()).toEqual({
       ...DEFAULT_BINDINGS,
-      save: "Mod+B",
+      save: "Mod+\\",
       navigator: "Mod+Shift+L",
     })
   })
@@ -106,11 +106,11 @@ describe("persistence", () => {
   })
 
   it("resolves a custom colliding with a retained default (fixpoint)", () => {
-    // save takes navigator's default; navigator takes save's old default —
+    // save takes navigator's default; navigator takes save's default —
     // the swap must survive, not collapse both to defaults.
-    expect(clampBindings({ save: "Mod+B", navigator: "Mod+S" })).toEqual({
+    expect(clampBindings({ save: "Mod+\\", navigator: "Mod+S" })).toEqual({
       ...DEFAULT_BINDINGS,
-      save: "Mod+B",
+      save: "Mod+\\",
       navigator: "Mod+S",
     })
   })

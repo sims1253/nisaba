@@ -1,13 +1,7 @@
-/**
- * Compile and PDF preview tests.
- *
- * This test catches BUG-05 from the 2026-08-09 evaluation: the PDF worker
- * module failed to load despite a successful backend compile. The test
- * verifies that clicking Compile renders actual PDF pages in the preview pane.
- */
+/** Browser coverage for compilation, diagnostics, and PDF preview. */
 
 import { test, expect } from "@playwright/test"
-import { signIn, createProject, openFirstProject } from "./helpers"
+import { signIn, createProject, createDocument, openFirstProject } from "./helpers"
 
 test.describe("Compile and PDF preview", () => {
   test("compile renders a PDF preview", async ({ page }) => {
@@ -32,6 +26,32 @@ test.describe("Compile and PDF preview", () => {
     const canvas = page.locator(".pdf-page canvas").first()
     const width = await canvas.evaluate((el: HTMLCanvasElement) => el.width)
     expect(width).toBeGreaterThan(0)
+  })
+
+  test("preview keeps the project entrypoint while editing a chapter", async ({ page }) => {
+    await signIn(page, { username: "demo", password: "demo", role: "author" })
+    await createProject(page, "Preview Entry Test")
+    await createDocument(page, "chapter.typ", "chapter.typ")
+    await page.locator("[data-document]").filter({ hasText: "chapter.typ" }).click()
+    await expect(page.locator("#document-path")).toHaveText("chapter.typ")
+    await expect(page.locator("[data-document]").filter({ hasText: "main.typ" })).toBeVisible()
+    const fileTree = page.locator("#file-tree")
+    await expect(fileTree).toBeVisible()
+    await expect(fileTree.getByText("MAIN", { exact: true })).toHaveCount(0)
+
+    const preview = page.waitForResponse((response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/preview"))
+    await page.locator("#compile-button").click()
+    const result = await (await preview).json()
+    expect(result.entry).toBe("main.typ")
+    await expect(page.locator("#document-path")).toHaveText("chapter.typ")
+
+    const chapterId = await page.locator("[data-document]").filter({ hasText: "chapter.typ" }).getAttribute("data-document")
+    expect(chapterId).toBeTruthy()
+    const changedPreview = page.waitForResponse((response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/preview"))
+    await page.locator("#project-entrypoint").selectOption(chapterId!)
+    expect((await (await changedPreview).json()).entry).toBe("chapter.typ")
   })
 
   test("rapid preview updates do not invalidate an in-flight PDF", async ({ page }) => {
@@ -65,10 +85,8 @@ test.describe("Compile and PDF preview", () => {
     // Click compile — should show an error, not crash
     await page.locator("#compile-button").click()
 
-    // The preview area should show an error state, not a blank page
-    await page.waitForTimeout(5000)
-    const previewText = await page.locator('[role="region"], .pdf-viewer, #preview').first().textContent()
-    // Something should be shown — an error message or diagnostic
-    expect(previewText).toBeTruthy()
+    await expect(page.locator("#diagnostics-list").getByText(
+      "unknown variable: invalid_function_that_does_not_exist"
+    )).toBeVisible({ timeout: 30_000 })
   })
 })

@@ -82,13 +82,12 @@ replacement is documented in [`deploy/keycloak/README.md`](../deploy/keycloak/RE
 | `NISABA_APP_ADDR` | `0.0.0.0:8080` (compose) | Bind address (`PORT` is a fallback) | same |
 | `APP_HOST_PORT` | `8100` | Host-side port (`127.0.0.1`) | `docker-compose.yml` |
 | `RUST_LOG` / `RUST_BACKTRACE` | `info` / `1` | Log verbosity / backtraces (all Rust services) | `tracing_subscriber` |
-| `TEST_DATABASE_URL` | — | **Reserved** for optional Postgres-backed adapter tests | `services/app` tests |
+| `TEST_DATABASE_URL` | — | Enables optional Postgres-backed adapter tests | `services/app` tests |
 
 Role names are **not configurable**: the `author` / `reviewer` / `read-only`
 vocabulary is hardcoded in `crates/nisaba-auth` (`Role::parse`), and roles are
 read from the token's top-level `roles` claim as configured in the realm
-mapper. (Legacy `NISABA_OIDC_ROLE_AUTHOR` / `_REVIEWER` / `_READONLY`
-variables were removed from `.env.example` — nothing ever read them.)
+mapper.
 
 ## `sync` service
 

@@ -153,6 +153,16 @@ impl AuthorityDoc {
         }
     }
 
+    /// Export state for an internal reader, or `None` before the first edit.
+    /// An empty text container can still carry deletions or review records.
+    pub fn export_state(&self) -> SyncResult<Option<Vec<u8>>> {
+        if self.version_vector().is_empty() {
+            Ok(None)
+        } else {
+            self.export_snapshot().map(Some)
+        }
+    }
+
     /// Export a full snapshot (state + history).
     pub fn export_snapshot(&self) -> SyncResult<Vec<u8>> {
         Ok(self.doc.export(ExportMode::Snapshot)?)

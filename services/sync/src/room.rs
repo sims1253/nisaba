@@ -143,6 +143,7 @@ pub struct DocRoom {
     /// Serialises handshake + fan-out ordering (see component documentation). Also guards the
     /// presence roster.
     gate: Mutex<Presence>,
+    updates: tokio::sync::Mutex<()>,
     /// Monotonic admission counter; each join draws the next value.
     next_gen: AtomicU64,
     updates_since_snapshot: AtomicU64,
@@ -191,27 +192,17 @@ impl DocRoom {
         seed_verifier: Arc<dyn SeedVerifier>,
     ) -> SyncResult<Self> {
         let authority = match snapshots.latest(&doc_id).await? {
-            Some(snap) => {
-                let auth = AuthorityDoc::from_snapshot(&snap.bytes)?;
-                // Replay any op-log entries recorded after the snapshot. Re-importing
-                // already-applied ops is a no-op in Loro, so this is correct even if
-                // the log was not truncated at snapshot time. A record that fails to
-                // import (a torn tail we could not preview, or a rejected update) is
-                // skipped with a warning rather than failing the whole room open —
-                // this is what makes corrupt trailing records recoverable.
-                for update in op_log.read_all(&doc_id).await? {
-                    if let Err(e) = auth.import_update(&update) {
-                        tracing::warn!(
-                            error = %e,
-                            doc = %doc_id,
-                            "skipping op-log record that fails to import during replay"
-                        );
-                    }
-                }
-                auth
-            }
+            Some(snap) => AuthorityDoc::from_snapshot(&snap.bytes)?,
             None => AuthorityDoc::new(),
         };
+        // The log is authoritative even before the first periodic snapshot.
+        // Loro deduplicates entries already represented by a snapshot.
+        for update in op_log.read_all(&doc_id).await? {
+            if let Err(e) = authority.import_update(&update) {
+                tracing::warn!(error = %e, doc = %doc_id,
+                    "skipping op-log record that fails to import during replay");
+            }
+        }
 
         let presence_coalesce_ms = config.presence_coalesce_ms;
         let now = clock.now();
@@ -220,6 +211,7 @@ impl DocRoom {
             authority,
             sessions: DashMap::new(),
             gate: Mutex::new(Presence::new(config.presence_ttl_ms, clock.clone())),
+            updates: tokio::sync::Mutex::new(()),
             next_gen: AtomicU64::new(0),
             updates_since_snapshot: AtomicU64::new(0),
             last_active: Mutex::new(Some(now)),
@@ -479,6 +471,8 @@ impl DocRoom {
         }
         self.config.check_update_size(bytes.len())?;
 
+        // Serialize validation, duplicate detection, persistence and import.
+        let _update = self.updates.lock().await;
         // Review-layer gate: reviewers must not overwrite the document text
         // without a corresponding review record (see enforce_reviewer_policy).
         if role == Role::Reviewer {
@@ -629,15 +623,10 @@ impl DocRoom {
         Ok(vv)
     }
 
-    /// The document's whole current CRDT state as an opaque Loro snapshot.
-    ///
-    /// Serves the internal read API (`GET /internal/docs/{doc_id}/state`): the
-    /// bytes are exactly what a joining peer would receive as a full-snapshot
-    /// catch-up — the authority exported without interpretation. This is a
-    /// *read*: it never mutates the authority, the op log, or the snapshot
-    /// store, and it does not force a snapshot.
-    pub fn export_state(&self) -> SyncResult<Vec<u8>> {
-        self.authority.export_snapshot()
+    /// Export current state for an internal reader without writing a snapshot.
+    /// Returns `None` until the authority has received an edit.
+    pub fn export_state(&self) -> SyncResult<Option<Vec<u8>>> {
+        self.authority.export_state()
     }
 
     /// Milliseconds a reviewer's text-touching update may follow a
@@ -750,8 +739,14 @@ impl DocRoom {
             );
             return Err(SyncError::Loro(format!("update failed to decode: {e}")));
         }
-        self.op_log.append(&self.doc_id, bytes).await?;
         let before = self.authority.version_vector();
+        let metadata = loro::LoroDoc::decode_import_blob_meta(bytes, true)?;
+        // Do not infer duplication from a non-advancing import: a new update
+        // can be waiting for dependencies and must still be persisted.
+        if before.includes_vv(&metadata.partial_end_vv) {
+            return Ok(false);
+        }
+        self.op_log.append(&self.doc_id, bytes).await?;
         let after = match self.authority.import_update(bytes) {
             Ok(after) => after,
             Err(e) => {
@@ -762,7 +757,7 @@ impl DocRoom {
                     doc = %self.doc_id,
                     "authority rejected a validated update; skipping import"
                 );
-                return Ok(false);
+                return Err(e);
             }
         };
         let advanced = after != before;

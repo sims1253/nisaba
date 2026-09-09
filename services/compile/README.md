@@ -21,7 +21,7 @@ Request:
 ```json
 {
   "project_id": "project-1",
-  "entry": "m3/3-2-1.typ",
+  "entry": "chapters/intro.typ",
   "sources": {"chapters/intro.typ": "= Introduction"},
   "view": "public"
 }

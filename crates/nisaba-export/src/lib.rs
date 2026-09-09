@@ -26,36 +26,11 @@ pub struct ProjectArchiveInput {
     pub bibliographies: Vec<Bibliography>,
 }
 
-/// PDF checks supplied by the compile/compatibility boundary.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct PdfCompliance {
-    /// No watermark is present.
-    pub no_watermark: bool,
-    /// The document is not password-protected.
-    pub not_protected: bool,
-    /// Annotations/comments are possible.
-    pub commentable: bool,
-    /// Text can be extracted (search/index requirement).
-    pub text_extractable: bool,
-    /// Indexes have been rendered.
-    pub indexes_rendered: bool,
-    /// Hyperlinks are live.
-    pub links_live: bool,
-}
-
-/// A report explaining why an archive can or cannot be created.
+/// Validation failures that block archive creation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ComplianceReport {
     /// The individual failure reasons; empty means compliant.
     pub errors: Vec<String>,
-}
-impl ComplianceReport {
-    /// Whether the report carries no errors.
-    #[must_use]
-    pub fn is_compliant(&self) -> bool {
-        self.errors.is_empty()
-    }
 }
 
 /// Final deterministic archive.
@@ -65,11 +40,6 @@ pub struct ProjectArchive {
     pub files: Vec<ExportFile>,
     /// Name the compiled PDF was stored under.
     pub pdf_filename: String,
-    /// Compliance details. Always empty on success: failures return early as
-    /// [`ExportError::Blocked`], which carries the report with its reasons, so a
-    /// successfully built archive never has anything to report here. The field exists so
-    /// callers holding an archive have a uniform place to look.
-    pub report: ComplianceReport,
 }
 
 /// Export failure.
@@ -131,10 +101,7 @@ fn error_list(errors: &[ValidationError]) -> String {
 /// This borrows its inputs and copies every payload once. Callers that will not use the
 /// inputs afterwards can pass ownership to [`build_project_archive_from_owned`] instead
 /// and skip those copies.
-pub fn build_project_archive(
-    input: &ProjectArchiveInput,
-    pdf: &PdfCompliance,
-) -> Result<ProjectArchive, ExportError> {
+pub fn build_project_archive(input: &ProjectArchiveInput) -> Result<ProjectArchive, ExportError> {
     let pdf_filename = project_pdf_filename(&input.date, &input.name);
     let mut files = vec![ExportFile {
         path: pdf_filename.clone(),
@@ -146,7 +113,7 @@ pub fn build_project_archive(
             contents: source.as_bytes().to_vec(),
         });
     }
-    finish_archive(files, pdf, pdf_filename, &input.bibliographies)
+    finish_archive(files, pdf_filename, &input.bibliographies)
 }
 
 /// Build an archive from owned inputs, moving (not copying) the PDF bytes and document
@@ -154,7 +121,6 @@ pub fn build_project_archive(
 /// [`build_project_archive`].
 pub fn build_project_archive_from_owned(
     input: ProjectArchiveInput,
-    pdf: &PdfCompliance,
 ) -> Result<ProjectArchive, ExportError> {
     let ProjectArchiveInput {
         date,
@@ -174,10 +140,10 @@ pub fn build_project_archive_from_owned(
             contents: source.into_bytes(),
         });
     }
-    finish_archive(files, pdf, pdf_filename, &bibliographies)
+    finish_archive(files, pdf_filename, &bibliographies)
 }
 
-/// The sanitized archive path for one document source, or a compliance error for an
+/// The unchanged archive path for one document source, or a compliance error for an
 /// unsafe path.
 fn document_entry_path(path: &str) -> Result<String, ExportError> {
     safe_path(path).map_or_else(
@@ -190,34 +156,18 @@ fn document_entry_path(path: &str) -> Result<String, ExportError> {
     )
 }
 
-/// Shared tail of both builders: the compliance gate (PDF bytes and flags), the
+/// Shared tail of both builders: the PDF signature check, the
 /// bibliography manifests, and the deterministic sort/duplicate check. `files[0]` is the
 /// PDF entry both builders prepend.
 fn finish_archive(
     mut files: Vec<ExportFile>,
-    pdf: &PdfCompliance,
     pdf_filename: String,
     bibliographies: &[Bibliography],
 ) -> Result<ProjectArchive, ExportError> {
-    let mut report = ComplianceReport::default();
-    if files[0].contents.len() < 5 || !files[0].contents.starts_with(b"%PDF-") {
-        report.errors.push("missing or invalid PDF bytes".into());
-    }
-    let required = [
-        (pdf.no_watermark, "PDF has a watermark"),
-        (pdf.not_protected, "PDF is protected"),
-        (pdf.commentable, "PDF is not electronically commentable"),
-        (pdf.text_extractable, "PDF text is not extractable"),
-        (pdf.indexes_rendered, "PDF indexes are not rendered"),
-        (pdf.links_live, "PDF links are not live"),
-    ];
-    for (ok, message) in required {
-        if !ok {
-            report.errors.push(message.into());
-        }
-    }
-    if !report.is_compliant() {
-        return Err(ExportError::Blocked(report));
+    if !files[0].contents.starts_with(b"%PDF-") {
+        return Err(ExportError::Blocked(ComplianceReport {
+            errors: vec!["missing or invalid PDF bytes".into()],
+        }));
     }
     for bibliography in bibliographies {
         let manifest = ExportManifest::build(bibliography).map_err(ExportError::Reference)?;
@@ -230,12 +180,9 @@ fn finish_archive(
             errors: vec!["duplicate export path".into()],
         }));
     }
-    // `report` is provably empty here (failures returned early above); the field stays
-    // empty on success so callers never need to inspect it.
     Ok(ProjectArchive {
         files,
         pdf_filename,
-        report,
     })
 }
 
@@ -252,18 +199,18 @@ fn safe_component(value: &str) -> String {
     safe_filename_component(value, "unnamed")
 }
 
-fn safe_path(value: &str) -> Option<String> {
-    if value.is_empty() || value.starts_with('/') || value.contains('\\') {
+fn safe_path(value: &str) -> Option<&str> {
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.contains(['\\', ':'])
+        || value.chars().any(char::is_control)
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+    {
         return None;
     }
-    let mut parts = Vec::new();
-    for part in value.split('/') {
-        if part.is_empty() || part == "." || part == ".." || part.contains('\0') {
-            return None;
-        }
-        parts.push(safe_component(part));
-    }
-    Some(parts.join("/"))
+    Some(value)
 }
 
 /// Write the export as a byte-stable ZIP. Files are sorted, stored without compression,
@@ -306,7 +253,7 @@ impl ZipWriter {
         let crc = crc32(data);
         write_u32(&mut self.bytes, 0x0403_4b50);
         write_u16(&mut self.bytes, 20);
-        write_u16(&mut self.bytes, 0);
+        write_u16(&mut self.bytes, 1 << 11); // UTF-8 filenames
         write_u16(&mut self.bytes, 0);
         write_u16(&mut self.bytes, 0);
         write_u16(&mut self.bytes, 0);
@@ -332,7 +279,7 @@ impl ZipWriter {
             write_u32(&mut self.bytes, 0x0201_4b50);
             write_u16(&mut self.bytes, 20);
             write_u16(&mut self.bytes, 20);
-            write_u16(&mut self.bytes, 0);
+            write_u16(&mut self.bytes, 1 << 11); // UTF-8 filenames
             write_u16(&mut self.bytes, 0);
             write_u16(&mut self.bytes, 0);
             write_u16(&mut self.bytes, 0);
@@ -405,17 +352,6 @@ fn crc32(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
 
-    fn compatible() -> PdfCompliance {
-        PdfCompliance {
-            no_watermark: true,
-            not_protected: true,
-            commentable: true,
-            text_extractable: true,
-            indexes_rendered: true,
-            links_live: true,
-        }
-    }
-
     #[test]
     fn names_and_paths_are_safe() {
         assert_eq!(
@@ -440,10 +376,46 @@ mod tests {
     }
 
     #[test]
+    fn source_paths_preserve_extensions_spaces_and_unicode() {
+        let input = ProjectArchiveInput {
+            pdf: b"%PDF-1.7".to_vec(),
+            documents: [
+                (
+                    "main.typ".into(),
+                    "#include \"chapters/Über uns.typ\"".into(),
+                ),
+                ("chapters/Über uns.typ".into(), "= Results".into()),
+            ]
+            .into_iter()
+            .collect(),
+            ..ProjectArchiveInput::default()
+        };
+        let archive = build_project_archive(&input).unwrap();
+        for (path, source) in &input.documents {
+            let exported = archive
+                .files
+                .iter()
+                .find(|file| file.path == format!("documents/{path}"))
+                .unwrap();
+            assert_eq!(exported.contents, source.as_bytes());
+        }
+        assert!(safe_path("C:/escape.typ").is_none());
+        assert!(safe_path("chapter\n.typ").is_none());
+    }
+
+    #[test]
     fn invalid_pdf_blocks_export() {
-        let error =
-            build_project_archive(&ProjectArchiveInput::default(), &compatible()).unwrap_err();
-        assert!(matches!(error, ExportError::Blocked(_)));
+        for pdf in [b"".as_slice(), b"%PDF", b"not a PDF"] {
+            let input = ProjectArchiveInput {
+                pdf: pdf.to_vec(),
+                ..ProjectArchiveInput::default()
+            };
+            let error = build_project_archive(&input).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "export blocked: missing or invalid PDF bytes"
+            );
+        }
     }
 
     #[test]
@@ -455,8 +427,8 @@ mod tests {
             ..ProjectArchiveInput::default()
         };
         input.documents.insert("a.typ".into(), "= A".into());
-        let borrowed = build_project_archive(&input, &compatible()).unwrap();
-        let owned = build_project_archive_from_owned(input, &compatible()).unwrap();
+        let borrowed = build_project_archive(&input).unwrap();
+        let owned = build_project_archive_from_owned(input).unwrap();
         assert_eq!(borrowed, owned);
     }
 
@@ -468,7 +440,7 @@ mod tests {
             ..ProjectArchiveInput::default()
         };
         assert!(matches!(
-            build_project_archive(&input, &compatible()),
+            build_project_archive(&input),
             Err(ExportError::Blocked(_))
         ));
         let archive = ProjectArchive {
@@ -477,7 +449,6 @@ mod tests {
                 contents: vec![],
             }],
             pdf_filename: String::new(),
-            report: ComplianceReport::default(),
         };
         assert!(matches!(write_zip(&archive), Err(ExportError::Blocked(_))));
     }
@@ -490,7 +461,6 @@ mod tests {
                 contents: b"hello".to_vec(),
             }],
             pdf_filename: String::new(),
-            report: ComplianceReport::default(),
         };
         assert_eq!(write_zip(&archive).unwrap(), write_zip(&archive).unwrap());
     }
@@ -512,7 +482,6 @@ mod tests {
                 contents: b"hello".to_vec(),
             }],
             pdf_filename: String::new(),
-            report: ComplianceReport::default(),
         };
         assert!(matches!(
             write_zip(&archive),
@@ -532,7 +501,6 @@ mod tests {
         let archive = ProjectArchive {
             files,
             pdf_filename: String::new(),
-            report: ComplianceReport::default(),
         };
         assert!(matches!(
             write_zip(&archive),
@@ -558,7 +526,6 @@ mod tests {
         let archive = ProjectArchive {
             files: files.clone(),
             pdf_filename: String::new(),
-            report: ComplianceReport::default(),
         };
         let zip = write_zip(&archive).unwrap();
 
@@ -582,6 +549,7 @@ mod tests {
         let mut seen: Vec<(String, usize)> = Vec::new();
         for _ in 0..count {
             assert_eq!(le32(cursor), 0x0201_4b50, "central header signature");
+            assert_eq!(le16(cursor + 8), 1 << 11, "UTF-8 central flag");
             let crc = le32(cursor + 16);
             let size = usize::try_from(le32(cursor + 20)).unwrap();
             let name_len = usize::from(le16(cursor + 28));
@@ -593,6 +561,7 @@ mod tests {
 
             // The local header at the recorded offset agrees with the central record.
             assert_eq!(le32(local_off), 0x0403_4b50, "local header signature");
+            assert_eq!(le16(local_off + 6), 1 << 11, "UTF-8 local flag");
             assert_eq!(le32(local_off + 14), crc, "local CRC for {name}");
             assert_eq!(le32(local_off + 18), le32(cursor + 20), "compressed size");
             assert_eq!(le32(local_off + 22), le32(cursor + 24), "uncompressed size");
@@ -630,11 +599,11 @@ mod tests {
     #[test]
     fn error_display_is_readable() {
         let blocked = ExportError::Blocked(ComplianceReport {
-            errors: vec!["PDF has a watermark".into(), "PDF is protected".into()],
+            errors: vec!["missing or invalid PDF bytes".into()],
         });
         assert_eq!(
             blocked.to_string(),
-            "export blocked: PDF has a watermark; PDF is protected"
+            "export blocked: missing or invalid PDF bytes"
         );
         assert_eq!(
             ExportError::NameTooLong("big".into()).to_string(),

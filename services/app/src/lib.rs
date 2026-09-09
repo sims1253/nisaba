@@ -34,7 +34,7 @@ use base64::Engine as _;
 use chrono::Utc;
 use nisaba_core::prelude::RedlineStyle;
 use nisaba_core::{Document as CoreDocument, View as CoreView};
-use nisaba_export::{PdfCompliance, ProjectArchiveInput, build_project_archive, write_zip};
+use nisaba_export::{ProjectArchiveInput, build_project_archive, write_zip};
 use nisaba_references::{
     Bibliography, Citation, FullText as CoreFullText, IssuedDate, Metadata as CoreMetadata, Person,
     ReferenceEntry as CoreReferenceEntry, ReferenceId, bibliography_yaml, extract_citations,
@@ -425,6 +425,7 @@ pub fn router(state: AppState) -> Router {
         .route("/internal/sync/authorize", post(authorize_sync_document))
         .route("/internal/document/{document_id}/body", get(document_body))
         .route("/api/compile", post(api_compile))
+        .route("/projects/{project_id}/preview", post(project_preview))
         .route(
             "/projects/{project_id}/documents",
             post(create_document).get(list_documents),
@@ -526,6 +527,7 @@ async fn create_project(
     let now = Utc::now();
     let id = Uuid::new_v4();
     let value = Project {
+        entry_document_id: None,
         id,
         name,
         created_at: now,
@@ -598,6 +600,13 @@ async fn patch_project(
         validate_text(&name, "name", 1024)?;
         v.name = name;
     }
+    if let Some(document_id) = r.entry_document_id {
+        let document = s.repo.get_document_by_id(document_id).await?;
+        if document.project_id != v.id {
+            return Err(AppError::NotFound);
+        }
+        v.entry_document_id = Some(document_id);
+    }
     v.updated_at = Utc::now();
     let event = build_audit(&p, v.id, "updated", "project", v.id, json!({}));
     let out = s.repo.update_project(v, Some(event)).await?;
@@ -642,7 +651,7 @@ fn valid_document_path(path: &str) -> bool {
     !path.is_empty()
         && path == path.trim()
         && !path.starts_with('/')
-        && !path.contains('\\')
+        && !path.contains(['\\', ':'])
         && path.chars().count() <= 1024
         && !path.chars().any(char::is_control)
         && path
@@ -721,7 +730,7 @@ async fn create_document(
     let project = project_for(&s, &pid).await?;
     if !valid_document_path(&r.path) {
         return Err(AppError::BadRequest(
-            "path must be a safe project-relative path".into(),
+            "Use a project-relative path of 1–1024 characters: no leading slash, colons, backslashes, empty or . or .. segments, control characters, or surrounding whitespace".into(),
         ));
     }
     validate_text(&r.title, "title", 2048)?;
@@ -814,7 +823,8 @@ async fn patch_document(
     if let Some(x) = r.path {
         if !valid_document_path(&x) {
             return Err(AppError::BadRequest(
-                "path must be a safe project-relative path".into(),
+                "Use a project-relative path of 1–1024 characters: no leading slash, colons, backslashes, empty or . or .. segments, control characters, or surrounding whitespace"
+                    .into(),
             ));
         }
         v.path = x;
@@ -1440,73 +1450,55 @@ fn inject_bibliography(request: &mut CompileRequest, yaml: String) {
     }
 }
 
-fn inject_per_document_bibliography(
-    request: &mut CompileRequest,
-    doc_yaml: &BTreeMap<String, String>,
-) {
-    for (path, yaml) in doc_yaml {
-        if yaml.trim().is_empty() {
-            continue;
-        }
-        let (dir, file_name) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
-        let dir = dir.trim_start_matches('/');
-        let stem = file_name.trim_end_matches(".typ");
-        let bib_path = if dir.is_empty() {
-            format!("refs-{stem}.yml")
-        } else {
-            format!("{dir}/refs-{stem}.yml")
-        };
-        if request.sources.contains_key(&bib_path) {
-            continue;
-        }
-        request.sources.insert(bib_path, yaml.clone());
-        let call = format!("\n#bibliography(\"refs-{stem}.yml\", group: none)\n");
-        if let Some(source) = request.sources.get_mut(path)
-            && !source.contains("#bibliography(")
-        {
-            source.push_str(&call);
-        }
-    }
-}
-
 fn inject_redline_review(request: &mut CompileRequest) {
     if !matches!(request.view, CompileView::Redline) {
         return;
     }
-    // Check ALL sources for review markers, not just the entry. In a multi-file
-    // project the marks may live on an included file (e.g. chapters/intro.typ)
-    // while the entry only #includes it. The marker strings come from the
-    // redline style's defaults so they cannot drift from what projection emits.
-    let has_markers = request.sources.values().any(|src| {
-        [
-            RedlineStyle::DEFAULT_INSERT_OPEN,
-            RedlineStyle::DEFAULT_DELETE_OPEN,
-            RedlineStyle::DEFAULT_REPLACED_OPEN,
-            RedlineStyle::DEFAULT_REPLACED_CLOSE,
-        ]
-        .iter()
-        .any(|marker| src.contains(marker))
-    });
-    if !has_markers {
-        return;
-    }
-    let entry_dir = request.entry.rsplit_once('/').map_or("", |(dir, _)| dir);
-    let module_path = if entry_dir.is_empty() {
-        REVIEW_SUPPORT_PATH.to_owned()
-    } else {
-        format!("{entry_dir}/{REVIEW_SUPPORT_PATH}")
-    };
-    if request.sources.contains_key(&module_path) {
-        return;
-    }
-    request
+    // Typst imports are file-local: every projected source needs its own import.
+    let marked_sources: Vec<_> = request
         .sources
-        .insert(module_path, REVIEW_SUPPORT_SOURCE.to_owned());
-    if let Some(entry_source) = request.sources.get_mut(&request.entry)
-        && !entry_source.contains("#import \"review.typ\"")
-        && !entry_source.contains("#import 'review.typ'")
-    {
-        entry_source.insert_str(0, "#import \"review.typ\" as review\n\n");
+        .iter()
+        .filter(|(path, _)| {
+            *path == &request.entry
+                || std::path::Path::new(path)
+                    .extension()
+                    .is_some_and(|extension| extension == "typ")
+                || request
+                    .marks
+                    .get(*path)
+                    .is_some_and(|marks| !marks.is_empty())
+        })
+        .filter(|(_, source)| {
+            [
+                RedlineStyle::DEFAULT_INSERT_OPEN,
+                RedlineStyle::DEFAULT_DELETE_OPEN,
+                RedlineStyle::DEFAULT_REPLACED_OPEN,
+                RedlineStyle::DEFAULT_REPLACED_CLOSE,
+            ]
+            .iter()
+            .any(|marker| source.contains(marker))
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in marked_sources {
+        let directory = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let module_path = if directory.is_empty() {
+            REVIEW_SUPPORT_PATH.to_owned()
+        } else {
+            format!("{directory}/{REVIEW_SUPPORT_PATH}")
+        };
+        if path == module_path {
+            continue;
+        }
+        request
+            .sources
+            .entry(module_path)
+            .or_insert_with(|| REVIEW_SUPPORT_SOURCE.to_owned());
+        if let Some(source) = request.sources.get_mut(&path)
+            && !source.starts_with("#import \"review.typ\" as review\n")
+        {
+            source.insert_str(0, "#import \"review.typ\" as review\n\n");
+        }
     }
 }
 
@@ -1539,10 +1531,10 @@ async fn api_compile(
             Ok((path, markdown_headings_to_typst(&projected)))
         })
         .collect::<Result<_, AppError>>()?;
-    request.marks.clear();
     let yaml = references_bibliography_yaml(&state.repo.list_references(request.project_id).await?);
     inject_bibliography(&mut request, yaml);
     inject_redline_review(&mut request);
+    request.marks.clear();
     let project_id = request.project_id;
     let response = state.compile.compile(request).await?;
     audit(
@@ -1558,6 +1550,85 @@ async fn api_compile(
     Ok(Json(response))
 }
 
+/// Project preview captures every source before invoking the compiler.
+async fn project_preview(
+    State(state): State<AppState>,
+    principal: Auth,
+    Path(project_id): Path<String>,
+    Json(request): Json<PreviewRequest>,
+) -> Result<Json<ProjectPreview>, AppError> {
+    let project = project_for(&state, &project_id).await?;
+    project_access(&state, &principal.0, project.id, Permission::Read).await?;
+    let references = state.repo.list_references(project.id).await?;
+    let mut docs = gather_documents(&state, &project).await?;
+    let entry = docs
+        .iter()
+        .find(|doc| Some(doc.id) == project.entry_document_id)
+        .or_else(|| docs.iter().find(|doc| doc.path == "main.typ"))
+        .or_else(|| docs.iter().min_by_key(|doc| &doc.path))
+        .ok_or_else(|| AppError::BadRequest("Add a document before building a preview".into()))?
+        .path
+        .clone();
+    if let Some(draft) = request.draft {
+        let document = docs
+            .iter_mut()
+            .find(|doc| doc.id == draft.document_id)
+            .ok_or(AppError::NotFound)?;
+        document.body = draft.body;
+        document.marks = draft.marks;
+    }
+    let marks = docs
+        .iter()
+        .map(|doc| (doc.path.clone(), doc.marks.clone()))
+        .collect();
+    let inputs = prepare_project_sources(
+        project.id,
+        entry.clone(),
+        request.view.clone(),
+        &docs,
+        marks,
+        references_bibliography_yaml(&references),
+    )?;
+    let compile = state.compile.compile(inputs).await?;
+    Ok(Json(ProjectPreview {
+        entry,
+        view: request.view,
+        compile,
+    }))
+}
+
+fn prepare_project_sources(
+    project_id: Uuid,
+    entry: String,
+    view: CompileView,
+    docs: &[DocumentExport],
+    marks: BTreeMap<String, Vec<MarkInput>>,
+    bibliography: String,
+) -> Result<CompileRequest, AppError> {
+    let mut sources = BTreeMap::new();
+    for doc in docs {
+        sources.insert(
+            doc.path.clone(),
+            markdown_headings_to_typst(&projected_source(
+                &doc.body,
+                marks.get(&doc.path).map_or(&[], Vec::as_slice),
+                &view,
+            )?),
+        );
+    }
+    let mut request = CompileRequest {
+        project_id,
+        entry,
+        sources,
+        marks,
+        view,
+    };
+    inject_bibliography(&mut request, bibliography);
+    inject_redline_review(&mut request);
+    request.marks.clear();
+    Ok(request)
+}
+
 // --- Export ---
 
 /// One document's gathered export data.
@@ -1567,105 +1638,39 @@ struct DocumentExport {
     path: String,
     body: String,
     citations: Vec<Citation>,
-    yaml: String,
+    marks: Vec<MarkInput>,
 }
 
 async fn gather_documents(
-    repo: &dyn Repository,
+    state: &AppState,
     project: &Project,
-    references: &[ReferenceEntry],
 ) -> Result<Vec<DocumentExport>, AppError> {
-    let by_id: HashMap<String, CoreReferenceEntry> = references
-        .iter()
-        .filter_map(|r| core_reference_entry(r).map(|e| (e.id.to_string(), e)))
-        .collect();
     let mut docs = Vec::new();
-    for document in repo.list_documents(project.id).await? {
+    for mut document in state.repo.list_documents(project.id).await? {
+        let marks = match state.sync_state.document_state(document.id).await? {
+            None => Vec::new(),
+            Some(snapshot) => {
+                let decoded =
+                    review_marks_from_snapshot(&snapshot).map_err(AppError::Dependency)?;
+                document.body = decoded.text;
+                decoded.marks
+            }
+        };
         let citations = extract_citations(&document.body).map_err(|error| {
             AppError::BadRequest(format!(
                 "citation extraction failed for {}: {error}",
                 document.path
             ))
         })?;
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut cited: Vec<CoreReferenceEntry> = Vec::new();
-        let mut known_citations: Vec<nisaba_references::Citation> = Vec::new();
-        for citation in &citations {
-            let key = citation.reference_id.as_str().to_owned();
-            if by_id.contains_key(&key) {
-                known_citations.push(citation.clone());
-                if seen.insert(key.clone())
-                    && let Some(entry) = by_id.get(&key)
-                {
-                    cited.push(entry.clone());
-                }
-            }
-        }
-        let yaml = bibliography_yaml(&cited);
         docs.push(DocumentExport {
             id: document.id,
             path: document.path,
             body: document.body,
-            citations: known_citations,
-            yaml,
+            citations,
+            marks,
         });
     }
     Ok(docs)
-}
-
-/// Gather each document's review marks from its synced CRDT state, keyed by
-/// document path for the compile request.
-///
-/// Review marks are NOT stored in the document row the app owns — they live in
-/// the document's Loro CRDT, replicated by the sync service — so the export
-/// path asks sync for each document's whole state and decodes the review
-/// container with exactly the web compile path's semantics (see
-/// [`review_marks_from_snapshot`]). A document with no review items (or no CRDT
-/// state at all — nobody ever collaborated on it) is normal and yields an
-/// empty mark list.
-///
-/// Failure policy — correctness over availability: if sync is unreachable, or
-/// answers unexpectedly, or a snapshot cannot be decoded, the export FAILS with
-/// a dependency error (502) instead of silently exporting a marks-less
-/// archive. A redline export that quietly dropped every pending suggestion
-/// would misrepresent the project's review state, which is precisely what the
-/// export is meant to capture.
-///
-/// The same policy governs the **at-rest check**: mark offsets are resolved
-/// against the snapshot's CRDT text, so they may only be projected over a body
-/// identical to it. The web client persists the body with a debounced PATCH,
-/// so while a document is being edited (or a save has failed) the stored body
-/// lags the CRDT — at that moment the export refuses (502, "retry once
-/// editing has settled") rather than project the marks over text they were
-/// never resolved against. Exports are taken at rest, and enforced to be.
-async fn project_review_marks(
-    state: &AppState,
-    docs: &[DocumentExport],
-) -> Result<BTreeMap<String, Vec<MarkInput>>, AppError> {
-    let mut marks = BTreeMap::new();
-    for doc in docs {
-        let decoded = match state.sync_state.document_state(doc.id).await? {
-            // No synced state at all: an empty list, not an error.
-            None => None,
-            Some(snapshot) => {
-                let decoded = review_marks_from_snapshot(&snapshot).map_err(|error| {
-                    AppError::Dependency(format!(
-                        "review state for {} could not be decoded: {error}",
-                        doc.path
-                    ))
-                })?;
-                if decoded.text != doc.body {
-                    return Err(AppError::Dependency(format!(
-                        "document {} has collaborative changes that are not saved yet; retry the export once editing has settled",
-                        doc.path
-                    )));
-                }
-                Some(decoded)
-            }
-        };
-        marks.insert(doc.path.clone(), decoded.map_or_else(Vec::new, |d| d.marks));
-    }
-    Ok(marks)
 }
 
 async fn document_bibliographies(
@@ -1761,7 +1766,7 @@ fn decode_compile_pdf(compile: &CompileResponse) -> Result<Vec<u8>, AppError> {
     let b64 = compile
         .pdf_base64
         .as_ref()
-        .ok_or_else(|| AppError::Conflict("compile produced no PDF".into()))?;
+        .ok_or_else(|| AppError::CompileFailed(compile.diagnostics.clone()))?;
     base64::engine::general_purpose::STANDARD
         .decode(b64)
         .map_err(|error| AppError::Conflict(format!("compile PDF was not base64: {error}")))
@@ -1807,11 +1812,6 @@ async fn export_project(
     let principal = p.0;
     permitted(&principal, Permission::Document)?;
     let project = project_for(&s, &pid).await?;
-    // The export archive is a full project snapshot: the generated master
-    // includes every document, so `entry` only selects which document the
-    // request was made from. Silently ignoring a bogus entry (previously any
-    // value returned 200) made the field a lie — reject unknown entries so
-    // clients get a 400 instead of a wrong-but-successful export.
     let document_paths: Vec<String> = s
         .repo
         .list_documents(project.id)
@@ -1826,72 +1826,38 @@ async fn export_project(
         )));
     }
     let references = s.repo.list_references(project.id).await?;
-    let docs = gather_documents(s.repo.as_ref(), &project, &references).await?;
-    let (bibliographies, missing) =
-        document_bibliographies(s.repo.as_ref(), s.blobs.as_ref(), &references, &docs).await?;
-    if !missing.is_empty() {
-        return Err(AppError::Conflict(format!(
-            "cited references are missing fulltext PDFs: {}",
-            missing.join(", ")
-        )));
-    }
-    // Review marks travel with the CRDT, not the document row: fetch each
-    // document's synced review state and project it below (see
-    // `project_review_marks` for the failure policy — sync being down fails
-    // the export rather than dropping marks).
-    let marks = project_review_marks(&s, &docs).await?;
-    let mut sources = BTreeMap::new();
-    let mut doc_yaml = BTreeMap::new();
-    for doc in &docs {
-        // Apply view-based projection so that exported content respects the
-        // requested view (baseline/proposed/redline/public), matching the
-        // behaviour of the interactive compile endpoint. The marks come from
-        // each document's synced CRDT state; a document with none projects
-        // its body unchanged.
-        let projected = projected_source(
-            &doc.body,
-            marks.get(&doc.path).map_or(&[], Vec::as_slice),
-            &r.view,
-        )?;
-        // Convert markdown-style headings to Typst syntax so document bodies
-        // compile correctly. Markdown `#`/`##`/`###` headings are misread by
-        // Typst as code-mode expressions, causing compile errors.
-        let projected = markdown_headings_to_typst(&projected);
-        sources.insert(doc.path.clone(), projected);
-        doc_yaml.insert(doc.path.clone(), doc.yaml.clone());
-    }
-    // The generated master lives at the project root and includes each
-    // document by its full project-relative path, so documents in nested
-    // directories resolve correctly (a bare basename like "ch2.typ" would only
-    // work for docs at the root). The user's own main.typ, if any, is skipped
-    // from the includes to avoid self-inclusion (its body is replaced by the
-    // generated master, which is the existing export contract).
-    let master_path = "main.typ".to_owned();
-    let master_source = docs
-        .iter()
-        .filter(|doc| doc.path != master_path)
-        .map(|doc| format!("#include \"{}\"", doc.path))
-        .collect::<Vec<_>>()
-        .join("\n");
-    sources.insert(master_path.clone(), master_source);
-    let mut compile_request = CompileRequest {
-        project_id: project.id,
-        entry: master_path,
-        sources,
-        marks,
-        view: r.view,
+    let docs = gather_documents(&s, &project).await?;
+    let bibliographies = if r.include_fulltexts {
+        let (bibliographies, missing) =
+            document_bibliographies(s.repo.as_ref(), s.blobs.as_ref(), &references, &docs).await?;
+        if !missing.is_empty() {
+            return Err(AppError::Conflict(format!(
+                "cited references are missing fulltext PDFs: {}",
+                missing.join(", ")
+            )));
+        }
+        bibliographies
+    } else {
+        Vec::new()
     };
-    inject_per_document_bibliography(&mut compile_request, &doc_yaml);
+    let marks = docs
+        .iter()
+        .map(|doc| (doc.path.clone(), doc.marks.clone()))
+        .collect();
+    let compile_request = prepare_project_sources(
+        project.id,
+        r.entry,
+        r.view,
+        &docs,
+        marks,
+        references_bibliography_yaml(&references),
+    )?;
+    let archive_documents = compile_request.sources.clone();
     let compile = s.compile.compile(compile_request).await?;
     let pdf = decode_compile_pdf(&compile)?;
-    let archive_documents = docs
-        .iter()
-        .map(|d| (d.path.clone(), d.body.clone()))
-        .collect();
     let date = Utc::now().format("%Y-%m-%d").to_string();
-    // The download is the portable ARCHIVE, not the compiled PDF; naming it
-    // after the PDF filename misled every client (the archive contains all
-    // documents + per-document RIS + the PDF). Use a stable, descriptive name.
+    // Package projected sources (including generated bibliography) and the PDF.
+    // Reference evidence is included only when include_fulltexts was requested.
     let zip_filename = format!("{}-export-{}.zip", project.name, date);
     let archive_input = ProjectArchiveInput {
         date,
@@ -1900,7 +1866,7 @@ async fn export_project(
         documents: archive_documents,
         bibliographies,
     };
-    let export = build_project_archive(&archive_input, &pdf_compliance())
+    let export = build_project_archive(&archive_input)
         .map_err(|error| AppError::Conflict(format!("export blocked: {error}")))?;
     let zip =
         write_zip(&export).map_err(|error| AppError::Conflict(format!("zip failed: {error}")))?;
@@ -1924,17 +1890,6 @@ async fn export_project(
         zip_base64: Some(base64::engine::general_purpose::STANDARD.encode(zip)),
         zip_filename: Some(zip_filename),
     }))
-}
-
-fn pdf_compliance() -> PdfCompliance {
-    PdfCompliance {
-        no_watermark: true,
-        not_protected: true,
-        commentable: true,
-        text_extractable: true,
-        indexes_rendered: true,
-        links_live: true,
-    }
 }
 
 // --- Share link handlers ---

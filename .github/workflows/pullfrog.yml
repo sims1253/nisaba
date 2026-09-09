@@ -15,10 +15,9 @@ permissions:
   contents: read
 
 concurrency:
-  # Every run is an explicit human dispatch: serialize per ref. No
-  # cancel-in-progress — the queued agent run keeps its work; a cancelled
-  # one loses everything mid-task.
+  # Keep dispatched reviews in order without replacing pending runs.
   group: pullfrog-${{ github.ref }}
+  queue: max
 
 jobs:
   pullfrog:
