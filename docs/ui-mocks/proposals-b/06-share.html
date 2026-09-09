@@ -47,7 +47,7 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid
 .person .role { font: 600 8.5px/1 var(--mono); letter-spacing: .1em; color: var(--bone-faint) }
 .tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px }
 .tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
-.tbtn.open { color: var(--lapis-bright); background: #2c3140 }
+.tbtn.open { color: var(--lapis-bright); background: var(--bitumen-3) }
 .appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px }
 .avatar { width: 23px; height: 23px; border-radius: 2px; display: grid; place-items: center; font: 700 9px/1 var(--sans); border: 1.5px solid var(--bitumen);
           color: hsl(var(--hue) 70% 88%); background: hsl(var(--hue) 45% 34%); box-shadow: inset 0 0 0 1px hsl(var(--hue) 60% 60% / .5) }
@@ -107,8 +107,8 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid
 .link-row .meta { min-width: 0 }
 .link-row .meta .scope { font: 9.5px var(--mono); color: var(--bone-faint); display: block; margin-bottom: 3px }
 .link-row code {
-  font: 10px var(--mono); color: var(--lapis-bright); background: #232747;
-  border: 1px solid #3b4270; border-radius: 2px; padding: 3px 6px;
+  font: 10px var(--mono); color: var(--lapis-bright); background: var(--bitumen-2);
+  border: 1px solid var(--irule-s); border-radius: 2px; padding: 3px 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
 }
 .link-row .btn { font-size: 10.5px; padding: 3px 8px; margin-left: auto; flex: 0 0 auto }
@@ -192,7 +192,7 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid
         </select>
         <button class="btn btn-primary">Invite</button>
       </div>
-      <p class="role-hint"><b>Reviewer</b> — comments and suggests changes; cannot edit the text. <b>Author</b> — edits and suggests. <b>Read-only</b> — reads and comments on the public copy.</p>
+      <p class="role-hint"><b>Reviewer</b> — comments and suggests changes; cannot edit the text. <b>Author</b> — edits and suggests. <b>Read-only</b> — reads and updates the preview; cannot comment or edit.</p>
 
       <h3>People with access</h3>
       <div class="member">

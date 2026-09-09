@@ -18,9 +18,9 @@
   --prule: #e3e0d0; --prule-s: #c6c3ae;
   --bone: #e9e7da; --bone-muted: #aab0a0; --bone-faint: #a4aa97;
   --lapis: #4a63d8; --lapis-bright: #98a7ff; --lapis-deep: #2b3fae;
-  --insert: #2e7d4f; --insert-soft: #e2efe6; --insert-lume: #62c28d;
+  --insert: #2e7d4f; --insert-soft: #e4efe8; --insert-lume: #62c28d;
   --comment-lume: #d3a83f;
-  --delete: #a63a2e; --delete-soft: #f7e6e1; --delete-lume: #e2705f;
+  --delete: #a63a2e; --delete-soft: #f8e7e3; --delete-lume: #e2705f;
   --display: "Source Serif 4", Charter, Cambria, Georgia, "Times New Roman", serif;
   --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -47,7 +47,7 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid
 .crumbs .cur { color: var(--bone) }
 .tbtn { font-size: 12px; color: var(--bone-muted); padding: 5px 8px }
 .tbtn:hover { color: var(--bone); background: var(--bitumen-3) }
-.tbtn.open { color: var(--lapis-bright); background: #2c3140 }
+.tbtn.open { color: var(--lapis-bright); background: var(--bitumen-3) }
 .appbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px }
 .avatar { width: 23px; height: 23px; border-radius: 2px; display: grid; place-items: center; font: 700 9px/1 var(--sans); border: 1.5px solid var(--bitumen);
           color: hsl(var(--hue) 70% 88%); background: hsl(var(--hue) 45% 34%); box-shadow: inset 0 0 0 1px hsl(var(--hue) 60% 60% / .5) }
@@ -82,11 +82,11 @@ kbd { font: 500 9.5px/1 var(--mono); color: var(--bone-muted); border: 1px solid
 .timeline { list-style: none; border: 1px solid var(--irule); border-radius: 2px; overflow: hidden; background: var(--bitumen-2) }
 .tentry { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--irule); font-size: 11.5px; color: var(--bone-muted) }
 .tentry:last-child { border-bottom: 0 }
-.tentry:hover { background: #2c3140 }
+.tentry:hover { background: var(--bitumen-3) }
 .tentry .rev { font: 600 11px var(--mono); color: var(--bone) }
 .tentry .rev .cid { color: var(--bone-faint); font-weight: 400; margin-left: 7px }
 .tentry .what { font-size: 10px; color: var(--bone-faint) }
-.tentry.sel { background: #2c3140; box-shadow: inset 3px 0 0 var(--lapis) }
+.tentry.sel { background: var(--bitumen-3); box-shadow: inset 3px 0 0 var(--lapis) }
 .tentry.sel .rev { color: var(--lapis-bright) }
 .tentry .pins { display: flex; gap: 5px; margin-top: 3px }
 .pin { font: 600 8.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 2px 5px; border-radius: 2px; border: 1px solid var(--irule-s); color: var(--bone-faint) }

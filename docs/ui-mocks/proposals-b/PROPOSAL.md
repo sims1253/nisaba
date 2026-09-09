@@ -8,7 +8,7 @@
 > argues with — respectfully, and only on material. The workflow, the anatomy,
 > the vocabulary, and the keyboard model are kept exactly as shipped; this is a
 > change of *voice*, not of *behaviour*. A conservative refinement of the current
-> paper-and-hairline direction exists in parallel (proposal A); this document is
+> paper-and-hairline direction appears in [proposal A](../proposals-a/PROPOSAL.md); this document is
 > the bold one, and it names its own costs honestly (§5).
 > Mockups: open [`index.html`](index.html) in a browser. Every file is
 > self-contained (inline CSS and system font stacks, with no network requests).
@@ -140,7 +140,7 @@ The summary table first; details (what / why / where in code / migration) follow
 | Build drawer | Ink list; selected tab is a light slip; jump-to-line; lume severities | `04-problems.html` |
 | Status bar | Colophon treatment; wedge live dot; lapis Update-preview block | all |
 | Palette | Paper slip over dimmed desk; lapis selection bar; footer hints | `05-palette.html` |
-| Share dock | Ink rows; neutral role tags; links on lapis-dark field | `06-share.html` |
+| Share dock | Ink rows; neutral role tags; links on the raised ink surface | `06-share.html` |
 | Settings dock | Ink rows; lapis segmented active; capturing chord pulses | `07-settings.html` |
 | History dock | Timeline in ink; diff as paper inset; pin chips | `08-history.html` |
 | References dock | Serif titles per entry; state wedges; attachment tally | `09-references.html` |
@@ -301,7 +301,7 @@ The summary table first; details (what / why / where in code / migration) follow
 * **Share** (`06`): invite row on ink (inputs bitumen-2), role descriptions
   beneath in the hint voice, and member rows with tablet stamps. Owner uses
   the same neutral tag as other roles; amber remains reserved for comments and
-  warnings. Link codes sit on a lapis-dark field (`#232747`).
+  warnings. Link codes use `--bitumen-2` and the existing ink border token.
 * **Settings** (`07`): rows on ink; segmented typeface control's active segment
   solid lapis; sliders `accent-color: var(--lapis)`; a **capturing chord
   button pulses a lapis ring** (with `prefers-reduced-motion` fallback to a
@@ -367,12 +367,13 @@ Named plainly, including what this reopens:
    DM Sans, and DM Mono locally. Implementation should use those packaged fonts
    and recheck truncation, rather than add a remote font dependency.
 4. **Contrast floor needs engineering attention, not just design intent.**
-   The original `--bone-faint` was too dim. The mocks now use `#a4aa97`
-   for faint text on ink and `#6a6758` for muted text on paper. Lapis `#4a63d8` *as small text* on bitumen is marginal, which is why the
-   token table introduces `--lapis-bright` for small text and reserves solid
-   lapis for fills with white text. This must be checked per-usage in
-   implementation (WCAG AA on every chrome pairing), and `prefers-contrast`
-   will need its own ink variants.
+   The original `--bone-faint` was too dim. Its replacement, `#a4aa97`,
+   measures 6.17:1 on bitumen and 4.72:1 on the lightest ink hover surface.
+   `--paper-muted` (`#6a6758`) measures 5.44:1 on paper and 4.98:1 on paper-2.
+   Lapis `#4a63d8` on bitumen is 2.86:1 and fails even the large-text threshold;
+   use `--lapis-bright` for text there. Solid lapis with white text measures
+   5.16:1. These token checks do not replace a per-control contrast audit or
+   forced-colors and `prefers-contrast` testing before implementation.
 5. **The ToC screen spends its charm once a week.** The workspace is where
    users live; its boldness is quieter (title serif, glowing page, colophon).
    If the owner wants daily drama, this proposal declines to provide it — the
