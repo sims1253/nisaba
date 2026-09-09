@@ -15,7 +15,7 @@
    Our first shared document.
    ```
 
-4. Click **Update preview** to render the open file as a PDF.
+4. Choose **Build from** in the sidebar, then click **Update preview**. Opening another file keeps the same compilation entrypoint.
 5. Check the save status in the top bar before leaving.
 
 Keep a disconnected tab open and copy unsaved text somewhere safe. Unsaved edits
@@ -62,7 +62,7 @@ With the review queue focused, use `↑`/`↓` to move, `Enter` to show an item,
 
 ## Choose a preview version
 
-The preview switch also selects the version requested for export.
+The preview switch selects the view for the next build. **Edited since preview** means the document has changed since that PDF was built. **Download PDF** above the preview downloads the displayed PDF without building it again. If an update fails, the last successful PDF stays visible while you fix the problems.
 
 | Version | What you see |
 |---------|--------------|
@@ -100,15 +100,19 @@ In **References**, add the title, authors, year, DOI, and journal. Each DOI
 must be unique within the project. Use **Insert citation** to cite an entry
 at the cursor and **Attach PDF** to add its full text.
 
-Export requires a full-text PDF for every cited reference, including books.
-There is currently no exemption ([#58](https://github.com/sims1253/nisaba/issues/58)).
-References added here can also fail to resolve when your source already has a
-hand-written bibliography ([#57](https://github.com/sims1253/nisaba/issues/57)).
+Use **Download PDF** above the preview to download the PDF on screen. It remains
+that version even if someone has edited the document since the build.
 
-Open **Export**, choose a document, and click **Prepare download**. The archive
-contains a PDF built from the selected document, all project sources, and RIS
-bibliographies with attachments. Files appear in the PDF only when the selected
-document includes or imports them.
+Open **Export**, choose an entry document, and click **Prepare download** to build
+a new PDF and source archive from current collaborative project files. The archive
+includes the projected Typst sources and generated bibliography needed by that build.
+Cited references do not need full-text attachments for this ordinary export.
+Source paths and extensions stay intact under `documents/`. To compile the extracted
+project locally, run `typst compile --root . main.typ` from that directory, replacing
+`main.typ` with your chosen entrypoint.
+
+API clients can request `include_fulltexts: true` on an export to add the reference
+evidence bundle. This option requires a PDF for every cited reference.
 
 ## History and settings
 
@@ -125,8 +129,7 @@ local preference for a project; a more recent file in the current tab takes prec
 |---------|-----------|
 | Disconnected, save conflict, or sign-in failure | Keep the tab open and copy unsaved text before reloading or signing in again. Compare it with the saved version before reapplying edits. |
 | Permission denied or sync error 4003 | Ask the owner to check membership and your administrator to check sign-in access. Token expiry can also cause 4003 ([#61](https://github.com/sims1253/nisaba/issues/61)). |
-| Preview or export fails to compile | Read the Problems panel. Check the named file manually: clicking an error can use the wrong file ([#65](https://github.com/sims1253/nisaba/issues/65)). |
-| Export reports unsaved collaborative changes | Wait for saving to finish, then retry. If it persists, preserve your text and ask an administrator to investigate. |
+| Preview or export fails to compile | Read the Problems panel. Click a problem to open the named project file. Generated sources may need to be checked in the downloaded archive. |
 
 For a bug report, include the error message and the steps that led to it.
 The [issue tracker](https://github.com/sims1253/nisaba/issues) lists known problems.

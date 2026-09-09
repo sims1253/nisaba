@@ -46,6 +46,8 @@ import { createPalette, type PaletteItem } from "./palette"
 import { fuzzyScore } from "./fuzzy"
 import {
   clearPreview,
+  downloadPreview,
+  markPreviewStale,
   compileCurrent,
   compileForDiagnostics,
   initCompile,
@@ -1124,6 +1126,7 @@ function restoreLastOpen(): void {
 
 function openProject(project: Project, options: { readonly fromLastOpen?: boolean } = {}): void {
   state.project = project
+  resetBuildSummary()
   state.selected = undefined
   state.document = undefined
   // Clear the outgoing outline before the fetch; paths can repeat across projects.
@@ -1227,6 +1230,32 @@ function renderProjectFacts(): void {
     row.append(strong)
     host.append(row)
   }
+  const buildLabel = document.createElement("label")
+  buildLabel.className = "build-entry-field"
+  buildLabel.textContent = "Build from"
+  const selector = document.createElement("select")
+  selector.id = "project-entrypoint"
+  selector.setAttribute("aria-label", "Compilation entrypoint")
+  const chosen = state.project?.entry_document_id ?? state.outline.find((entry) => entry.path === "main.typ")?.id ?? [...state.outline].sort((a, b) => a.path.localeCompare(b.path))[0]?.id
+  for (const entry of state.outline) {
+    const option = new Option(entry.path, entry.id, false, entry.id === chosen)
+    selector.add(option)
+  }
+  selector.disabled = state.role !== "owner" && state.role !== "author"
+  selector.addEventListener("change", () => {
+    const project = state.project
+    if (!project) return
+    selector.disabled = true
+    run(api.setProjectEntrypoint(project.id, selector.value), (updated) => {
+      if (state.project?.id !== project.id) return
+      state.project = updated
+      markPreviewStale()
+      renderProjectFacts()
+      compileCurrent()
+    }, (error) => { renderProjectFacts(); status(error instanceof Error ? error.message : "Could not change the entrypoint") })
+  })
+  buildLabel.append(selector)
+  host.append(buildLabel)
   line("files", `${files}`)
   line("references", references === 0 ? "none yet" : `${withFulltext} of ${references} with a PDF`)
 }
@@ -1291,7 +1320,7 @@ let documentAccessRevoked = false
 // Authors can still save baseline text while the relay is unavailable.
 let reviewerSyncReady = false
 
-function openDocument(entry: NisabaDocument): void {
+function openDocument(entry: NisabaDocument, onReady?: () => void): void {
   const project = state.project
   if (!project) return
   if (entry.id !== state.selected?.id && failedSave?.projectId === project.id && failedSave.context.documentId === state.selected?.id) {
@@ -1357,10 +1386,11 @@ function openDocument(entry: NisabaDocument): void {
       renderCrumbs()
       renderReviewBanner()
       renderReviewDock()
-      resetBuildSummary()
+      renderBuildLabel()
       // Refresh an open history dock for the new document.
       if (dockTool === "history") openHistory()
       connectDocument(document, replica)
+      onReady?.()
       // An unload PATCH may commit after this GET. Recheck once, adopting a newer
       // revision only if no local or remote edits have changed the loaded baseline.
       setTimeout(() => {
@@ -2017,6 +2047,7 @@ const editor = new EditorView({
           publishPresence()
         }
         if (update.docChanged) {
+          if (!isLoadingDocument) markPreviewStale()
           refreshDocumentStructure()
           renderCrumbs()
         }
@@ -3058,10 +3089,11 @@ function openHistory(): void {
 function openExport(): void {
   const project = state.project
   if (!project) { showPanel("export", `<p class="empty-note">Open a project first.</p>`); return }
-  const entries = state.outline.map((document) => `<option value="${escapeHtml(document.path)}">${escapeHtml(document.title)} — ${escapeHtml(document.path)}</option>`).join("")
+  const buildEntry = state.outline.find((document) => document.id === project.entry_document_id)?.path ?? "main.typ"
+  const entries = state.outline.map((document) => `<option value="${escapeHtml(document.path)}" ${document.path === buildEntry ? "selected" : ""}>${escapeHtml(document.title)} — ${escapeHtml(document.path)}</option>`).join("")
   showPanel("export", `
     <label class="field">Which document<select id="export-entry">${entries}</select></label>
-    <p class="dock-note">Exports the <b>${escapeHtml(VIEW_LABELS[state.view])}</b> version — the one the preview is showing — as a PDF, together with the reference files it cites.</p>
+    <p class="dock-note">Builds the <b>${escapeHtml(VIEW_LABELS[state.view])}</b> version from current project files. To download the PDF already on screen, use Download PDF above the preview.</p>
     <button id="run-export" class="btn btn-primary" type="button" ${entries ? "" : "disabled"}>Prepare download</button>
     <div id="export-result" class="dock-note"></div>`)
   el("#run-export")?.addEventListener("click", () => {
@@ -3168,6 +3200,9 @@ function toggleSuggesting(): void {
 // Reapply project-role gates after membership loads or the review state resets.
 // Reviewers must suggest changes; read-only viewers cannot export.
 function applyRoleGates(): void {
+  const entrypoint = el<HTMLSelectElement>("#project-entrypoint")
+  if (entrypoint) entrypoint.disabled = state.role !== "owner" && state.role !== "author"
+
   // Outside a project the membership role is unknown; gate the project list
   // (＋, row deletes) on the IdP roles claim from the token instead — the same
   // source the server authorizes. Inside a project, the membership role wins.
@@ -4037,7 +4072,7 @@ function setDrawerOpen(open: boolean, tab?: DrawerTab): void {
 // Render the problems list, counts, and editor underlines.
 function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
   state.diagnostics = diagnostics
-  editor.dispatch({ effects: setDiagnostics.of(diagnostics) })
+  editor.dispatch({ effects: setDiagnostics.of(diagnostics.filter((item) => !item.path || item.path.replace(/^\/+/, "") === state.selected?.path)) })
   const host = el<HTMLElement>("#diagnostics-list")
   const errors = diagnostics.filter((item) => item.severity !== "warning").length
   const warnings = diagnostics.length - errors
@@ -4057,7 +4092,7 @@ function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
     return
   }
   const entry = state.selected?.path ?? ""
-  host.replaceChildren(...diagnostics.map((item, index) => {
+  host.replaceChildren(...[...diagnostics].sort((a, b) => Number(a.severity === "warning") - Number(b.severity === "warning")).map((item, index) => {
     const severity = item.severity === "warning" ? "warning" : "error"
     const row = document.createElement("button")
     row.type = "button"
@@ -4079,13 +4114,21 @@ function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
     }
     row.append(badge, body)
     row.addEventListener("click", () => {
-      const length = editor.state.doc.length
-      const from = Math.min(item.start ?? 0, length)
-      const to = Math.min(item.end ?? from, length)
-      // A zero-width selection still scrolls the spot into view; a real range also
-      // highlights the underlined span.
-      editor.dispatch({ selection: { anchor: from, head: Math.max(to, from) }, scrollIntoView: true })
-      editor.focus()
+      const target = (item.path ?? entry).replace(/^\/+/, "")
+      const select = (): void => {
+        if (state.selected?.path !== target) return
+        const length = editor.state.doc.length
+        const from = Math.min(Math.max(item.start ?? 0, 0), length)
+        const to = Math.min(Math.max(item.end ?? from, from), length)
+        editor.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true })
+        editor.focus()
+      }
+      if (target === state.selected?.path) select()
+      else {
+        const document = state.outline.find((document) => document.path === target)
+        if (document) openDocument(document, select)
+        else status(`The problem is in ${target || "a generated source"}`)
+      }
     })
     return row
   }))
@@ -4094,6 +4137,7 @@ function renderDiagnostics(diagnostics: readonly CompileDiagnostic[]): void {
 /** `main.typ · line 12` — the writer's coordinates, not a character offset. */
 function locationLabel(item: CompileDiagnostic, entry: string): string {
   const file = item.path ?? entry
+  if (file.replace(/^\/+/, "") !== entry) return file
   if (item.start === null || item.start === undefined) return file
   const line = editor.state.doc.lineAt(Math.min(item.start, editor.state.doc.length)).number
   return file === "" ? `line ${line}` : `${file} · line ${line}`
@@ -4245,6 +4289,7 @@ el("#review-button")?.addEventListener("click", toggleReviewSidebar)
 el("#dock-close")?.addEventListener("click", closeDock)
 el("#go-projects")?.addEventListener("click", () => { if (state.project) leaveProject() })
 el("#compile-button")?.addEventListener("click", compileCurrent)
+el("#download-preview")?.addEventListener("click", downloadPreview)
 el("#suggesting-button")?.addEventListener("click", toggleSuggesting)
 el("#open-palette")?.addEventListener("click", () => palette.open())
 

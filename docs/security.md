@@ -111,8 +111,8 @@ token) before leaving a shared computer.
 - NUL bytes and control characters are rejected (400) in project names,
   document paths/titles, member subjects, and reference metadata; document
   bodies reject NUL only (tabs/newlines are legitimate prose).
-- Document paths must be safe project-relative paths (no `/`-prefix, no `\`,
-  no `.`/`..` segments, no control characters, no surrounding whitespace).
+- Document paths must be safe project-relative paths (no `/`-prefix, no `\` or `:`,
+  no empty or `.`/`..` segments, no control characters, no surrounding whitespace).
 - Reference DOIs are unique per project (409 on duplicates); metadata fields
   are length-capped so a single bad record cannot bloat every compile's
   injected `refs.yml`.

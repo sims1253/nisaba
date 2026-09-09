@@ -28,7 +28,7 @@ test.describe("Compile and PDF preview", () => {
     expect(width).toBeGreaterThan(0)
   })
 
-  test("preview follows the open file when main.typ also exists", async ({ page }) => {
+  test("preview keeps the project entrypoint while editing a chapter", async ({ page }) => {
     await signIn(page, { username: "demo", password: "demo", role: "author" })
     await createProject(page, "Preview Entry Test")
     await createDocument(page, "chapter.typ", "chapter.typ")
@@ -39,10 +39,19 @@ test.describe("Compile and PDF preview", () => {
     await expect(fileTree).toBeVisible()
     await expect(fileTree.getByText("MAIN", { exact: true })).toHaveCount(0)
 
-    const request = page.waitForRequest((request) =>
-      request.method() === "POST" && new URL(request.url()).pathname === "/api/compile")
+    const preview = page.waitForResponse((response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/preview"))
     await page.locator("#compile-button").click()
-    expect((await request).postDataJSON().entry).toBe("chapter.typ")
+    const result = await (await preview).json()
+    expect(result.entry).toBe("main.typ")
+    await expect(page.locator("#document-path")).toHaveText("chapter.typ")
+
+    const chapterId = await page.locator("[data-document]").filter({ hasText: "chapter.typ" }).getAttribute("data-document")
+    expect(chapterId).toBeTruthy()
+    const changedPreview = page.waitForResponse((response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/preview"))
+    await page.locator("#project-entrypoint").selectOption(chapterId!)
+    expect((await (await changedPreview).json()).entry).toBe("chapter.typ")
   })
 
   test("rapid preview updates do not invalidate an in-flight PDF", async ({ page }) => {

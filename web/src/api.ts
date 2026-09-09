@@ -34,6 +34,7 @@ export class ApiError extends Data.TaggedError("ApiError")<{
 // ---------------------------------------------------------------------------
 
 const Project = Schema.Struct({
+  entry_document_id: Schema.optional(Schema.NullOr(Schema.String)),
   id: Schema.String,
   name: Schema.String,
   created_at: Schema.String,
@@ -104,10 +105,6 @@ const Fulltext = Schema.Struct({
 })
 export type Fulltext = typeof Fulltext.Type
 
-// Exported as a value (not just the type): the in-browser compile path
-// (wasm-compile/) decodes its responses through the same schema, so a drift
-// between the wasm boundary's output and this contract surfaces as a typed
-// error on whichever path produced it, not as `[object Object]` downstream.
 export const CompileResponse = Schema.Struct({
   pdf_base64: Schema.NullOr(Schema.String),
   span_map: Schema.Array(Schema.Unknown),
@@ -382,30 +379,22 @@ export const exportProject = (
 ): Effect.Effect<ExportResponse, ApiError> =>
   request(path("projects", projectId, "exports"), decoder(ExportResponse), json({ entry, view }))
 
-/**
- * Compiles sources to a PDF.
- *
- * Marks travel with the request: the app applies the projection for `view` server-side
- * and forwards only the projected text to the compile service, which never sees marks.
- */
-export const compile = (input: {
-  readonly projectId: string
-  readonly entry: string
-  readonly sources: Readonly<Record<string, string>>
-  readonly marks?: Readonly<Record<string, readonly MarkInput[]>>
-  readonly view?: CompileView
-}): Effect.Effect<CompileResponse, ApiError> =>
-  request(
-    "/api/compile",
-    decoder(CompileResponse),
-    json({
-      project_id: input.projectId,
-      entry: input.entry,
-      sources: input.sources,
-      marks: input.marks ?? {},
-      view: input.view ?? "proposed"
-    })
-  )
+const ProjectPreview = Schema.Struct({
+  entry: Schema.String,
+  view: Schema.Literals(["baseline", "proposed", "redline", "public"]),
+  compile: CompileResponse
+})
+export type ProjectPreview = typeof ProjectPreview.Type
+
+export const previewProject = (
+  projectId: string,
+  view: CompileView,
+  draft: { readonly document_id: string; readonly body: string; readonly marks: readonly MarkInput[] }
+): Effect.Effect<ProjectPreview, ApiError> =>
+  request(path("projects", projectId, "preview"), decoder(ProjectPreview), json({ view, draft }))
+
+export const setProjectEntrypoint = (projectId: string, documentId: string): Effect.Effect<Project, ApiError> =>
+  request(path("projects", projectId), decoder(Project), patch({ entry_document_id: documentId }))
 
 export interface MarkInput {
   readonly id?: number

@@ -273,6 +273,7 @@ pub(crate) async fn project_acl(
     // Export is a read-only operation that generates a project archive from
     // existing data — no mutation. Reviewers need it to export review copies.
     // The handler additionally enforces Permission::Document.
+    let is_preview = path.ends_with("/preview") && request.method() == http::Method::POST;
     let is_export = path.ends_with("/exports") && request.method() == http::Method::POST;
     // Self-service leave: a member removing their own membership is allowed
     // regardless of role. The path is /projects/{id}/members/{subject}.
@@ -281,6 +282,7 @@ pub(crate) async fn project_acl(
         && path.rsplit('/').next() == Some(&principal.subject);
     let can_write = match request.method() {
         &http::Method::GET | &http::Method::HEAD => true,
+        _ if is_preview => true,
         _ if is_export => matches!(
             membership.role,
             MembershipRole::Owner | MembershipRole::Author | MembershipRole::Reviewer

@@ -16,6 +16,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
+    #[serde(default)]
+    pub entry_document_id: Option<Uuid>,
     pub id: Uuid,
     pub name: String,
     pub created_at: DateTime<Utc>,
@@ -135,6 +137,7 @@ pub struct ProjectCreate {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectPatch {
+    pub entry_document_id: Option<Uuid>,
     pub name: Option<String>,
 }
 
@@ -210,6 +213,28 @@ pub struct CompileRequest {
     pub view: CompileView,
 }
 
+/// Captures the project, with an optional open-document draft for preview.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewRequest {
+    pub view: CompileView,
+    pub draft: Option<PreviewDraft>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewDraft {
+    pub document_id: Uuid,
+    pub body: String,
+    #[serde(default)]
+    pub marks: Vec<MarkInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectPreview {
+    pub entry: String,
+    pub view: CompileView,
+    pub compile: CompileResponse,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkInput {
     #[serde(default)]
@@ -252,6 +277,8 @@ pub struct ExportFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportRequest {
+    #[serde(default)]
+    pub include_fulltexts: bool,
     pub entry: String,
     pub view: CompileView,
 }

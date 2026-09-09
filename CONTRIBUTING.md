@@ -31,11 +31,6 @@ See [testing](docs/testing.md) for suite selection. `just ci-local` also runs
 dependency-policy and advisory checks. The external PDF test suite has
 additional system prerequisites documented in [`tools/README.md`](tools/README.md).
 
-Run the web checks without generated WASM artifacts. To work on browser
-compilation, use `just wasm-web`; it requires `wasm-bindgen-cli 0.2.127` and
-the `wasm32-unknown-unknown` target. Output goes to the ignored
-`web/src/wasm-generated/` directory. The app uses server compilation when
-these artifacts are absent.
 
 ## Change guidelines
 

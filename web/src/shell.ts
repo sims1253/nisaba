@@ -84,6 +84,7 @@ export const SHELL_HTML = `
   <section class="doc-pane" aria-label="Document">
     <div class="pane-bar doc-bar doc-chrome">
       <div class="doc-id">
+        <span class="editing-label">Editing</span>
         <strong id="document-name">No document open</strong>
         <code id="document-path"></code>
       </div>
@@ -121,6 +122,7 @@ export const SHELL_HTML = `
     <div class="pane-bar preview-chrome">
       <div class="view-switch" id="view-switch" role="group" aria-label="Which version to render"></div>
       <span class="build-label" id="build-label">No preview yet</span>
+      <button id="download-preview" class="btn" type="button" disabled>Download PDF</button>
       <span class="page-position num" id="page-position"></span>
       <div class="zoom-controls" id="pdf-zoom-controls" hidden>
         <button id="zoom-out" class="zoom-button" type="button" title="Zoom out (⌘−)" aria-label="Zoom out">−</button>

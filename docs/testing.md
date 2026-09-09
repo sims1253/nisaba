@@ -14,7 +14,7 @@ These suites cover application logic:
 | Suite | Command | Scope |
 |-------|---------|-------|
 | **Rust workspace** | `cargo test --workspace` | Sync convergence/reconnect/persistence, app CRUD/permissions/share-links, core projection golden + mark semantics + proptest |
-| **Web (vitest)** | `cd web && bun run test` | API client, auth/PKCE, CRDT sync protocol, review state machine, PDF effects, model parsing, decorations, protocol encode/decode, in-browser compile pipeline/toggle/worker host (mocked worker; runs without the wasm artifacts) |
+| **Web (vitest)** | `cd web && bun run test` | API client, auth/PKCE, CRDT sync protocol, review state machine, PDF effects, model parsing, decorations, protocol encode/decode, project preview lifecycle and PDF download identity |
 | **Tools (vitest)** | `cd tools && bunx vitest run` | DOCX introspection, schema validation, RIS round-trip, fixture stability |
 | **PostgreSQL API and adapter tests** | `just test-live` (local API tests; see [app test setup](../services/app/README.md)) | Real repository migrations, persistence, and authorization through HTTP |
 | **Rust doctests** | `cargo test --workspace --doc` | API contract examples in rustdoc |
