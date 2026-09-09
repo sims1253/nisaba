@@ -13,10 +13,11 @@
 > that is accepted lands as a diff, not a rewrite.
 
 Open [`index.html`](index.html) and click through the six proposed views. All
-mocks render the **same project state** as the original explorations: the
-`Field lab` project, `main.typ` at `§Results`, build `#41` from version `c128`,
-twelve pages, one warning, three open review items, collaborators
-twinkleburst (you), sparkletoes, clawson, moonmoss.
+mocks use the same project and collaborators as the original explorations:
+`Field lab`, `main.typ`, and twinkleburst (you), sparkletoes, clawson, and
+moonmoss. The writing and review workspaces focus on `§Abstract`, with three
+open review items and the last successful build `#41` from version `c128`.
+The review view also shows a later failed build.
 
 ---
 
