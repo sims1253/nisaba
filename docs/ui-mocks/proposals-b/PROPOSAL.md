@@ -1,10 +1,18 @@
 # Proposal B — “Ink Desk”: a typography-led art direction for Nisaba
 
-> **Status:** design reference based on the August 2026 interface. The ink
-> chrome is an alternative under consideration. Merging these mocks does not
-> adopt it; [the current design](../../ui-design.md) records the shipped direction.
+> **Status:** archived design exploration. The layout baseline is
+> [144a330](https://github.com/sims1253/nisaba/tree/144a33006566a775b1a51f3cd9a18de62ec86ec1),
+> from August 2026. References to the shipped interface below describe that
+> baseline, with later corrections to contrast, permissions, sign-in, exports,
+> and keyboard hints. The ink theme remains an alternative under consideration;
+> [the current design](../../ui-design.md) records the adopted direction.
 
-> Companion to [`docs/ui-design.md`](../../ui-design.md), which this proposal
+The current app uses a **Build from** selector in place of the old `MAIN` tag
+and `preview builds` fact seen in these archived layouts. It also has **Editing**,
+**Download PDF**, and an expanded typography preset list. Keep those controls
+when applying any ideas from this proposal; the mocks do not specify a rollback.
+
+> Companion to the [baseline design record](https://github.com/sims1253/nisaba/blob/144a33006566a775b1a51f3cd9a18de62ec86ec1/docs/ui-design.md), which this proposal
 > argues with — respectfully, and only on material. The workflow, the anatomy,
 > the vocabulary, and the keyboard model are kept exactly as shipped; this is a
 > change of *voice*, not of *behaviour*. A conservative refinement of the current
