@@ -1,16 +1,22 @@
 # Proposal A — UI/UX review and refinement: a writer-first evolution
 
-> **Status:** design reference, based on the August 2026 interface. These are
-> proposals, not a record of shipped behavior. See [the current design](../../ui-design.md)
-> for the adopted direction.
+> **Status:** archived design exploration. The layout baseline is
+> [144a330](https://github.com/sims1253/nisaba/tree/144a33006566a775b1a51f3cd9a18de62ec86ec1),
+> from August 2026. References below to the existing or shipped interface refer
+> to that baseline. Later review corrections cover data dependencies, mock
+> identity, and keyboard hints. These mocks are not acceptance criteria for the
+> current app; [the current design](../../ui-design.md) records its behavior.
 
-> **Brief:** refine the existing design language, not rebrand it. The shipped
-> system ( [`../../ui-design.md`](../../ui-design.md) → `web/src/styles.css`,
-> `web/src/shell.ts`, `web/src/main.ts`) is the baseline; this proposal reviews
-> every view, keeps what the decision record gets right, and proposes small,
-> load-bearing changes where writers still pay a cost. Every mockup in this
-> directory uses the real token set and the real markup structure, so any change
-> that is accepted lands as a diff, not a rewrite.
+Since this proposal was drawn, the app replaced the tree's `MAIN` tag and the
+`preview builds` fact with a **Build from** selector. It also added **Editing**
+and **Download PDF** controls and expanded the typography presets. The mocks
+retain the older layouts as design references; those old controls are not a
+request to restore them. Any implementation of this proposal should keep the
+current entrypoint selector and document controls.
+
+**Brief:** refine the baseline's writing and review workflows. The proposal
+uses its token set and page structure to explore small changes to navigation,
+presence, and the occasional tools.
 
 Open [`index.html`](index.html) and click through the six proposed views. All
 mocks use the same project and collaborators as the original explorations:
@@ -176,10 +182,12 @@ Lands: `styles.css` `.outline-row[data-level]`.
 
 **N3. Align the fact footer values.** The footer already renders one label/value
 line per fact. Right-align the values and use tabular numerals so the numbers
-scan in a column. Keep the existing facts and rows.
+scan in a column. In the current app, apply this to the files and references
+facts and keep the Build from selector. The preview-build fact in the mock
+belongs to the archived baseline.
 Lands: `styles.css` `.nav-foot`; `main.ts` `renderProjectFacts`.
 
-**N4. Kept:** the real tree (folders from paths, `MAIN` tag), the live outline
+**N4. Kept:** the real tree (folders from paths), the live outline
 with line numbers, the active-row treatment, equal independent scroll regions.
 
 ### D. Document pane
