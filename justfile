@@ -1,5 +1,4 @@
 # Developer commands. Run `just` to list recipes.
-export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "target")
 
 # Load .env (same file compose interpolates) so recipes like psql, s3, and
 # migrate see NISABA_DB_USER / NISABA_S3_ADMIN_* / the NISABA_DB_* parts
@@ -157,6 +156,10 @@ web-test:
 
 web-lint:
     bun install --frozen-lockfile && cd web && bun run lint
+
+# Requires the wasm32 target and wasm-bindgen-cli matching Cargo.lock.
+wasm-web:
+    bun scripts/build-wasm.mjs
 
 # ---------- Supply chain ---------------------------------------------------
 

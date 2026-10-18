@@ -1386,6 +1386,85 @@ async fn project_preview_keeps_entrypoint_when_editing_another_file() {
 }
 
 #[tokio::test]
+async fn browser_preview_inputs_match_server_inputs_without_compiling() {
+    let (app, project, _, notes, recorder) = export_project_with(|main_id| {
+        Arc::new(StubSyncState {
+            states: HashMap::from([(
+                main_id,
+                synced_snapshot_with_open_insert("Hello world changed", 0, 5),
+            )]),
+        })
+    })
+    .await;
+    let reference = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/references", project.id),
+        "alice",
+        "author",
+        Some(json!({"metadata":{"title":"Evidence","authors":["Alice"],"year":2026,"extra":{}}})),
+    )
+    .await;
+    assert_eq!(reference.status(), StatusCode::CREATED);
+    for view in ["baseline", "proposed", "redline", "public"] {
+        *recorder.0.lock().unwrap() = None;
+        let body = json!({"view":view,"draft":{"document_id":notes.id,"body":"Unsaved chapter"}});
+        let response = request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/preview/inputs", project.id),
+            "alice",
+            "author",
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let browser_inputs: CompileRequest = response_body(response).await;
+        assert!(recorder.0.lock().unwrap().is_none());
+        assert!(browser_inputs.marks.is_empty());
+        assert_eq!(browser_inputs.entry, "intro.typ");
+        assert_eq!(browser_inputs.sources["notes.typ"], "Unsaved chapter");
+        assert!(browser_inputs.sources.contains_key("refs.yml"));
+        let response = request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/preview", project.id),
+            "alice",
+            "author",
+            Some(body),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let server_inputs = recorder.0.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            serde_json::to_value(browser_inputs).unwrap(),
+            serde_json::to_value(server_inputs).unwrap(),
+            "{view} browser inputs must match server inputs"
+        );
+    }
+    let denied = request(
+        app.clone(),
+        "POST",
+        &format!("/projects/{}/preview/inputs", project.id),
+        "outsider",
+        "author",
+        Some(json!({"view":"proposed"})),
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let foreign_draft = request(
+        app,
+        "POST",
+        &format!("/projects/{}/preview/inputs", project.id),
+        "alice",
+        "author",
+        Some(json!({"view":"proposed","draft":{"document_id":Uuid::new_v4(),"body":"foreign"}})),
+    )
+    .await;
+    assert_eq!(foreign_draft.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn project_preview_and_export_use_identical_project_inputs() {
     let (app, project, _, _, recorder) = export_project_with(|main_id| {
         Arc::new(StubSyncState {
@@ -1459,16 +1538,18 @@ async fn readonly_member_can_preview_but_cannot_change_entrypoint() {
     )
     .await;
     assert!(response.status().is_success());
-    let response = request(
-        app.clone(),
-        "POST",
-        &format!("/projects/{}/preview", project.id),
-        "reader",
-        "read-only",
-        Some(json!({"view":"proposed"})),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
+    for endpoint in ["preview", "preview/inputs"] {
+        let response = request(
+            app.clone(),
+            "POST",
+            &format!("/projects/{}/{endpoint}", project.id),
+            "reader",
+            "read-only",
+            Some(json!({"view":"proposed"})),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
     let response = request(
         app,
         "PATCH",

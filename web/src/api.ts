@@ -386,6 +386,22 @@ const ProjectPreview = Schema.Struct({
 })
 export type ProjectPreview = typeof ProjectPreview.Type
 
+/** Already projected, with bibliography and redline support included. */
+const PreviewInputs = Schema.Struct({
+  project_id: Schema.String,
+  entry: Schema.String,
+  sources: Schema.Record(Schema.String, Schema.String),
+  view: Schema.Literals(["baseline", "proposed", "redline", "public"])
+})
+export type PreviewInputs = typeof PreviewInputs.Type
+
+export const preparePreview = (
+  projectId: string,
+  view: CompileView,
+  draft: { readonly document_id: string; readonly body: string; readonly marks: readonly MarkInput[] }
+): Effect.Effect<PreviewInputs, ApiError> =>
+  request(path("projects", projectId, "preview", "inputs"), decoder(PreviewInputs), json({ view, draft }))
+
 export const previewProject = (
   projectId: string,
   view: CompileView,

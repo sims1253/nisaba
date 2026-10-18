@@ -1537,6 +1537,33 @@
           }
         }
       }
+    },
+    "/projects/{project_id}/preview/inputs": {
+      "post": {
+        "operationId": "preparePreview",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Projected project inputs for browser compilation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompileRequest"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

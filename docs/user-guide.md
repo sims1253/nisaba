@@ -64,6 +64,10 @@ With the review queue focused, use `↑`/`↓` to move, `Enter` to show an item,
 
 The preview switch selects the view for the next build. **Edited since preview** means the document has changed since that PDF was built. **Download PDF** above the preview downloads the displayed PDF without building it again. If an update fails, the last successful PDF stays visible while you fix the problems.
 
+The browser downloads its compiler on the first preview and uses it for later
+previews. If the browser compiler cannot run, Nisaba uses the server compiler.
+A connection to the Nisaba server is still required to gather the project files.
+
 | Version | What you see |
 |---------|--------------|
 | Final | All suggestions applied |

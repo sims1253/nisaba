@@ -34,6 +34,12 @@ additional system prerequisites documented in [`tools/README.md`](tools/README.m
 
 ## Change guidelines
 
+To build the browser compiler, install the `wasm32-unknown-unknown` Rust target
+and `wasm-bindgen-cli` matching the version in `Cargo.lock`, currently `0.2.127`.
+Run `just wasm-web`, then start or rebuild the web app. Generated files live in
+the ignored `web/src/wasm-generated/` directory. The script honors Cargo's configured
+target directory. Without generated files, previews use the server compiler.
+
 See the [UI design](docs/ui-design.md) for interface conventions and
 [dependency policy](docs/dependency-security.md) before changing dependencies.
 
