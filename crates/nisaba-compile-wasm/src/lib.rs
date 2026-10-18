@@ -1,7 +1,7 @@
 //! WebAssembly wrapper around [`nisaba_compile_core`] for browser compilation.
 //!
 //! Requests and responses use the compile service JSON shapes. This library
-//! remains available to WASM consumers; the workspace builds through the server.
+//! compiles the workspace's prepared project inputs in a browser Web Worker.
 //!
 //! [`CompileWorker`] keeps one project's incremental compiler state alive.
 //! [`CompileWorkers`] caches workers across projects with LRU/TTL eviction.

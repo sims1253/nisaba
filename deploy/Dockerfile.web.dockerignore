@@ -1,17 +1,17 @@
 # BuildKit sidecar ignore for deploy/Dockerfile.web (context = repo root).
-# The web build only needs web/ and deploy/web/; exclude everything Rust + infra.
+# Include the Rust workspace for the browser compiler, plus web/ and deploy/web/.
 
 .git
 .github
 docs
-crates
-services
 target
 **/target
 node_modules
 **/node_modules
 web/dist
+web/src/wasm-generated
 artifacts
+.qa-reports
 .env
 .env.*
 !.env.example

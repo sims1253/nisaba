@@ -18,7 +18,7 @@ The following table is validated by CI against the Cargo workspace members
 | `nisaba-core`      | Rust (lib)  | Position model, projection, marks, reference types | impl. (pure, no I/O) |
 | `nisaba-core-wasm` | Rust (lib, wasm-bindgen) | Projection and bibliography wrapper for the web client | impl. (pure; experimental WASM library) |
 | `nisaba-compile-core` | Rust (lib)  | Typst workers, compilation, span map, outline, and diagnostics | impl. (pure, no I/O, no async) |
-| `nisaba-compile-wasm` | Rust (lib, wasm-bindgen) | Compile wrapper for the web client | impl. (experimental WASM library) |
+| `nisaba-compile-wasm` | Rust (lib, wasm-bindgen) | Typst compiler in the browser's Web Worker | impl. |
 | `nisaba-auth`      | Rust (lib)  | Shared role vocabulary (`Role` spellings for tokens and the app/sync authz contract) | impl. |
 | `nisaba-references`| Rust (lib)  | RIS reference format round-trip                   | impl. |
 | `nisaba-export`    | Rust (lib)  | Export utilities                                  | impl. |
@@ -137,9 +137,20 @@ Each request captures document states independently. It does not yet create a
 durable project checkpoint or claim an atomic read across documents. The browser
 still uses REST autosave; replacing that second write path remains work to do.
 
-The workspace uses server compilation. WASM compiler libraries remain available
-for development; the old browser dispatcher and `nisaba.compilePath` preference
-have been removed.
+The workspace prefers browser compilation when the generated compiler is present.
+`POST /projects/{project_id}/preview/inputs` accepts the same request as preview
+and returns projected compiler inputs without invoking the compile service. Both
+routes use the same capture and source preparation functions, including bibliography
+and redline support. The browser runs `nisaba-compile-wasm` in a Web Worker and
+keeps up to four project workers warm. The build log names the engine used.
+
+Missing artifacts, worker startup failures, crashes, or a 120-second worker timeout
+select server compilation. A compiler error is reported directly. Export always
+uses the server compiler. The web Docker image builds and includes the compiler;
+local development uses server compilation until `just wasm-web` generates it.
+Compiler downloads are lazy. The module includes the Typst fonts and is tens of
+megabytes. The app service is still required to capture project inputs, so browser
+compilation does not provide offline project previews.
 
 ### 4.2 `sync` — WebSocket (+ an internal state read)
 
@@ -176,6 +187,7 @@ Routes (the machine-readable truth is `GET /openapi.json` on the app service):
   row cannot be removed), `GET /projects/{project_id}/membership` (own role)
 - `GET|POST /projects/{project_id}/documents`,
   `GET|PATCH|DELETE /projects/{project_id}/documents/{document_id}`
+- `POST /projects/{project_id}/preview`, `POST /projects/{project_id}/preview/inputs`
 - `GET /projects/{project_id}/documents/{document_id}/history`,
   `GET .../history/{revision_id}`
 - `GET|POST /projects/{project_id}/references`,

@@ -35,6 +35,14 @@ describe("app service contract", () => {
     expect(fetch).toHaveBeenCalledWith("/api/projects", expect.anything())
   })
 
+  it("fetches projected project inputs without requesting server compilation", async () => {
+    const inputs = { project_id: "p1", entry: "main.typ", view: "redline", sources: { "main.typ": "projected", "refs.yml": "bibliography" }, marks: {} }
+    vi.stubGlobal("fetch", vi.fn(async () => ok(inputs)))
+    const draft = { document_id: "d1", body: "Unsaved draft", marks: [] }
+    expect(await Effect.runPromise(api.preparePreview("p1", "redline", draft))).toMatchObject({ sources: inputs.sources, view: "redline" })
+    expect(fetch).toHaveBeenCalledWith("/api/projects/p1/preview/inputs", expect.objectContaining({ method: "POST", body: JSON.stringify({ view: "redline", draft }) }))
+  })
+
   it("lists documents directly under a project", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ok([document])))
     const documents = await Effect.runPromise(api.listDocuments("p1"))

@@ -4,7 +4,8 @@ import { test, expect } from "@playwright/test"
 import { signIn, createProject, createDocument, openFirstProject } from "./helpers"
 
 test.describe("Compile and PDF preview", () => {
-  test("compile renders a PDF preview", async ({ page }) => {
+  test("browser compilation renders a PDF preview", async ({ page }) => {
+    test.setTimeout(120_000)
     await signIn(page, { username: "demo", password: "demo", role: "author" })
     await createProject(page, "Compile Test")
     await openFirstProject(page)
@@ -19,8 +20,11 @@ test.describe("Compile and PDF preview", () => {
 
     // Wait for PDF canvas to appear (the pdf.js viewer renders pages as <canvas>)
     await expect(page.locator(".pdf-page canvas").first()).toBeVisible({
-      timeout: 30_000,
+      timeout: 90_000,
     })
+    // A server fallback can render a PDF too. Packaged builds must actually
+    // load and execute the browser compiler.
+    await expect(page.locator("#build-log")).toContainText("· browser ·")
 
     // Verify at least one canvas has non-zero dimensions (it rendered)
     const canvas = page.locator(".pdf-page canvas").first()
@@ -40,7 +44,7 @@ test.describe("Compile and PDF preview", () => {
     await expect(fileTree.getByText("MAIN", { exact: true })).toHaveCount(0)
 
     const preview = page.waitForResponse((response) =>
-      response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/preview"))
+      response.request().method() === "POST" && /\/preview(?:\/inputs)?$/.test(new URL(response.url()).pathname))
     await page.locator("#compile-button").click()
     const result = await (await preview).json()
     expect(result.entry).toBe("main.typ")
@@ -49,7 +53,7 @@ test.describe("Compile and PDF preview", () => {
     const chapterId = await page.locator("[data-document]").filter({ hasText: "chapter.typ" }).getAttribute("data-document")
     expect(chapterId).toBeTruthy()
     const changedPreview = page.waitForResponse((response) =>
-      response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/preview"))
+      response.request().method() === "POST" && /\/preview(?:\/inputs)?$/.test(new URL(response.url()).pathname))
     await page.locator("#project-entrypoint").selectOption(chapterId!)
     expect((await (await changedPreview).json()).entry).toBe("chapter.typ")
   })

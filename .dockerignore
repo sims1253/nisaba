@@ -13,6 +13,7 @@
 **/node_modules
 **/target
 **/dist
+web/src/wasm-generated
 **/coverage
 artifacts
 

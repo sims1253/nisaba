@@ -9,6 +9,7 @@ import { resolveCursor } from "./cursor"
 import { decodeBase64Pdf, downloadBase64 } from "./effects"
 import type { VirtualPdfViewer } from "./pdf-viewer"
 import type { ReviewItem, ReviewState } from "./review"
+import { browserCompiler, BrowserCompileUnavailable } from "./browser-compile"
 
 // ---------------------------------------------------------------------------
 // Compile diagnostics (mirrors services/compile Diagnostic: severity/message/path/start/end)
@@ -263,14 +264,29 @@ function collectOpenSuggestionMarks(): readonly MarkInput[] {
     }))
 }
 
+type PreviewResult = api.CompileResponse & { entry: string; view: CompileView; engine: "browser" | "server" }
+
 /** Capture all project files with the open editor's current draft. */
-function compileRequest(projectId: string, marks: readonly MarkInput[]): Effect.Effect<api.CompileResponse & { entry: string; view: CompileView }, api.ApiError> {
+function compileRequest(projectId: string, marks: readonly MarkInput[]): Effect.Effect<PreviewResult, api.ApiError> {
   const { editor, state } = requireHost()
-  return api.previewProject(projectId, state.view, {
+  const view = state.view
+  const draft = {
     document_id: state.selected!.id,
     body: editor.state.doc.toString(),
     marks
-  }).pipe(Effect.map((result) => ({ ...result.compile, entry: result.entry, view: result.view })))
+  }
+  const server = (): Effect.Effect<PreviewResult, api.ApiError> =>
+    api.previewProject(projectId, view, draft).pipe(Effect.map((result) => ({ ...result.compile, entry: result.entry, view: result.view, engine: "server" as const })))
+  if (!browserCompiler.available()) return server()
+  return api.preparePreview(projectId, view, draft).pipe(Effect.flatMap((input) =>
+    Effect.tryPromise({
+      try: async (): Promise<PreviewResult> => ({ ...await browserCompiler.compile(input), entry: input.entry, view: input.view, engine: "browser" }),
+      catch: (error) => error instanceof BrowserCompileUnavailable ? error : new api.ApiError({ message: error instanceof Error ? error.message : "Browser compilation failed" })
+    }).pipe(Effect.catchIf((error): error is BrowserCompileUnavailable => error instanceof BrowserCompileUnavailable, (error) => {
+      requireHost().logBuild("info", `${error.message}. Using server compilation.`)
+      return server()
+    }))
+  ))
 }
 
 /** Local and received edits make the displayed PDF older than the document. */
@@ -372,7 +388,7 @@ function buildProject(mode: BuildMode): void {
       if (mode === "manual") {
         if (errors > 0) setDrawerOpen(true, "problems")
         logBuild(errors > 0 ? "err" : warnings > 0 ? "warn" : "ok",
-          `${result.entry} · ${VIEW_LABELS[result.view]} · ${((Date.now() - startedAt) / 1000).toFixed(2)} s · build ${result.build_id}`)
+          `${result.entry} · ${VIEW_LABELS[result.view]} · ${result.engine} · ${((Date.now() - startedAt) / 1000).toFixed(2)} s · build ${result.build_id}`)
         status(errors > 0 ? `${errors} problem${errors === 1 ? "" : "s"} stopped the preview`
           : result.pdf_base64 ? "Preview updated" : "The build produced no pages")
       }

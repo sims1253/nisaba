@@ -8,8 +8,13 @@ import type { CompileHost, CompileWorkspace } from "./compile"
 import { compileCurrent, compileForDiagnostics, downloadPreview, initCompile, markPreviewStale, resetBuildSummary } from "./compile"
 import * as api from "./api"
 import { downloadBase64 } from "./effects"
+import { browserCompiler, BrowserCompileUnavailable } from "./browser-compile"
 
-vi.mock("./api", () => ({ previewProject: vi.fn() }))
+vi.mock("./api", async (original) => ({ ...await original<typeof api>(), previewProject: vi.fn(), preparePreview: vi.fn() }))
+vi.mock("./browser-compile", () => ({
+  browserCompiler: { available: vi.fn(), compile: vi.fn() },
+  BrowserCompileUnavailable: class extends Error {}
+}))
 vi.mock("./effects", () => ({ decodeBase64Pdf: () => new Uint8Array([1]), downloadBase64: vi.fn() }))
 
 describe("project preview", () => {
@@ -22,6 +27,7 @@ describe("project preview", () => {
   })
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(browserCompiler.available).mockReturnValue(false)
     jobs = []
     document.body.innerHTML = '<button id="compile-button"></button><button id="download-preview"></button><div id="build-label"></div><div id="build-health"></div><div id="pdf-viewer"></div>'
     state = {
@@ -50,6 +56,46 @@ describe("project preview", () => {
     await Promise.all(jobs)
     expect(api.previewProject).toHaveBeenCalledWith("p", "proposed", { document_id: "chapter", body: "Current chapter", marks: [] })
     expect(document.querySelector("#build-label")?.textContent).toContain("main.typ")
+  })
+
+  it("uses the browser compiler for the prepared whole project", async () => {
+    vi.mocked(browserCompiler.available).mockReturnValue(true)
+    const input: api.PreviewInputs = { project_id: "p", entry: "main.typ", view: "redline", sources: {
+      "main.typ": '#include "chapters/results.typ"', "chapters/results.typ": "projected draft", "review.typ": "review support"
+    } }
+    state.view = "redline"
+    vi.mocked(api.preparePreview).mockReturnValue(Effect.succeed(input))
+    vi.mocked(browserCompiler.compile).mockResolvedValue(result("browser-pdf").compile)
+    compileCurrent()
+    await Promise.all(jobs)
+    expect(api.preparePreview).toHaveBeenCalledWith("p", "redline", { document_id: "chapter", body: "Current chapter", marks: [] })
+    expect(browserCompiler.compile).toHaveBeenCalledWith(input)
+    expect(api.previewProject).not.toHaveBeenCalled()
+    downloadPreview()
+    expect(downloadBase64).toHaveBeenCalledWith("browser-pdf", "Paper.pdf", "application/pdf")
+    expect(document.querySelector("#build-label")?.textContent).toContain("All markup")
+  })
+
+  it("falls back with the same draft if the browser compiler cannot start", async () => {
+    vi.mocked(browserCompiler.available).mockReturnValue(true)
+    vi.mocked(api.preparePreview).mockReturnValue(Effect.succeed({ project_id: "p", entry: "main.typ", view: "proposed", sources: {} }))
+    vi.mocked(browserCompiler.compile).mockRejectedValue(new BrowserCompileUnavailable("worker failed"))
+    compileCurrent()
+    await Promise.all(jobs)
+    expect(api.previewProject).toHaveBeenCalledWith("p", "proposed", { document_id: "chapter", body: "Current chapter", marks: [] })
+    downloadPreview()
+    expect(downloadBase64).toHaveBeenCalledWith("first-pdf", "Paper.pdf", "application/pdf")
+  })
+
+  it("reports compiler errors without running another compiler", async () => {
+    vi.mocked(browserCompiler.available).mockReturnValue(true)
+    vi.mocked(api.preparePreview).mockReturnValue(Effect.succeed({ project_id: "p", entry: "main.typ", view: "proposed", sources: {} }))
+    vi.mocked(browserCompiler.compile).mockRejectedValue(new Error("invalid compiler input"))
+    compileCurrent()
+    await Promise.all(jobs)
+    expect(api.previewProject).not.toHaveBeenCalled()
+    downloadPreview()
+    expect(downloadBase64).not.toHaveBeenCalled()
   })
 
   it("downloads the displayed bytes after further edits, without compiling again", async () => {

@@ -427,6 +427,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/compile", post(api_compile))
         .route("/projects/{project_id}/preview", post(project_preview))
         .route(
+            "/projects/{project_id}/preview/inputs",
+            post(project_preview_inputs),
+        )
+        .route(
             "/projects/{project_id}/documents",
             post(create_document).get(list_documents),
         )
@@ -1557,10 +1561,39 @@ async fn project_preview(
     Path(project_id): Path<String>,
     Json(request): Json<PreviewRequest>,
 ) -> Result<Json<ProjectPreview>, AppError> {
-    let project = project_for(&state, &project_id).await?;
-    project_access(&state, &principal.0, project.id, Permission::Read).await?;
+    let inputs = capture_preview_inputs(&state, &principal.0, &project_id, request).await?;
+    let entry = inputs.entry.clone();
+    let view = inputs.view.clone();
+    let compile = state.compile.compile(inputs).await?;
+    Ok(Json(ProjectPreview {
+        entry,
+        view,
+        compile,
+    }))
+}
+
+/// Browser and server compilers consume the same projected project sources.
+async fn project_preview_inputs(
+    State(state): State<AppState>,
+    principal: Auth,
+    Path(project_id): Path<String>,
+    Json(request): Json<PreviewRequest>,
+) -> Result<Json<CompileRequest>, AppError> {
+    capture_preview_inputs(&state, &principal.0, &project_id, request)
+        .await
+        .map(Json)
+}
+
+async fn capture_preview_inputs(
+    state: &AppState,
+    principal: &Principal,
+    project_id: &str,
+    request: PreviewRequest,
+) -> Result<CompileRequest, AppError> {
+    let project = project_for(state, project_id).await?;
+    project_access(state, principal, project.id, Permission::Read).await?;
     let references = state.repo.list_references(project.id).await?;
-    let mut docs = gather_documents(&state, &project).await?;
+    let mut docs = gather_documents(state, &project).await?;
     let entry = docs
         .iter()
         .find(|doc| Some(doc.id) == project.entry_document_id)
@@ -1581,20 +1614,14 @@ async fn project_preview(
         .iter()
         .map(|doc| (doc.path.clone(), doc.marks.clone()))
         .collect();
-    let inputs = prepare_project_sources(
+    prepare_project_sources(
         project.id,
-        entry.clone(),
-        request.view.clone(),
+        entry,
+        request.view,
         &docs,
         marks,
         references_bibliography_yaml(&references),
-    )?;
-    let compile = state.compile.compile(inputs).await?;
-    Ok(Json(ProjectPreview {
-        entry,
-        view: request.view,
-        compile,
-    }))
+    )
 }
 
 fn prepare_project_sources(
